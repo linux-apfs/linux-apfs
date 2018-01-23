@@ -894,6 +894,11 @@ L:	linux-iio@vger.kernel.org
 S:	Maintained
 F:	drivers/iio/adc/stx104.c
 
+APFS FILE SYSTEM
+M:	Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
+S:	Maintained
+F:	fs/apfs/
+
 APM DRIVER
 M:	Jiri Kosina <jikos@kernel.org>
 S:	Odd fixes
