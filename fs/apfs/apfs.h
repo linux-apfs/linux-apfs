@@ -40,6 +40,7 @@ struct apfs_sb_info {
 	struct apfs_super_block *s_msb_raw;		/* On-disk main sb */
 	struct apfs_volume_checkpoint_sb *s_vcsb_raw;	/* On-disk volume sb */
 
+	unsigned int s_vol_nr;		/* Index of the volume in the sb list */
 	struct apfs_node s_mnode;	/* Node of the main superblock */
 	struct apfs_node s_vnode;	/* Node of the volume checkpoint sb */
 

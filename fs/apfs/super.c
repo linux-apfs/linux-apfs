@@ -8,7 +8,9 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
+#include <linux/parser.h>
 #include <linux/buffer_head.h>
+#include <linux/seq_file.h>
 #include "apfs.h"
 
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
@@ -36,11 +38,61 @@ static void apfs_put_super(struct super_block *sb)
 	kfree(sbi);
 }
 
+static int apfs_show_options(struct seq_file *seq, struct dentry *root)
+{
+	struct apfs_sb_info *sbi = APFS_SB(root->d_sb);
+
+	if (sbi->s_vol_nr != 0)
+		seq_printf(seq, ",vol=%u", sbi->s_vol_nr);
+
+	return 0;
+}
+
 static const struct super_operations apfs_sops = {
-	.put_super = apfs_put_super,
+	.put_super	= apfs_put_super,
+	.show_options	= apfs_show_options,
 };
 
-#define VOLUME_NUMBER	0 /* Hardcode it for now, later add a mount option */
+enum {
+	Opt_vol, Opt_err,
+};
+
+static const match_table_t tokens = {
+	{Opt_vol, "vol=%u"},
+	{Opt_err, NULL}
+};
+
+/*
+ * Many of the parse_options() functions in other file systems return 0
+ * on error. This one returns an error code, and 0 on success.
+ */
+static int parse_options(struct apfs_sb_info *sbi, char *options)
+{
+	char *p;
+	substring_t args[MAX_OPT_ARGS];
+	int err = 0;
+
+	if (!options)
+		return 0;
+
+	while ((p = strsep(&options, ",")) != NULL) {
+		int token;
+
+		if (!*p)
+			continue;
+		token = match_token(p, tokens, args);
+		switch (token) {
+		case Opt_vol:
+			err = match_int(&args[0], &sbi->s_vol_nr);
+			if (err)
+				return err;
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+	return 0;
+}
 
 static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
@@ -97,18 +149,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_super;
 	}
 
-	/* Get the id for the requested volume number */
-	if (sizeof(*msb_raw) + 8 * (VOLUME_NUMBER + 1) >= sb->s_blocksize) {
-		/* For now we assume that nodesize <= PAGE_SIZE */
-		apfs_msg(sb, KERN_ERR, "volume number out of range");
-		goto failed_super;
-	}
-	vol_id = le64_to_cpu(msb_raw->volume_ids[VOLUME_NUMBER]);
-	if (vol_id == 0) {
-		apfs_msg(sb, KERN_ERR, "requested volume does not exist");
-		goto failed_super;
-	}
-
 	err = -ENOMEM;
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
@@ -124,7 +164,25 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_nodesize = sb->s_blocksize;
 	sbi->s_nodesize_bits = sb->s_blocksize_bits;
 
+	/* Set default values for the mount options before parsing them */
+	sbi->s_vol_nr = 0;
+	err = parse_options(sbi, data);
+	if (err)
+		goto failed_vol;
+
 	err = -EINVAL;
+
+	/* Get the id for the requested volume number */
+	if (sizeof(*msb_raw) + 8 * (sbi->s_vol_nr + 1) >= sb->s_blocksize) {
+		/* For now we assume that nodesize <= PAGE_SIZE */
+		apfs_msg(sb, KERN_ERR, "volume number out of range");
+		goto failed_vol;
+	}
+	vol_id = le64_to_cpu(msb_raw->volume_ids[sbi->s_vol_nr]);
+	if (vol_id == 0) {
+		apfs_msg(sb, KERN_ERR, "requested volume does not exist");
+		goto failed_vol;
+	}
 
 	/* Get the Volume Root Block */
 	vrb = le32_to_cpu(msb_raw->s_volume_index);
