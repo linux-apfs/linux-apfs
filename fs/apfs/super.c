@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include <linux/parser.h>
 #include <linux/buffer_head.h>
+#include <linux/statfs.h>
 #include <linux/seq_file.h>
 #include "apfs.h"
 
@@ -38,6 +39,116 @@ static void apfs_put_super(struct super_block *sb)
 	kfree(sbi);
 }
 
+/**
+ * apfs_count_used_blocks - Count the blocks in use across all volumes
+ * @sb:		filesystem superblock
+ * @count:	on return it will store the block count
+ *
+ * This function probably belongs in a separate file, but for now it is
+ * only called by statfs.
+ */
+static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_super_block *msb_raw = sbi->s_msb_raw;
+	struct apfs_table *vtable;
+	struct apfs_table_raw *vrb_raw;
+	struct apfs_volume_checkpoint_sb *vcsb_raw;
+	struct buffer_head *bh;
+	u64 vrb, vb, vcsb;
+	int i;
+	int err = 0;
+
+	/* Get the Volume Root Block */
+	vrb = le32_to_cpu(msb_raw->s_volume_index);
+	bh = sb_bread(sb, vrb);
+	if (!bh) {
+		apfs_msg(sb, KERN_ERR, "unable to read volume root block");
+		return -EIO;
+	}
+	vrb_raw = (struct apfs_table_raw *)bh->b_data;
+
+	/* Get the Volume Block */
+	vb = le64_to_cpu(vrb_raw->t_sd.t_single_rec);
+	vrb_raw = NULL;
+	brelse(bh);
+	bh = NULL;
+	vtable = apfs_read_table(sb, vb);
+	if (!vtable) {
+		apfs_msg(sb, KERN_ERR, "unable to read volume block");
+		return -EIO;
+	}
+
+	/* Iterate through the checkpoint superblocks and add the used blocks */
+	*count = 0;
+	for (i = 0; i < vtable->t_records; i++) {
+		int len, off;
+		__le64 *block;
+
+		len = apfs_table_locate_data(vtable, i, &off);
+		/* The block number is in the second 64 bits of data */
+		block = (__le64 *)(vtable->t_node.bh->b_data + off + 8);
+		vcsb = le64_to_cpu(*block);
+
+		brelse(bh);
+		bh = sb_bread(sb, vcsb);
+		if (!bh) {
+			err = -EIO;
+			apfs_msg(sb, KERN_ERR, "unable to read vol superblock");
+			goto cleanup;
+		}
+
+		vcsb_raw = (struct apfs_volume_checkpoint_sb *)bh->b_data;
+		*count += le64_to_cpu(vcsb_raw->v_used_blks);
+	}
+	brelse(bh);
+
+cleanup:
+	apfs_release_table(vtable);
+	return err;
+}
+
+static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_super_block *msb_raw = sbi->s_msb_raw;
+	struct apfs_volume_checkpoint_sb *vol = sbi->s_vcsb_raw;
+	u64 used_blocks, fsid;
+	int err;
+
+	buf->f_type = APFS_SUPER_MAGIC;
+	/* Nodes are assumed to fit in a page, for now */
+	buf->f_bsize = sb->s_blocksize;
+
+	/* Volumes share the whole disk space */
+	buf->f_blocks = le64_to_cpu(msb_raw->s_blks_count);
+	err = apfs_count_used_blocks(sb, &used_blocks);
+	if (err)
+		return err;
+	buf->f_bfree = buf->f_blocks - used_blocks;
+	buf->f_bavail = buf->f_bfree; /* I don't know any better */
+
+	/* The file count is only for the mounted volume */
+	buf->f_files = le64_to_cpu(vol->v_file_count) +
+		       le64_to_cpu(vol->v_fold_count);
+
+	/*
+	 * buf->f_ffree is left undefined for now. Maybe it should report the
+	 * number of available cnids, like hfsplus attempts to do.
+	 */
+
+	buf->f_namelen = 255; /* Again, I don't know any better */
+
+	/* There are no clear rules for the fsid, so we follow ext2 here */
+	fsid = le64_to_cpup((void *)vol->v_uuid) ^
+	       le64_to_cpup((void *)vol->v_uuid + sizeof(u64));
+	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
+	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
+
+	return 0;
+}
+
 static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 {
 	struct apfs_sb_info *sbi = APFS_SB(root->d_sb);
@@ -50,6 +161,7 @@ static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 
 static const struct super_operations apfs_sops = {
 	.put_super	= apfs_put_super,
+	.statfs		= apfs_statfs,
 	.show_options	= apfs_show_options,
 };
 

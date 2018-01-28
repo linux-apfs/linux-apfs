@@ -5,6 +5,7 @@
 #define ADFS_SUPER_MAGIC	0xadf5
 #define AFFS_SUPER_MAGIC	0xadff
 #define AFS_SUPER_MAGIC                0x5346414F
+#define APFS_SUPER_MAGIC        0x4253584E
 #define AUTOFS_SUPER_MAGIC	0x0187
 #define CODA_SUPER_MAGIC	0x73757245
 #define CRAMFS_MAGIC		0x28cd3d45	/* some random number */

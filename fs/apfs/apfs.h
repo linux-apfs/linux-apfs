@@ -10,6 +10,7 @@
 
 #include <linux/fs.h>
 #include <linux/types.h>
+#include <linux/magic.h>
 
 #define APFS_DEFAULT_BLOCKSIZE	4096
 
@@ -81,8 +82,6 @@ struct apfs_node_header {
 	__le16 unknown_3;	/* Often 0x0b, 0x0e and 0x0f */
 	__le16 unknown_4;
 };
-
-#define APFS_SUPER_MAGIC	0x4253584E /* Move to uapi with the others? */
 
 /*
  * Structure of the checkpoint and main superblocks
