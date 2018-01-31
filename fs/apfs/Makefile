@@ -5,4 +5,4 @@
 
 obj-$(CONFIG_APFS_FS) += apfs.o
 
-apfs-y := super.o table.o
+apfs-y := btree.o dir.o inode.o namei.o super.o table.o

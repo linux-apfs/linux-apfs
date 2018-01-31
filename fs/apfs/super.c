@@ -34,9 +34,68 @@ static void apfs_put_super(struct super_block *sb)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 
 	sb->s_fs_info = NULL;
+
+	apfs_release_table(sbi->s_cat_tree->root);
+	apfs_release_table(sbi->s_cat_tree->btom);
+	kfree(sbi->s_cat_tree);
+
 	brelse(sbi->s_mnode.bh);
 	brelse(sbi->s_vnode.bh);
 	kfree(sbi);
+}
+
+static struct kmem_cache *apfs_inode_cachep;
+
+static struct inode *apfs_alloc_inode(struct super_block *sb)
+{
+	struct apfs_inode_info *ai;
+
+	ai = kmem_cache_alloc(apfs_inode_cachep, GFP_KERNEL);
+	if (!ai)
+		return NULL;
+	ai->vfs_inode.i_version = 1;
+	return &ai->vfs_inode;
+}
+
+static void apfs_i_callback(struct rcu_head *head)
+{
+	struct inode *inode = container_of(head, struct inode, i_rcu);
+
+	kmem_cache_free(apfs_inode_cachep, APFS_I(inode));
+}
+
+static void apfs_destroy_inode(struct inode *inode)
+{
+	call_rcu(&inode->i_rcu, apfs_i_callback);
+}
+
+static void init_once(void *p)
+{
+	struct apfs_inode_info *ai = (struct apfs_inode_info *)p;
+
+	inode_init_once(&ai->vfs_inode);
+}
+
+static int __init init_inodecache(void)
+{
+	apfs_inode_cachep = kmem_cache_create("apfs_inode_cache",
+					     sizeof(struct apfs_inode_info),
+					     0, (SLAB_RECLAIM_ACCOUNT|
+						SLAB_MEM_SPREAD|SLAB_ACCOUNT),
+					     init_once);
+	if (apfs_inode_cachep == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+static void destroy_inodecache(void)
+{
+	/*
+	 * Make sure all delayed rcu free inodes are flushed before we
+	 * destroy cache.
+	 */
+	rcu_barrier();
+	kmem_cache_destroy(apfs_inode_cachep);
 }
 
 /**
@@ -160,6 +219,8 @@ static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 }
 
 static const struct super_operations apfs_sops = {
+	.alloc_inode	= apfs_alloc_inode,
+	.destroy_inode	= apfs_destroy_inode,
 	.put_super	= apfs_put_super,
 	.statfs		= apfs_statfs,
 	.show_options	= apfs_show_options,
@@ -208,15 +269,17 @@ static int parse_options(struct apfs_sb_info *sbi, char *options)
 
 static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct buffer_head *bh, *bh2;
+	struct buffer_head *bh, *bh2, *bh3;
 	struct apfs_sb_info *sbi;
 	struct apfs_super_block *msb_raw;
-	struct apfs_table_raw *vrb_raw;
+	struct apfs_table_raw *vrb_raw, *catb_raw;
 	struct apfs_volume_checkpoint_sb *vcsb_raw;
 	struct apfs_table *vtable;
+	struct apfs_table *btom_table = NULL, *root_table = NULL;
 	struct inode *root;
-	u64 vol_id;
+	u64 vol_id, root_id;
 	u64 vrb, vb, vcsb = 0;
+	u64 cat_blk, btom_blk;
 	int blocksize;
 	int i;
 	int err = -EINVAL;
@@ -355,6 +418,41 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_vnode.node_id = vcsb_raw->v_header.n_block_id;
 	sbi->s_vnode.bh = bh2;
 
+	/* Get the block holding the catalog data */
+	cat_blk = le64_to_cpu(vcsb_raw->v_btom);
+	bh3 = sb_bread(sb, cat_blk);
+	if (!bh3) {
+		apfs_msg(sb, KERN_ERR, "unable to read catalog data");
+		goto failed_cat;
+	}
+	catb_raw = (struct apfs_table_raw *) bh3->b_data;
+
+	/* Get the B-Tree object map */
+	/* TODO: could the catb_raw table hold more than one record? */
+	btom_blk = le64_to_cpu(catb_raw->t_sd.t_single_rec);
+	brelse(bh3);
+	btom_table = apfs_read_table(sb, btom_blk);
+	if (!btom_table) {
+		apfs_msg(sb, KERN_ERR, "unable to read the b-tree object map");
+		goto failed_cat;
+	}
+
+	/* Get the root node from the b-tree object map */
+	/* TODO: if files are few, could the btom and root node be the same? */
+	root_id = le64_to_cpu(vcsb_raw->v_root);
+	root_table = apfs_btom_read_table(btom_table, root_id);
+	if (!root_table) {
+		apfs_msg(sb, KERN_ERR, "unable to read catalog root node");
+		goto failed_root;
+	}
+
+	sbi->s_cat_tree = kmalloc(sizeof(*sbi->s_cat_tree), GFP_KERNEL);
+	err = -ENOMEM;
+	if (!sbi->s_cat_tree)
+		goto failed_tree;
+	sbi->s_cat_tree->btom = btom_table;
+	sbi->s_cat_tree->root = root_table;
+
 	/* Print the last write time to verify the mount was successful */
 	apfs_msg(sb, KERN_INFO, "volume last modified at %llx",
 		 le64_to_cpu(vcsb_raw->v_wtime));
@@ -365,15 +463,11 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_op = &apfs_sops;
 
-	/* Create a shell of a "root inode" for testing the mount */
-	err = -ENOMEM;
-	root = iget_locked(sb, APFS_ROOT_CNID);
+	root = apfs_iget(sb, APFS_ROOT_CNID);
 	if (!root) {
 		apfs_msg(sb, KERN_ERR, "unable to get root inode");
 		goto failed_mount;
 	}
-	root->i_mode = S_IFDIR;
-	unlock_new_inode(root);
 	sb->s_root = d_make_root(root);
 	if (!sb->s_root) {
 		apfs_msg(sb, KERN_ERR, "unable to get root dentry");
@@ -382,6 +476,12 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 failed_mount:
+	kfree(sbi->s_cat_tree);
+failed_tree:
+	apfs_release_table(root_table);
+failed_root:
+	apfs_release_table(btom_table);
+failed_cat:
 	brelse(bh2);
 failed_vol:
 	sb->s_fs_info = NULL;
@@ -408,12 +508,21 @@ MODULE_ALIAS_FS("apfs");
 
 static int __init init_apfs_fs(void)
 {
-	return register_filesystem(&apfs_fs_type);
+	int err = 0;
+
+	err = init_inodecache();
+	if (err)
+		return err;
+	err = register_filesystem(&apfs_fs_type);
+	if (err)
+		destroy_inodecache();
+	return err;
 }
 
 static void __exit exit_apfs_fs(void)
 {
 	unregister_filesystem(&apfs_fs_type);
+	destroy_inodecache();
 }
 
 MODULE_AUTHOR("Ernesto A. Fernandez");

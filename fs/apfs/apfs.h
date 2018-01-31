@@ -31,6 +31,15 @@ struct apfs_node {
 	struct buffer_head *bh;
 };
 
+/*
+ * An APFS B-Tree held in memory
+ */
+struct apfs_btree {
+	/* TODO: check if the btom is really specific to the tree */
+	struct apfs_table *btom;	/* Object map of the tree */
+	struct apfs_table *root;	/* Root table of the tree */
+};
+
 #define APFS_SB_BLOCK	0
 
 /*
@@ -40,6 +49,8 @@ struct apfs_node {
 struct apfs_sb_info {
 	struct apfs_super_block *s_msb_raw;		/* On-disk main sb */
 	struct apfs_volume_checkpoint_sb *s_vcsb_raw;	/* On-disk volume sb */
+
+	struct apfs_btree *s_cat_tree;	/* Catalog tree */
 
 	unsigned int s_vol_nr;		/* Index of the volume in the sb list */
 	struct apfs_node s_mnode;	/* Node of the main superblock */
@@ -68,6 +79,20 @@ struct apfs_table {
 
 	struct apfs_node t_node;/* Node holding the table */
 };
+
+/*
+ * APFS inode data in memory
+ */
+struct apfs_inode_info {
+	u64 i_crtime;			/* Time of creation */
+
+	struct inode vfs_inode;
+};
+
+static inline struct apfs_inode_info *APFS_I(struct inode *inode)
+{
+	return container_of(inode, struct apfs_inode_info, vfs_inode);
+}
 
 
 /*
@@ -246,13 +271,20 @@ struct apfs_btom_key {
 };
 
 /*
- * Structure of the data in the B-Tree Object Map table
+ * Structure of the data in the B-Tree Object Map tables. The first two
+ * fields are sometimes skipped.
  */
 struct apfs_btom_data {
 	__le32 unknown;
 	__le32 child_size;	/* Size of the child */
 	__le64 child_blk;	/* Block address of the child */
 };
+
+/*
+ * The name length in the catalog key counts the terminating null byte. Hence
+ * the maximum length is one less char than the biggest possible k_len.
+ */
+#define APFS_NAME_LEN		254
 
 #define APFS_ROOT_CNID		2 /* Root folder cnid */
 
@@ -283,18 +315,15 @@ struct apfs_cat_key {
 };
 
 /*
- * Structure of the data in the catalog tables for record type APFS_RT_KEY
+ * Structure of the data in the catalog tables for record type APFS_RT_KEY.
+ *
+ * Sometimes an extra 64-bit field will exist; this has something to do with
+ * hard links. Either way, the cnid remains first.
  */
 struct apfs_cat_keyrec {
-	/*
-	 * If the data is 0x12 bytes long, then this is the catalog node id
-	 * of the wanted object. Otherwise it's the cnid for the b-tree index
-	 * node that holds the actual data. Or something like that... It seems
-	 * it can also be 8 bytes long, and it also points to the index node.
-	 */
 	__le64 d_cnid;
 	__le64 d_time;		/* Date Added */
-	__le64 unknown;		/* Two bytes for data in b-tree index node? */
+	__le16 unknown;		/* TODO: Could this ever be 8 bytes long? */
 };
 
 /*
@@ -323,6 +352,17 @@ struct apfs_cat_file {
 /*
  * Function prototypes
  */
+
+/* btree.c */
+extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key);
+extern struct apfs_table *apfs_btom_read_table(struct apfs_table *btom, u64 id);
+
+/* dir.c */
+extern u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child);
+
+/* inode.c */
+extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
+
 /* super.c */
 extern void apfs_msg(struct super_block *sb, const char *prefix,
 		     const char *fmt, ...);
@@ -334,5 +374,12 @@ extern int apfs_table_locate_key(struct apfs_table *table,
 				  int index, int *off);
 extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
+
+/*
+ * Inode and file operations
+ */
+
+/* namei.c */
+extern const struct inode_operations apfs_dir_inode_operations;
 
 #endif	/* _APFS_H */
