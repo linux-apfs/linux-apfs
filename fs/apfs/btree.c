@@ -78,7 +78,107 @@ static int apfs_cat_keycmp(struct apfs_cat_key *k1, struct apfs_cat_key *k2)
 
 
 
-/* TODO: the next two functions need to be split, and code should be reused */
+/* TODO: the next three functions need to be split, and code should be reused */
+
+/**
+ * apfs_cat_get_data - Get the data for a catalog key
+ * @sb:		filesystem superblock
+ * @key:	catalog key
+ * @length:	on return it will hold the length of the data
+ * @table:	on return it will point to the table that stores the data
+ *
+ * Returns a pointer to the data, which will consist of @len bytes; or NULL
+ * in case of failure.
+ *
+ * The caller must release @table (unless it's NULL) after using the data, even
+ * in case of failure. The exception is the root table, that should never be
+ * released. This is messy; I have to rework it.
+ */
+void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
+			int *length, struct apfs_table **table)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_table *root = sbi->s_cat_tree->root;
+	struct apfs_table *btom = sbi->s_cat_tree->btom;
+	void *data = NULL;
+	int i, j;
+
+	*table = root;
+
+	/*
+	 * We need a maximum depth for the tree so we can't loop forever if the
+	 * filesystem is damaged. 12 should be enough to map every block.
+	 */
+	for (i = 0; i < 12; i++) {
+		u64 child = 0;
+
+		for (j = (*table)->t_records - 1; j >= 0; j--) {
+			/* TODO: this is slow, do bisection instead */
+			int len, off;
+			int cmp;
+			char *raw = (*table)->t_node.bh->b_data;
+			struct apfs_cat_key *this_key;
+
+			len = apfs_table_locate_key(*table, j, &off);
+			if (len == 0) /* Corrupt filesystem */
+				break;
+			this_key = (struct apfs_cat_key *)(raw + off);
+
+			if (apfs_key_has_name(this_key) &&
+			    *(raw + off + len - 1) != 0)
+				/* Invalid fs: name has no null termination */
+				break;
+
+			cmp = apfs_cat_keycmp(this_key, key);
+			if (cmp <= 0) {
+				/*
+				 * In an index node the records are in order,
+				 * so the one we want is the last among those
+				 * with a key below our target.
+				 */
+				len = apfs_table_locate_data(*table, j, &off);
+				if (len == 0x08) {
+					/*
+					 * This is an index node; the data is
+					 * the id of the child table to search
+					 * next.
+					 *
+					 * TODO: better way to tell apart index
+					 * and leaf nodes?
+					 */
+					child = le64_to_cpup((__le64 *)
+								(raw + off));
+					break;
+				}
+
+				/*
+				 * We have reached a leaf node. Leaf records
+				 * don't seem to be stored in order like the
+				 * others, so we need to keep going if this
+				 * is not the one we wanted.
+				 */
+				if (cmp != 0)
+					continue;
+				data = raw + off;
+				*length = len;
+				return data;
+			}
+		}
+		if (data || child == 0) /* Succeeded or failed, we are done */
+			return data;
+
+		if (*table != root)
+			apfs_release_table(*table);
+		/* Keep going and search the child */
+		*table = apfs_btom_read_table(btom, child);
+		if (!*table)
+			return NULL;
+	}
+
+	/* This should never be reached with a valid filesystem */
+	apfs_release_table(*table);
+	return NULL;
+}
 
 /**
  * apfs_cat_resolve - Resolve a catalog key into an inode number

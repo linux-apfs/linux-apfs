@@ -289,7 +289,7 @@ struct apfs_btom_data {
 #define APFS_ROOT_CNID		2 /* Root folder cnid */
 
 /* Catalog node record types */
-#define APFS_RT_FILE		0x30 /* File or folder */
+#define APFS_RT_INODE		0x30
 #define APFS_RT_NAMED_ATTR	0x40
 #define APFS_RT_HARDLINK	0x50
 #define APFS_RT_EXTENT_STATUS	0x60 /* Shows the file object has records */
@@ -327,26 +327,47 @@ struct apfs_cat_keyrec {
 };
 
 /*
- * Structure of the data in the catalog tables for record type APFS_RT_FILE
+ * Structure of the data in the catalog tables for record type APFS_RT_INODE.
+ * For some type of records there will be more data in an apfs_cat_inode_tail
+ * structure, right after the filename and some null bytes. As far as I know
+ * this happens only for regular files, though some of them don't have it
+ * either.
  */
-struct apfs_cat_file {
+struct apfs_cat_inode {
 	__le64 d_parent;	/* Parent ID */
 	__le64 d_node;		/* Node ID */
 	__le64 d_crtime;	/* File creation time */
 	__le64 d_mtime;		/* Last write time */
 	__le64 d_ctime;		/* Last inode change time */
 	__le64 d_atime;		/* Last access time */
-	__le64 d_hardlinks;	/* Number of hardlinks to the file? */
 	__le64 unknown_1;
-	__le64 d_owner;		/* ID of the owner??? */
-	__le64 d_group;		/* ID of the group??? */
-	__le64 d_flags;
+	__le64 d_children;	/* For a directory, number of children inodes */
 	__le64 unknown_2;
+	__le32 d_owner;		/* ID of the owner */
+	__le32 d_group;		/* ID of the group */
+	__le16 d_mode;
+	char unknown_3[6];	/* Flags of some kind? */
+	__le64 unknown_4;
 	__le16 d_datatype;
 	__le16 d_len;		/* Filename length, counting null termination */
 
-	/* Filename starts here. Seems to be followed by null bytes, padding? */
+	/*
+	 * Filename starts here, sometimes preceded by four bytes of unknown
+	 * meaning. Also seems to be followed by a padding of null bytes.
+	 * Don't try to work with this field for now.
+	 */
 	char d_filename[0];
+};
+
+/*
+ * Tail of the data for an APFS_RT_INODE record. I'm not sure where it starts,
+ * since the padding of the filename is confusing, but it ends with the record.
+ * For now we decide if this tail is present by checking if it fits.
+ */
+struct apfs_cat_inode_tail {
+	__le64 d_size;		/* Logical file size */
+	__le64 d_phys_size;	/* Physical file size */
+	char unknown[24];	/* Or is it 8 bytes? */
 };
 
 /*
@@ -354,6 +375,8 @@ struct apfs_cat_file {
  */
 
 /* btree.c */
+extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
+			       int *length, struct apfs_table **table);
 extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key);
 extern struct apfs_table *apfs_btom_read_table(struct apfs_table *btom, u64 id);
 
