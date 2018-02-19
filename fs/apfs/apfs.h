@@ -42,6 +42,10 @@ struct apfs_btree {
 
 #define APFS_SB_BLOCK	0
 
+/* Mount option flags */
+#define APFS_UID_OVERRIDE	1
+#define APFS_GID_OVERRIDE	2
+
 /*
  * Superblock data in memory, both from the main superblock and the volume
  * checkpoint superblock.
@@ -52,9 +56,14 @@ struct apfs_sb_info {
 
 	struct apfs_btree *s_cat_tree;	/* Catalog tree */
 
-	unsigned int s_vol_nr;		/* Index of the volume in the sb list */
 	struct apfs_node s_mnode;	/* Node of the main superblock */
 	struct apfs_node s_vnode;	/* Node of the volume checkpoint sb */
+
+	/* Mount options */
+	unsigned int s_flags;
+	unsigned int s_vol_nr;		/* Index of the volume in the sb list */
+	kuid_t s_uid;			/* uid to override on-disk uid */
+	kgid_t s_gid;			/* gid to override on-disk gid */
 
 	/* We must handle node sizes above the maximum blocksize of PAGE_SIZE */
 	unsigned long s_nodesize;

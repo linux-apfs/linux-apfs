@@ -227,10 +227,12 @@ static const struct super_operations apfs_sops = {
 };
 
 enum {
-	Opt_vol, Opt_err,
+	Opt_uid, Opt_gid, Opt_vol, Opt_err,
 };
 
 static const match_table_t tokens = {
+	{Opt_uid, "uid=%u"},
+	{Opt_gid, "gid=%u"},
 	{Opt_vol, "vol=%u"},
 	{Opt_err, NULL}
 };
@@ -239,11 +241,17 @@ static const match_table_t tokens = {
  * Many of the parse_options() functions in other file systems return 0
  * on error. This one returns an error code, and 0 on success.
  */
-static int parse_options(struct apfs_sb_info *sbi, char *options)
+static int parse_options(struct super_block *sb, char *options)
 {
+	struct apfs_sb_info *sbi = APFS_SB(sb);
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
+	int option;
 	int err = 0;
+
+	/* Set default values before parsing */
+	sbi->s_vol_nr = 0;
+	sbi->s_flags = 0;
 
 	if (!options)
 		return 0;
@@ -255,6 +263,28 @@ static int parse_options(struct apfs_sb_info *sbi, char *options)
 			continue;
 		token = match_token(p, tokens, args);
 		switch (token) {
+		case Opt_uid:
+			err = match_int(&args[0], &option);
+			if (err)
+				return err;
+			sbi->s_uid = make_kuid(current_user_ns(), option);
+			if (!uid_valid(sbi->s_uid)) {
+				apfs_msg(sb, KERN_ERR, "invalid uid");
+				return -EINVAL;
+			}
+			sbi->s_flags |= APFS_UID_OVERRIDE;
+			break;
+		case Opt_gid:
+			err = match_int(&args[0], &option);
+			if (err)
+				return err;
+			sbi->s_gid = make_kgid(current_user_ns(), option);
+			if (!gid_valid(sbi->s_gid)) {
+				apfs_msg(sb, KERN_ERR, "invalid gid");
+				return -EINVAL;
+			}
+			sbi->s_flags |= APFS_GID_OVERRIDE;
+			break;
 		case Opt_vol:
 			err = match_int(&args[0], &sbi->s_vol_nr);
 			if (err)
@@ -339,9 +369,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_nodesize = sb->s_blocksize;
 	sbi->s_nodesize_bits = sb->s_blocksize_bits;
 
-	/* Set default values for the mount options before parsing them */
-	sbi->s_vol_nr = 0;
-	err = parse_options(sbi, data);
+	err = parse_options(sb, data);
 	if (err)
 		goto failed_vol;
 

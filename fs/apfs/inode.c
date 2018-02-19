@@ -110,8 +110,15 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	}
 
 	inode->i_mode = le16_to_cpu(raw_inode->d_mode);
-	i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->d_owner));
-	i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->d_group));
+	/* Allow the user to override the ownership */
+	if (sbi->s_flags & APFS_UID_OVERRIDE)
+		inode->i_uid = sbi->s_uid;
+	else
+		i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->d_owner));
+	if (sbi->s_flags & APFS_GID_OVERRIDE)
+		inode->i_gid = sbi->s_gid;
+	else
+		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->d_group));
 
 	if (raw_itail) {
 		inode->i_size = le64_to_cpu(raw_itail->d_size);
