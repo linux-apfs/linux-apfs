@@ -305,13 +305,13 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct apfs_table_raw *vrb_raw, *catb_raw;
 	struct apfs_volume_checkpoint_sb *vcsb_raw;
 	struct apfs_table *vtable;
+	struct apfs_query *query;
 	struct apfs_table *btom_table = NULL, *root_table = NULL;
 	struct inode *root;
 	u64 vol_id, root_id;
 	u64 vrb, vb, vcsb = 0;
 	u64 cat_blk, btom_blk;
 	int blocksize;
-	int i;
 	int err = -EINVAL;
 
 	apfs_msg(sb, KERN_NOTICE, "this module is read-only");
@@ -407,27 +407,30 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	/* Get the Volume Checkpoint Superblock with id == vol_id */
-	for (i = 0; i < vtable->t_records; i++) {
-		/* This whole search should become a separate function */
-		int len, off;
-		__le64 *id, *block;
-
-		len = apfs_table_locate_key(vtable, i, &off);
-		id = (__le64 *)(vtable->t_node.bh->b_data + off);
-		if (le64_to_cpu(*id) == vol_id) {
-			len = apfs_table_locate_data(vtable, i, &off);
-			/* The block number is in the second 64 bits of data */
-			block = (__le64 *)(vtable->t_node.bh->b_data + off + 8);
-			vcsb = le64_to_cpu(*block);
-			break;
-		}
+	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	if (!query) {
+		apfs_release_table(vtable);
+		err = -ENOMEM;
+		goto failed_vol;
 	}
+	query->table = vtable;
+	query->key = &vol_id;
+	query->cmp = apfs_cmp64;
+	query->count = 0;
+	err = apfs_table_query(query, false /* ordered */);
+	if (!err && query->len >= 16) {
+		/* The block number is in the second 64 bits of data */
+		vcsb = le64_to_cpup((__le64 *)
+				(vtable->t_node.bh->b_data + query->off + 8));
+	}
+	kfree(query);
 	apfs_release_table(vtable);
-
 	if (vcsb == 0) {
 		apfs_msg(sb, KERN_ERR, "volume not found, likely corruption");
 		goto failed_vol;
 	}
+
+	err = -EINVAL;
 	bh2 = sb_bread(sb, vcsb);
 	if (!bh2) {
 		apfs_msg(sb, KERN_ERR, "unable to read volume superblock");
@@ -465,20 +468,22 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_cat;
 	}
 
-	/* Get the root node from the b-tree object map */
-	/* TODO: if files are few, could the btom and root node be the same? */
-	root_id = le64_to_cpu(vcsb_raw->v_root);
-	root_table = apfs_btom_read_table(btom_table, root_id);
-	if (!root_table) {
-		apfs_msg(sb, KERN_ERR, "unable to read catalog root node");
-		goto failed_root;
-	}
-
+	/* The btom needs to be set before the call to apfs_btom_read_table() */
 	sbi->s_cat_tree = kmalloc(sizeof(*sbi->s_cat_tree), GFP_KERNEL);
 	err = -ENOMEM;
 	if (!sbi->s_cat_tree)
 		goto failed_tree;
 	sbi->s_cat_tree->btom = btom_table;
+
+	/* Get the root node from the b-tree object map */
+	/* TODO: if files are few, could the btom and root node be the same? */
+	root_id = le64_to_cpu(vcsb_raw->v_root);
+	root_table = apfs_btom_read_table(sb, root_id);
+	if (!root_table) {
+		err = -EINVAL;
+		apfs_msg(sb, KERN_ERR, "unable to read catalog root node");
+		goto failed_root;
+	}
 	sbi->s_cat_tree->root = root_table;
 
 	/* Print the last write time to verify the mount was successful */
@@ -504,10 +509,10 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 failed_mount:
-	kfree(sbi->s_cat_tree);
-failed_tree:
 	apfs_release_table(root_table);
 failed_root:
+	kfree(sbi->s_cat_tree);
+failed_tree:
 	apfs_release_table(btom_table);
 failed_cat:
 	brelse(bh2);

@@ -103,6 +103,24 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 	return container_of(inode, struct apfs_inode_info, vfs_inode);
 }
 
+/*
+ * Structure used to retrieve data from an APFS B-Tree. For now only used
+ * on the calalog and the object map.
+ */
+struct apfs_query {
+	struct apfs_table *table;	/* Table being searched */
+	void *key;			/* What the query is looking for */
+
+	/* Decide which of two keys comes first in an ordered table */
+	int (*cmp)(void *k1, void *k2, int len);
+
+	/* Set by the query on success */
+	int off;			/* Offset of the data in the table */
+	int len;			/* Length of the data */
+
+	int count;			/* Put a limit on recursion */
+};
+
 
 /*
  * This structure apparently heads every metadata block
@@ -280,13 +298,13 @@ struct apfs_btom_key {
 } __attribute__ ((__packed__));
 
 /*
- * Structure of the data in the B-Tree Object Map tables. The first two
- * fields are sometimes skipped.
+ * Structure of the data in the B-Tree Object Map leaf tables. On the index
+ * tables the only data is the 64 bit block address of the child.
  */
 struct apfs_btom_data {
 	__le32 unknown;
 	__le32 child_size;	/* Size of the child */
-	__le64 child_blk;	/* Block address of the child */
+	__le64 block;		/* Address of the table mapped by this record */
 } __attribute__ ((__packed__));
 
 /*
@@ -384,10 +402,11 @@ struct apfs_cat_inode_tail {
  */
 
 /* btree.c */
+extern int apfs_cmp64(void *k1, void *k2, int len);
 extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
 			       int *length, struct apfs_table **table);
 extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key);
-extern struct apfs_table *apfs_btom_read_table(struct apfs_table *btom, u64 id);
+extern struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id);
 
 /* dir.c */
 extern u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child);
@@ -403,9 +422,10 @@ extern void apfs_msg(struct super_block *sb, const char *prefix,
 extern struct apfs_table *apfs_read_table(struct super_block *sb, u64 block);
 extern void apfs_release_table(struct apfs_table *table);
 extern int apfs_table_locate_key(struct apfs_table *table,
-				  int index, int *off);
+				 int index, int *off);
 extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
+extern int apfs_table_query(struct apfs_query *query, bool ordered);
 
 /*
  * Inode and file operations

@@ -157,3 +157,51 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 	}
 	return len;
 }
+
+/**
+ * apfs_table_query - Execute a query on a single table
+ * @query:	the query to execute
+ * @ordered:	are the table records in order?
+ *
+ * In a leaf node the records may be out of order; if that is the case this
+ * function will check them one by one until it finds an exact match for
+ * @query->key. Otherwise it will search for the key that comes right before
+ * @query->key, according to the order given by @query->cmp.
+ *
+ * On success returns 0; the offset of the data within the block will be saved
+ * in @query->off, and its length in @query->len. An error code will be
+ * returned in case of failure.
+ *
+ * TODO: the search algorithm is far from optimal for the ordered case, it
+ * would be better to search by bisection.
+ */
+int apfs_table_query(struct apfs_query *query, bool ordered)
+{
+	struct apfs_table *table = query->table;
+	void *key = query->key;
+	int i;
+
+	for (i = table->t_records - 1; i >= 0; i--) {
+		char *raw = table->t_node.bh->b_data;
+		void *this_key;
+		int off, len;
+
+		len = apfs_table_locate_key(table, i, &off);
+		if (len == 0) /* Filesystem is corrupted */
+			return -EINVAL;
+		this_key = (void *)(raw + off);
+
+		if (!ordered && query->cmp(this_key, key, len) != 0)
+			continue;
+		if (query->cmp(this_key, key, len) <= 0) {
+			len = apfs_table_locate_data(table, i, &off);
+			if (len == 0) /* Filesystem is corrupted */
+				return -EINVAL;
+			query->off = off;
+			query->len = len;
+			return 0;
+		}
+	}
+
+	return -ENODATA;
+}

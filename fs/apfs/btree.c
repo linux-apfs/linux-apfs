@@ -47,38 +47,219 @@ static inline bool apfs_key_has_name(struct apfs_cat_key *key)
 
 /**
  * apfs_cat_keycmp - Compare two catalog keys
- * @k1, @k2: keys to compare
+ * @k1, @k2:	pointers to the keys to compare, both of type apfs_cat_key
+ * @len:	length of @k1
  *
  * returns   0 if @k1 and @k2 are equal
  *	   < 0 if @k1 comes before @k2 in the btree
- *	   > 0 if @k1 comes after @k2 in the btree
- *
- * If the catalog keys are of a type that holds filenames, the caller must
- * ensure proper string termination within the block. Otherwise a crafted
- * filesystem could cause a segfault in strcasecmp().
+ *	   > 0 if @k1 comes after @k2 in the btree (or in case of error)
  *
  * For now we assume filenames are in ascii. TODO: unicode support.
  */
-static int apfs_cat_keycmp(struct apfs_cat_key *k1, struct apfs_cat_key *k2)
+static int apfs_cat_keycmp(void *k1, void *k2, int len)
 {
-	u64 cnid1 = apfs_cat_cnid(k1);
-	u64 cnid2 = apfs_cat_cnid(k2);
-	int type1 = apfs_cat_type(k1);
-	int type2 = apfs_cat_type(k2);
+	u64 cnid1;
+	u64 cnid2;
+	int type1;
+	int type2;
 
+	if (len < 8) {
+		/*
+		 * Invalid filesystem. We choose a positive return value
+		 * because that will cause apfs_search_table() to fail.
+		 */
+		return 1;
+	}
+
+	cnid1 = apfs_cat_cnid(k1);
+	cnid2 = apfs_cat_cnid(k2);
 	if (cnid1 != cnid2)
 		return cnid1 < cnid2 ? -1 : 1;
+
+	type1 = apfs_cat_type(k1);
+	type2 = apfs_cat_type(k2);
 	if (type1 != type2)
 		return type1 < type2 ? -1 : 1;
-	if (apfs_key_has_name(k1))
-		/* TODO: support case sensitive filesystems */
-		return strcasecmp(k1->k_filename, k2->k_filename);
-	return 0;
+
+	if (!apfs_key_has_name(k1))
+		return 0;
+	/* TODO: support comparison of two named attributes */
+	if (len < sizeof(struct apfs_cat_key) + 1) {
+		/* The filename must have at least one char */
+		return 1;
+	}
+	if (*((char *)k1 + len - 1) != 0) {
+		/* Filename must end in NULL or strcasecmp() could segfault */
+		return 1;
+	}
+
+	/* TODO: support case sensitive filesystems */
+	return strcasecmp(((struct apfs_cat_key *)k1)->k_filename,
+			  ((struct apfs_cat_key *)k2)->k_filename);
 }
 
+/**
+ * apfs_cmp64 - Trivial function to compare 64 bit integers
+ * @k1, @k2:	pointers to the integers. @k1 is __le64, @k2 is u64
+ * @len:	length of the whole key @k1 (we only compare the first 64 bits)
+ *
+ * returns   0 if @k1 == @k2
+ *         < 0 if @k1 < @k2
+ *         > 0 if @k1 > @k2 (or in case of error)
+ *
+ * This function exists only to serve as a parameter in calls to
+ * apfs_search_table().
+ */
+int apfs_cmp64(void *k1, void *k2, int len)
+{
+	if (len < sizeof(u64)) {
+		/*
+		 * Invalid filesystem. We choose a positive return value
+		 * because that will cause apfs_search_table() to fail.
+		 */
+		return 1;
+	}
+	return le64_to_cpup((__le64 *)k1) - *(u64 *)k2;
+}
 
+/**
+ * apfs_node_is_leaf - Check if a b-tree node is a leaf
+ * @table: the node to check
+ *
+ * This function would probably not be necessary if I just gave a name to the
+ * magical constant 2 that it uses, but I'm not sure of its meaning.
+ */
+static inline bool apfs_node_is_leaf(struct apfs_table *table)
+{
+	return (table->t_type & 2) != 0;
+}
 
-/* TODO: the next three functions need to be split, and code should be reused */
+/**
+ * apfs_node_is_btom - Check if a b-tree node belongs to the btom
+ * @table: the node to check
+ *
+ * This function would probably not be necessary if I just gave a name to the
+ * magical constant 4 that it uses, but I'm not sure of its meaning.
+ */
+static inline bool apfs_node_is_btom(struct apfs_table *table)
+{
+	return (table->t_type & 4) != 0;
+}
+
+/**
+ * apfs_btree_query - Execute a query on a b-tree
+ * @sb:		filesystem superblock
+ * @query:	the query to execute
+ *
+ * Searches the b-tree starting at @query->table, looking for the record
+ * corresponding to @query->key. The original caller should set @query->count
+ * to 0; each recursive call to this function will increment it.
+ *
+ * Returns 0 in case of success and sets the @query->len and @query->off fields
+ * to the results of the query. @query->table will now point to the leaf node
+ * holding the record.
+ *
+ * In case of failure returns an appropriate error code.
+ */
+static int apfs_btree_query(struct super_block *sb, struct apfs_query *query)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_table *root = sbi->s_cat_tree->root;
+	struct apfs_table *btom = sbi->s_cat_tree->btom;
+	struct apfs_query *btom_query;
+	struct apfs_btom_data *data;
+	char *raw = query->table->t_node.bh->b_data;
+	u64 child = 0;
+	bool ordered = true;
+	int err;
+
+	if (query->count++ >= 12) {
+		/*
+		 * We need a maximum depth for the tree so we can't loop
+		 * forever if the filesystem is damaged. 12 should be more
+		 * than enough to map every block.
+		 */
+		err = -EINVAL;
+		goto fail;
+	}
+
+	if (apfs_node_is_leaf(query->table) &&
+	    !apfs_node_is_btom(query->table)) {
+		/* The leaves of a catalog tree are not ordered */
+		ordered = false;
+	}
+	err = apfs_table_query(query, ordered);
+	if (err)
+		goto fail;
+	if (apfs_node_is_leaf(query->table)) /* All done */
+		return 0;
+	if (apfs_node_is_btom(query->table)) {
+		/* The data on a btom index node is the address of the child */
+		if (query->len != 8) {
+			err = -EINVAL;
+			goto fail;
+		}
+		child = le64_to_cpup((__le64 *)(raw + query->off));
+	} else {
+		/*
+		 * The data on an index node is the id of the table
+		 * to search next; we must query the btom to find its
+		 * block number.
+		 */
+		if (query->len != 8) {
+			err = -EINVAL;
+			goto fail;
+		}
+		child = le64_to_cpup((__le64 *)(raw + query->off));
+		btom_query = kmalloc(sizeof(*btom_query), GFP_KERNEL);
+		if (!btom_query) {
+			err = -ENOMEM;
+			goto fail;
+		}
+		btom_query->table = btom;
+		btom_query->key = &child;
+		btom_query->cmp = apfs_cmp64;
+		btom_query->count = 0;
+		err = apfs_btree_query(sb, btom_query);
+		if (err)
+			goto fail_btom;
+		raw = btom_query->table->t_node.bh->b_data;
+		if (btom_query->len != sizeof(*data)) {
+			err = -EINVAL;
+			goto fail_btom_len;
+		}
+		data = (struct apfs_btom_data *)(raw + btom_query->off);
+		child = le64_to_cpu(data->block);
+
+		if (btom_query->table != btom)
+			apfs_release_table(btom_query->table);
+		kfree(btom_query);
+	}
+	if (query->table != root && query->table != btom)
+		apfs_release_table(query->table);
+
+	/* Now go a level deeper and search the child */
+	query->table = apfs_read_table(sb, child);
+	if (!query->table)
+		return -ENOMEM;
+	err = apfs_btree_query(sb, query);
+	if (err)
+		return err;
+	return 0;
+
+fail_btom_len:
+	if (btom_query->table != btom)
+		apfs_release_table(btom_query->table);
+fail_btom:
+	kfree(btom_query);
+fail:
+	if (query->table != root && query->table != btom) {
+		apfs_release_table(query->table);
+		query->table = NULL;
+	}
+	return err;
+}
+
 
 /**
  * apfs_cat_get_data - Get the data for a catalog key
@@ -90,94 +271,35 @@ static int apfs_cat_keycmp(struct apfs_cat_key *k1, struct apfs_cat_key *k2)
  * Returns a pointer to the data, which will consist of @len bytes; or NULL
  * in case of failure.
  *
- * The caller must release @table (unless it's NULL) after using the data, even
- * in case of failure. The exception is the root table, that should never be
- * released. This is messy; I have to rework it.
+ * The caller must release @table (unless it's NULL) after using the data. The
+ * exception is the root table, that should never be released. This is messy;
+ * I have to rework it.
  */
 void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
 			int *length, struct apfs_table **table)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *root = sbi->s_cat_tree->root;
-	struct apfs_table *btom = sbi->s_cat_tree->btom;
+	struct apfs_query *query;
 	void *data = NULL;
-	int i, j;
 
-	*table = root;
+	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	if (!query)
+		return NULL;
+	query->table = sbi->s_cat_tree->root;
+	query->key = key;
+	query->cmp = apfs_cat_keycmp;
+	query->count = 0;
 
-	/*
-	 * We need a maximum depth for the tree so we can't loop forever if the
-	 * filesystem is damaged. 12 should be enough to map every block.
-	 */
-	for (i = 0; i < 12; i++) {
-		u64 child = 0;
+	if (apfs_btree_query(sb, query))
+		goto fail;
 
-		for (j = (*table)->t_records - 1; j >= 0; j--) {
-			/* TODO: this is slow, do bisection instead */
-			int len, off;
-			int cmp;
-			char *raw = (*table)->t_node.bh->b_data;
-			struct apfs_cat_key *this_key;
+	*table = query->table;
+	*length = query->len;
+	data = query->table->t_node.bh->b_data + query->off;
 
-			len = apfs_table_locate_key(*table, j, &off);
-			if (len == 0) /* Corrupt filesystem */
-				break;
-			this_key = (struct apfs_cat_key *)(raw + off);
-
-			if (apfs_key_has_name(this_key) &&
-			    *(raw + off + len - 1) != 0)
-				/* Invalid fs: name has no null termination */
-				break;
-
-			cmp = apfs_cat_keycmp(this_key, key);
-			if (cmp <= 0) {
-				/*
-				 * In an index node the records are in order,
-				 * so the one we want is the last among those
-				 * with a key below our target.
-				 */
-				len = apfs_table_locate_data(*table, j, &off);
-				if (len == 0x08) {
-					/*
-					 * This is an index node; the data is
-					 * the id of the child table to search
-					 * next.
-					 *
-					 * TODO: better way to tell apart index
-					 * and leaf nodes?
-					 */
-					child = le64_to_cpup((__le64 *)
-								(raw + off));
-					break;
-				}
-
-				/*
-				 * We have reached a leaf node. Leaf records
-				 * don't seem to be stored in order like the
-				 * others, so we need to keep going if this
-				 * is not the one we wanted.
-				 */
-				if (cmp != 0)
-					continue;
-				data = raw + off;
-				*length = len;
-				return data;
-			}
-		}
-		if (data || child == 0) /* Succeeded or failed, we are done */
-			return data;
-
-		if (*table != root)
-			apfs_release_table(*table);
-		/* Keep going and search the child */
-		*table = apfs_btom_read_table(btom, child);
-		if (!*table)
-			return NULL;
-	}
-
-	/* This should never be reached with a valid filesystem */
-	apfs_release_table(*table);
-	return NULL;
+fail:
+	kfree(query);
+	return data;
 }
 
 /**
@@ -191,185 +313,90 @@ void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
 u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *root = sbi->s_cat_tree->root;
-	struct apfs_table *table = root;
-	struct apfs_table *btom = sbi->s_cat_tree->btom;
-	int i, j;
+	struct apfs_query *query;
+	struct apfs_cat_keyrec *data;
+	char *raw;
+	u64 cnid = 0;
 
-	/*
-	 * We need a maximum depth for the tree so we can't loop forever if the
-	 * filesystem is damaged. 12 should be enough to map every block.
-	 */
-	for (i = 0; i < 12; i++) {
-		bool success = false;
-		u64 id = 0;
+	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	if (!query)
+		return 0;
+	query->table = sbi->s_cat_tree->root;
+	query->key = key;
+	query->cmp = apfs_cat_keycmp;
+	query->count = 0;
 
-		for (j = table->t_records - 1; j >= 0; j--) {
-			/* TODO: this is slow, do bisection instead */
-			int len, off;
-			int cmp;
-			char *raw = table->t_node.bh->b_data;
-			struct apfs_cat_key *this_key;
-			struct apfs_cat_keyrec *data;
+	if (apfs_btree_query(sb, query))
+		goto fail;
 
-			len = apfs_table_locate_key(table, j, &off);
-			if (len == 0) /* Corrupt filesystem */
-				break;
-			this_key = (struct apfs_cat_key *)(raw + off);
-
-			if (apfs_key_has_name(this_key) &&
-			    *(raw + off + len - 1) != 0)
-				/* Invalid fs: name has no null termination */
-				break;
-
-			cmp = apfs_cat_keycmp(this_key, key);
-			if (cmp <= 0) {
-				/*
-				 * In an index node the records are in order,
-				 * so the one we want is the last among those
-				 * with a key below our target.
-				 */
-				len = apfs_table_locate_data(table, j, &off);
-				if (len == 0x08) {
-					/*
-					 * This is an index node; the data is
-					 * the id of the child table to search
-					 * next.
-					 *
-					 * TODO: better way to tell apart index
-					 * and leaf nodes?
-					 */
-					id = le64_to_cpup((__le64 *)
-								(raw + off));
-					break;
-				}
-
-				/*
-				 * We have reached a leaf node. Leaf records
-				 * don't seem to be stored in order like the
-				 * others, so we need to keep going if this
-				 * is not the one we wanted.
-				 */
-				if (apfs_cat_type(this_key) != APFS_RT_KEY)
-					continue;
-				data = (struct apfs_cat_keyrec *)(raw + off);
-				switch (len) {
-				case 0x22:
-					/*
-					 * These records have something to do
-					 * with hard links. We ignore them for
-					 * now. TODO: figure this out.
-					 */
-					continue;
-				case 0x12:
-					if (cmp != 0)
-						continue;
-					id = le64_to_cpu(data->d_cnid);
-					success = true;
-					break;
-				default:
-					/* Unknown, ignore */
-					continue;
-				}
-				/* We found the record */
-				break;
-			}
-		}
-		if (table != root)
-			apfs_release_table(table);
-		if (id == 0 || success)
-			return id;
-
-		/* Keep going and search the child */
-		table = apfs_btom_read_table(btom, id);
-		if (!table)
-			return 0;
+	raw = query->table->t_node.bh->b_data + query->off;
+	data = (struct apfs_cat_keyrec *)raw;
+	switch (query->len) {
+	case 0x22:
+		/*
+		 * These records have something to do with hard links. We
+		 * ignore them for now. TODO: figure this out.
+		 */
+		break;
+	case 0x12:
+		cnid = le64_to_cpu(data->d_cnid);
+		break;
+	default:
+		/* Corrupted filesystem? Or something new? */
+		break;
 	}
 
-	/* This should never be reached with a valid filesystem */
-	apfs_release_table(table);
-	return 0;
+	if (query->table != sbi->s_cat_tree->root)
+		apfs_release_table(query->table);
+
+fail:
+	kfree(query);
+	return cnid;
 }
 
 /**
  * apfs_btom_read_table - Find and read a table from a b-tree
- * @btom:	b-tree object map
  * @id:		node id for the seeked table
  *
  * Returns NULL is case of failure, otherwise a pointer to the resulting
  * apfs_table structure.
  */
-struct apfs_table *apfs_btom_read_table(struct apfs_table *btom, u64 id)
+struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 {
-	struct super_block *sb = btom->t_node.sb;
-	struct apfs_table *table = btom;
-	int i, j;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_table *result = NULL;
+	struct apfs_query *query;
+	struct apfs_btom_data *data;
+	char *raw;
+	u64 block;
 
-	/*
-	 * We need a maximum depth for the btom so we can't loop forever if the
-	 * filesystem is damaged. 12 should be enough to map every block.
-	 */
-	for (i = 0; i < 12; i++) {
-		u64 block = 0;
+	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	if (!query)
+		return NULL;
+	query->table = sbi->s_cat_tree->btom;
+	query->key = &id;
+	query->cmp = apfs_cmp64;
+	query->count = 0;
 
-		for (j = table->t_records - 1; j >= 0; j--) {
-			/* TODO: this is slow, do bisection instead */
-			int len, off;
-			char *raw = table->t_node.bh->b_data;
-			struct apfs_btom_key *key;
-			struct apfs_btom_data *data;
+	if (apfs_btree_query(sb, query))
+		goto fail_query;
 
-			len = apfs_table_locate_key(table, j, &off);
-			if (len != sizeof(*key)) /* Filesystem is corrupted */
-				break;
-			key = (struct apfs_btom_key *)(raw + off);
+	if (query->len != sizeof(*data)) /* Invalid filesystem */
+		goto fail_result;
+	raw = query->table->t_node.bh->b_data;
+	data = (struct apfs_btom_data *)(raw + query->off);
+	block = le64_to_cpu(data->block);
 
-			if (le64_to_cpu(key->block_id) <= id) {
-				/*
-				 * Since the records are in order, the one we
-				 * want is the last among those with an id
-				 * below our target.
-				 */
-				len = apfs_table_locate_data(table, j, &off);
-				switch (len) {
-				case 0x10:
-					data = (struct apfs_btom_data *)
-								(raw + off);
-					block = le64_to_cpu(data->child_blk);
-					break;
-				case 0x08:
-					block = le64_to_cpup((__le64 *)
-								(raw + off));
-					break;
-				default:
-					/* Filesystem is corrupted */
-					break;
-				}
-				/*
-				 * This was the record we wanted, so we are
-				 * done with this table. If block is still 0
-				 * by now that means the search failed.
-				 */
-				break;
-			}
-		}
-		if (table != btom)
-			apfs_release_table(table);
-		if (block == 0)
-			return NULL;
-		table = apfs_read_table(sb, block);
-		if (!table)
-			return NULL;
-		if (table->t_node.node_id == id) {
-			/*
-			 * TODO: we need a better way to tell if we're done,
-			 * because in theory this could happen by pure chance.
-			 */
-			return table;
-		}
-	}
+	result = apfs_read_table(sb, block);
+	if (!result)
+		goto fail_result;
+	if (result->t_node.node_id != id) /* TODO: check this only on debug */
+		apfs_msg(sb, KERN_ERR, "corrupt b-tree");
 
-	/* This should never be reached with a valid filesystem */
-	apfs_release_table(table);
-	return NULL;
+fail_result:
+	if (query->table != sbi->s_cat_tree->btom)
+		apfs_release_table(query->table);
+fail_query:
+	kfree(query);
+	return result;
 }

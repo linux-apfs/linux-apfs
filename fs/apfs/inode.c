@@ -38,7 +38,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 
 	raw = apfs_cat_get_data(sb, key, &len, table);
 	if (!raw)
-		goto fail;
+		return NULL;
 
 	if (sizeof(*raw) > len) {
 		/*
@@ -62,7 +62,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	return raw;
 
 fail:
-	if (*table && *table != sbi->s_cat_tree->root)
+	if (*table != sbi->s_cat_tree->root)
 		apfs_release_table(*table);
 	return NULL;
 }
