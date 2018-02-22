@@ -115,7 +115,7 @@ struct apfs_node_header {
 	__le16 unknown_2;	/* Seems always 0x4000. Perhaps a flag */
 	__le16 unknown_3;	/* Often 0x0b, 0x0e and 0x0f */
 	__le16 unknown_4;
-};
+} __attribute__ ((__packed__));
 
 /*
  * Structure of the checkpoint and main superblocks
@@ -150,7 +150,7 @@ struct apfs_super_block {
 	char	unknown_8[16];
 	__le32	s_max_volumes;		/* Maximum number of volumes */
 /*B8*/	__le64	volume_ids[0];		/* Array of volume ids starts here */
-};
+} __attribute__ ((__packed__));
 
 /* Case sensitivity of the volume */
 #define APFS_CASE_SENSITIVE		0x1000
@@ -200,7 +200,7 @@ struct apfs_volume_checkpoint_sb {
 	} v_checkpoints[8];
 
 /*2C0*/	char	v_name[48];	/* Volume name */
-};
+} __attribute__ ((__packed__));
 
 /*
  * A block storing a table will have the following format, with the 0x28
@@ -244,7 +244,7 @@ struct apfs_table_raw {
 	} t_sd;			/* Size dependent */
 	/* What follows is the body of the table, beginning with the index */
 	char t_body[0];
-};
+} __attribute__ ((__packed__));
 
 /*
  * Structure of an index entry for table types 0 to 3. It stores both
@@ -257,7 +257,7 @@ struct apfs_index_entry_long {
 	/* Data offset, counting backwards from the end of the data section */
 	__le16 data_off;
 	__le16 data_len;
-};
+} __attribute__ ((__packed__));
 
 /*
  * For table types 4 to 7, the keys and data are of a fixed length. In that
@@ -269,7 +269,7 @@ struct apfs_index_entry_short {
 	__le16 key_off;
 	/* Data offset, counting backwards from the end of the data section */
 	__le16 data_off;
-};
+} __attribute__ ((__packed__));
 
 /*
  * Structure of the keys in the B-Tree Object Map table
@@ -277,7 +277,7 @@ struct apfs_index_entry_short {
 struct apfs_btom_key {
 	__le64 block_id;	/* Block id of the child */
 	__le64 checkpoint_id;
-};
+} __attribute__ ((__packed__));
 
 /*
  * Structure of the data in the B-Tree Object Map tables. The first two
@@ -287,7 +287,7 @@ struct apfs_btom_data {
 	__le32 unknown;
 	__le32 child_size;	/* Size of the child */
 	__le64 child_blk;	/* Block address of the child */
-};
+} __attribute__ ((__packed__));
 
 /*
  * The name length in the catalog key counts the terminating null byte. Hence
@@ -321,7 +321,7 @@ struct apfs_cat_key {
 	__u8 k_len;		/* Filename length, counting null termination */
 	char unknown_2[3];
 	char k_filename[0];	/* Filename starts here */
-};
+} __attribute__ ((__packed__));
 
 /*
  * Structure of the data in the catalog tables for record type APFS_RT_KEY.
@@ -333,7 +333,7 @@ struct apfs_cat_keyrec {
 	__le64 d_cnid;
 	__le64 d_time;		/* Date Added */
 	__le16 unknown;		/* TODO: Could this ever be 8 bytes long? */
-};
+} __attribute__ ((__packed__));
 
 /*
  * Structure of the data in the catalog tables for record type APFS_RT_INODE.
@@ -366,7 +366,7 @@ struct apfs_cat_inode {
 	 * Don't try to work with this field for now.
 	 */
 	char d_filename[0];
-};
+} __attribute__ ((__packed__));
 
 /*
  * Tail of the data for an APFS_RT_INODE record. I'm not sure where it starts,
@@ -377,7 +377,7 @@ struct apfs_cat_inode_tail {
 	__le64 d_size;		/* Logical file size */
 	__le64 d_phys_size;	/* Physical file size */
 	char unknown[24];	/* Or is it 8 bytes? */
-};
+} __attribute__ ((__packed__));
 
 /*
  * Function prototypes
