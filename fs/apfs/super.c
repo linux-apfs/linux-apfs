@@ -492,7 +492,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &apfs_sops;
 
 	root = apfs_iget(sb, APFS_ROOT_CNID);
-	if (!root) {
+	if (IS_ERR(root)) {
 		apfs_msg(sb, KERN_ERR, "unable to get root inode");
 		goto failed_mount;
 	}
