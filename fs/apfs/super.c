@@ -145,11 +145,16 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 		__le64 *block;
 
 		len = apfs_table_locate_data(vtable, i, &off);
+		if (len != 16) {
+			err = -EIO;
+			apfs_msg(sb, KERN_ERR, "bad index in volume block");
+			goto cleanup;
+		}
+
 		/* The block number is in the second 64 bits of data */
 		block = (__le64 *)(vtable->t_node.bh->b_data + off + 8);
 		vcsb = le64_to_cpu(*block);
 
-		brelse(bh);
 		bh = sb_bread(sb, vcsb);
 		if (!bh) {
 			err = -EIO;
@@ -159,8 +164,8 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 
 		vcsb_raw = (struct apfs_volume_checkpoint_sb *)bh->b_data;
 		*count += le64_to_cpu(vcsb_raw->v_used_blks);
+		brelse(bh);
 	}
-	brelse(bh);
 
 cleanup:
 	apfs_release_table(vtable);

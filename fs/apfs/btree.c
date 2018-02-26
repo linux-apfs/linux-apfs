@@ -89,7 +89,7 @@ static int apfs_cat_keycmp(void *k1, void *k2, int len)
 		return 1;
 	}
 	if (*((char *)k1 + len - 1) != 0) {
-		/* Filename must end in NULL or strcasecmp() could segfault */
+		/* strcasecmp() expects proper NULL termination */
 		return 1;
 	}
 

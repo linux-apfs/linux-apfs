@@ -10,6 +10,33 @@
 #include "apfs.h"
 
 /**
+ * apfs_table_is_valid - Check basic sanity of the table index
+ * @sb:		filesystem superblock
+ * @table:	table to check
+ *
+ * Verifies that the table index fits in a single block, and that the number
+ * of records fits in the index. Without this check a crafted filesystem could
+ * pretend to have too many records, and calls to apfs_table_locate_key() and
+ * apfs_table_locate_data() would read beyond the limits of the node.
+ */
+static bool apfs_table_is_valid(struct super_block *sb,
+				struct apfs_table *table)
+{
+	int records = table->t_records;
+	int index_size = table->t_key - sizeof(struct apfs_table_raw);
+	int entry_size;
+	u16 type = table->t_type;
+
+	if (table->t_key > sb->s_blocksize)
+		return false;
+
+	entry_size = (type & 0x04) ? sizeof(struct apfs_index_entry_short) :
+		     sizeof(struct apfs_index_entry_long);
+
+	return records * entry_size <= index_size;
+}
+
+/**
  * apfs_read_table - Read a table header from disk
  * @sb:		filesystem superblock
  * @block:	number of the block where the table is stored
@@ -44,8 +71,13 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 	table->t_node.sb = sb;
 	table->t_node.block_nr = block;
 	table->t_node.node_id = le64_to_cpu(raw->t_header.n_block_id);
-
 	table->t_node.bh = bh;
+
+	if (!apfs_table_is_valid(sb, table)) {
+		kfree(table);
+		table = NULL;
+		goto release_bh;
+	}
 	return table;
 
 release_bh:
@@ -71,10 +103,13 @@ void apfs_release_table(struct apfs_table *table)
  * @index:	number of the entry to locate
  * @off:	on return will hold the offset in the block
  *
- * Returns the length of the key, 0 if @index is out of bounds.
+ * Returns the length of the key, or 0 in case of failure. The function checks
+ * that this length fits within the block; callers must use the returned value
+ * to make sure they never operate outside its bounds.
  */
 int apfs_table_locate_key(struct apfs_table *table, int index, int *off)
 {
+	struct super_block *sb = table->t_node.sb;
 	struct apfs_table_raw *raw;
 	int type;
 	int len;
@@ -101,6 +136,11 @@ int apfs_table_locate_key(struct apfs_table *table, int index, int *off)
 		/* Translate offset in key area to offset in block */
 		*off = table->t_key + le16_to_cpu(entry->key_off);
 	}
+
+	if (*off + len > sb->s_blocksize) {
+		/* Avoid out-of-bounds read if corrupted */
+		return 0;
+	}
 	return len;
 }
 
@@ -110,7 +150,9 @@ int apfs_table_locate_key(struct apfs_table *table, int index, int *off)
  * @index:	number of the entry to locate
  * @off:	on return will hold the offset in the block
  *
- * Returns the length of the data, 0 if @index is out of bounds.
+ * Returns the length of the data, or 0 in case of failure. The function checks
+ * that this length fits within the block; callers must use the returned value
+ * to make sure they never operate outside its bounds.
  */
 int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 {
@@ -155,6 +197,11 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 		else
 			*off = sb->s_blocksize - le16_to_cpu(entry->data_off);
 	}
+
+	if (*off < 0 || *off + len > sb->s_blocksize) {
+		/* Avoid out-of-bounds read if corrupted */
+		return 0;
+	}
 	return len;
 }
 
@@ -169,8 +216,11 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
  * @query->key, according to the order given by @query->cmp.
  *
  * On success returns 0; the offset of the data within the block will be saved
- * in @query->off, and its length in @query->len. An error code will be
- * returned in case of failure.
+ * in @query->off, and its length in @query->len. The function checks that this
+ * length fits within the block; callers must use the returned value to make
+ * sure they never operate outside its bounds.
+ *
+ * An error code will be returned in case of failure.
  *
  * TODO: the search algorithm is far from optimal for the ordered case, it
  * would be better to search by bisection.
