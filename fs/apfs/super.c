@@ -412,16 +412,14 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	/* Get the Volume Checkpoint Superblock with id == vol_id */
-	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	query = apfs_alloc_query(vtable, NULL /* parent */);
 	if (!query) {
 		apfs_release_table(vtable);
 		err = -ENOMEM;
 		goto failed_vol;
 	}
-	query->table = vtable;
 	query->key = &vol_id;
 	query->cmp = apfs_cmp64;
-	query->count = 0;
 	err = apfs_table_query(query, false /* ordered */);
 	if (!err && query->len >= 16) {
 		/* The block number is in the second 64 bits of data */

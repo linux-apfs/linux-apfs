@@ -46,17 +46,15 @@ static inline bool apfs_key_has_name(struct apfs_cat_key *key)
 }
 
 /**
- * apfs_cat_keycmp - Compare two catalog keys
+ * apfs_cat_anon_keycmp - Compare two catalog keys, ignoring the filenames
  * @k1, @k2:	pointers to the keys to compare, both of type apfs_cat_key
  * @len:	length of @k1
  *
  * returns   0 if @k1 and @k2 are equal
  *	   < 0 if @k1 comes before @k2 in the btree
  *	   > 0 if @k1 comes after @k2 in the btree (or in case of error)
- *
- * For now we assume filenames are in ascii. TODO: unicode support.
  */
-static int apfs_cat_keycmp(void *k1, void *k2, int len)
+int apfs_cat_anon_keycmp(void *k1, void *k2, int len)
 {
 	u64 cnid1;
 	u64 cnid2;
@@ -66,7 +64,7 @@ static int apfs_cat_keycmp(void *k1, void *k2, int len)
 	if (len < 8) {
 		/*
 		 * Invalid filesystem. We choose a positive return value
-		 * because that will cause apfs_search_table() to fail.
+		 * because that will cause apfs_table_query() to fail.
 		 */
 		return 1;
 	}
@@ -81,6 +79,27 @@ static int apfs_cat_keycmp(void *k1, void *k2, int len)
 	if (type1 != type2)
 		return type1 < type2 ? -1 : 1;
 
+	return 0;
+}
+
+/**
+ * apfs_cat_keycmp - Compare two catalog keys
+ * @k1, @k2:	pointers to the keys to compare, both of type apfs_cat_key
+ * @len:	length of @k1
+ *
+ * returns   0 if @k1 and @k2 are equal
+ *	   < 0 if @k1 comes before @k2 in the btree
+ *	   > 0 if @k1 comes after @k2 in the btree (or in case of error)
+ *
+ * For now we assume filenames are in ascii. TODO: unicode support.
+ */
+static int apfs_cat_keycmp(void *k1, void *k2, int len)
+{
+	int ret;
+
+	ret = apfs_cat_anon_keycmp(k1, k2, len);
+	if (ret)
+		return ret;
 	if (!apfs_key_has_name(k1))
 		return 0;
 	/* TODO: support comparison of two named attributes */
@@ -108,14 +127,14 @@ static int apfs_cat_keycmp(void *k1, void *k2, int len)
  *         > 0 if @k1 > @k2 (or in case of error)
  *
  * This function exists only to serve as a parameter in calls to
- * apfs_search_table().
+ * apfs_table_query().
  */
 int apfs_cmp64(void *k1, void *k2, int len)
 {
 	if (len < sizeof(u64)) {
 		/*
 		 * Invalid filesystem. We choose a positive return value
-		 * because that will cause apfs_search_table() to fail.
+		 * because that will cause apfs_table_query() to fail.
 		 */
 		return 1;
 	}
@@ -147,119 +166,177 @@ static inline bool apfs_node_is_btom(struct apfs_table *table)
 }
 
 /**
- * apfs_btree_query - Execute a query on a b-tree
- * @sb:		filesystem superblock
- * @query:	the query to execute
+ * apfs_alloc_query - Allocates a query structure
+ * @table:	table to be searched
+ * @parent:	query for the parent table
  *
- * Searches the b-tree starting at @query->table, looking for the record
- * corresponding to @query->key. The original caller should set @query->count
- * to 0; each recursive call to this function will increment it.
+ * Callers other than apfs_btree_query() should set @parent to NULL, and @table
+ * to the root of the b-tree. They should also initialize most of the query
+ * fields themselves; when @parent is not NULL the query will inherit them.
  *
- * Returns 0 in case of success and sets the @query->len and @query->off fields
- * to the results of the query. @query->table will now point to the leaf node
- * holding the record.
- *
- * In case of failure returns an appropriate error code.
+ * Returns the allocated query, or NULL in case of failure.
  */
-static int apfs_btree_query(struct super_block *sb, struct apfs_query *query)
+struct apfs_query *apfs_alloc_query(struct apfs_table *table,
+				    struct apfs_query *parent)
+{
+	struct apfs_query *query;
+
+	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	if (!query)
+		return NULL;
+
+	query->table = table;
+	query->key = parent ? parent->key : NULL;
+	query->flags = parent ? parent->flags & ~APFS_QUERY_DONE : 0;
+	query->parent = parent;
+	query->cmp = parent ? parent->cmp : NULL;
+	/* Start the search with the last record and go backwards */
+	query->index = table->t_records;
+	query->depth = parent ? parent->depth + 1 : 0;
+
+	return query;
+}
+
+/**
+ * apfs_free_query - Free a query structure
+ * @sb:		filesystem superblock
+ * @query:	query to free
+ *
+ * Also frees the table if it's not the root of a b-tree, and the parent query
+ * if it is kept. If a search key was allocated, the caller may still need to
+ * free that.
+ */
+void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_table *root = sbi->s_cat_tree->root;
 	struct apfs_table *btom = sbi->s_cat_tree->btom;
+
+	if (query->table != root && query->table != btom)
+		apfs_release_table(query->table);
+	if (query->parent)
+		apfs_free_query(sb, query->parent);
+	kfree(query);
+}
+
+/**
+ * apfs_btree_query - Execute a query on a b-tree
+ * @sb:		filesystem superblock
+ * @query:	the query to execute
+ *
+ * Searches the b-tree starting at @query->index in @query->table, looking for
+ * the record corresponding to @query->key.
+ *
+ * Returns 0 in case of success and sets the @query->len, @query->off and
+ * @query->index fields to the results of the query. @query->table will now
+ * point to the leaf node holding the record.
+ *
+ * In case of failure returns an appropriate error code.
+ */
+int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_table *root = sbi->s_cat_tree->root;
+	struct apfs_table *btom = sbi->s_cat_tree->btom;
+	struct apfs_table *table;
 	struct apfs_query *btom_query;
+	struct apfs_query *parent;
 	struct apfs_btom_data *data;
-	char *raw = query->table->t_node.bh->b_data;
+	char *raw = (*query)->table->t_node.bh->b_data;
 	u64 child = 0;
 	bool ordered = true;
 	int err;
 
-	if (query->count++ >= 12) {
+	if ((*query)->depth >= 12) {
 		/*
 		 * We need a maximum depth for the tree so we can't loop
 		 * forever if the filesystem is damaged. 12 should be more
 		 * than enough to map every block.
 		 */
-		err = -EINVAL;
-		goto fail;
+		return -EINVAL;
 	}
 
-	if (apfs_node_is_leaf(query->table) &&
-	    !apfs_node_is_btom(query->table)) {
+	if (apfs_node_is_leaf((*query)->table) &&
+	    !apfs_node_is_btom((*query)->table)) {
 		/* The leaves of a catalog tree are not ordered */
 		ordered = false;
 	}
-	err = apfs_table_query(query, ordered);
+	err = apfs_table_query(*query, ordered);
+	if (err == -EAGAIN) {
+		if (!(*query)->parent) /* We are at the root of the tree */
+			return -ENODATA;
+
+		/* Move back up one level and continue the query */
+		parent = (*query)->parent;
+		(*query)->parent = NULL; /* Don't free the parent */
+		apfs_free_query(sb, *query);
+		*query = parent;
+		/* TODO: a crafted fs could have us spinning for too long */
+		return apfs_btree_query(sb, query);
+	}
 	if (err)
-		goto fail;
-	if (apfs_node_is_leaf(query->table)) /* All done */
+		return err;
+	if (apfs_node_is_leaf((*query)->table)) /* All done */
 		return 0;
-	if (apfs_node_is_btom(query->table)) {
+	if (apfs_node_is_btom((*query)->table)) {
 		/* The data on a btom index node is the address of the child */
-		if (query->len != 8) {
-			err = -EINVAL;
-			goto fail;
-		}
-		child = le64_to_cpup((__le64 *)(raw + query->off));
+		if ((*query)->len != 8)
+			return -EINVAL;
+		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
 	} else {
 		/*
 		 * The data on an index node is the id of the table
 		 * to search next; we must query the btom to find its
 		 * block number.
 		 */
-		if (query->len != 8) {
-			err = -EINVAL;
-			goto fail;
-		}
-		child = le64_to_cpup((__le64 *)(raw + query->off));
-		btom_query = kmalloc(sizeof(*btom_query), GFP_KERNEL);
-		if (!btom_query) {
-			err = -ENOMEM;
-			goto fail;
-		}
-		btom_query->table = btom;
+		if ((*query)->len != 8)
+			return -EINVAL;
+		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
+		btom_query = apfs_alloc_query(btom, NULL /* parent */);
+		if (!btom_query)
+			return -ENOMEM;
 		btom_query->key = &child;
 		btom_query->cmp = apfs_cmp64;
-		btom_query->count = 0;
-		err = apfs_btree_query(sb, btom_query);
+		err = apfs_btree_query(sb, &btom_query);
 		if (err)
-			goto fail_btom;
+			goto fail;
 		raw = btom_query->table->t_node.bh->b_data;
 		if (btom_query->len != sizeof(*data)) {
 			err = -EINVAL;
-			goto fail_btom_len;
+			goto fail;
 		}
 		data = (struct apfs_btom_data *)(raw + btom_query->off);
 		child = le64_to_cpu(data->block);
 
-		if (btom_query->table != btom)
-			apfs_release_table(btom_query->table);
-		kfree(btom_query);
+		apfs_free_query(sb, btom_query);
 	}
-	if (query->table != root && query->table != btom)
-		apfs_release_table(query->table);
 
 	/* Now go a level deeper and search the child */
-	query->table = apfs_read_table(sb, child);
-	if (!query->table)
+	table = apfs_read_table(sb, child);
+	if (!table)
 		return -ENOMEM;
-	err = apfs_btree_query(sb, query);
-	if (err)
-		return err;
-	return 0;
 
-fail_btom_len:
-	if (btom_query->table != btom)
-		apfs_release_table(btom_query->table);
-fail_btom:
-	kfree(btom_query);
-fail:
-	if (query->table != root && query->table != btom) {
-		apfs_release_table(query->table);
-		query->table = NULL;
+	if ((*query)->flags & APFS_QUERY_MULTIPLE) {
+		/*
+		 * We are looking for multiple entries, so we must remember
+		 * the parent table and index to continue the search later.
+		 */
+		*query = apfs_alloc_query(table, *query);
+	} else {
+		/* Reuse the same query structure to search the child */
+		if ((*query)->table != root && (*query)->table != btom)
+			apfs_release_table((*query)->table);
+		(*query)->table = table;
+		(*query)->index = table->t_records;
+		(*query)->depth++;
 	}
+
+	return apfs_btree_query(sb, query);
+
+fail:
+	apfs_free_query(sb, btom_query);
 	return err;
 }
-
 
 /**
  * apfs_cat_get_data - Get the data for a catalog key
@@ -282,23 +359,24 @@ void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
 	struct apfs_query *query;
 	void *data = NULL;
 
-	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
 	if (!query)
 		return NULL;
-	query->table = sbi->s_cat_tree->root;
 	query->key = key;
 	query->cmp = apfs_cat_keycmp;
-	query->count = 0;
 
-	if (apfs_btree_query(sb, query))
+	if (apfs_btree_query(sb, &query))
 		goto fail;
 
 	*table = query->table;
 	*length = query->len;
 	data = query->table->t_node.bh->b_data + query->off;
 
-fail:
 	kfree(query);
+	return data;
+
+fail:
+	apfs_free_query(sb, query);
 	return data;
 }
 
@@ -318,15 +396,13 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key)
 	char *raw;
 	u64 cnid = 0;
 
-	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
 	if (!query)
 		return 0;
-	query->table = sbi->s_cat_tree->root;
 	query->key = key;
 	query->cmp = apfs_cat_keycmp;
-	query->count = 0;
 
-	if (apfs_btree_query(sb, query))
+	if (apfs_btree_query(sb, &query))
 		goto fail;
 
 	raw = query->table->t_node.bh->b_data + query->off;
@@ -346,11 +422,8 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key)
 		break;
 	}
 
-	if (query->table != sbi->s_cat_tree->root)
-		apfs_release_table(query->table);
-
 fail:
-	kfree(query);
+	apfs_free_query(sb, query);
 	return cnid;
 }
 
@@ -370,33 +443,28 @@ struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 	char *raw;
 	u64 block;
 
-	query = kmalloc(sizeof(*query), GFP_KERNEL);
+	query = apfs_alloc_query(sbi->s_cat_tree->btom, NULL /* parent */);
 	if (!query)
 		return NULL;
-	query->table = sbi->s_cat_tree->btom;
 	query->key = &id;
 	query->cmp = apfs_cmp64;
-	query->count = 0;
 
-	if (apfs_btree_query(sb, query))
-		goto fail_query;
+	if (apfs_btree_query(sb, &query))
+		goto fail;
 
 	if (query->len != sizeof(*data)) /* Invalid filesystem */
-		goto fail_result;
+		goto fail;
 	raw = query->table->t_node.bh->b_data;
 	data = (struct apfs_btom_data *)(raw + query->off);
 	block = le64_to_cpu(data->block);
 
 	result = apfs_read_table(sb, block);
 	if (!result)
-		goto fail_result;
+		goto fail;
 	if (result->t_node.node_id != id) /* TODO: check this only on debug */
 		apfs_msg(sb, KERN_ERR, "corrupt b-tree");
 
-fail_result:
-	if (query->table != sbi->s_cat_tree->btom)
-		apfs_release_table(query->table);
-fail_query:
-	kfree(query);
+fail:
+	apfs_free_query(sb, query);
 	return result;
 }

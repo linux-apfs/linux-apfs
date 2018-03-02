@@ -210,17 +210,26 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
  * @query:	the query to execute
  * @ordered:	are the table records in order?
  *
- * In a leaf node the records may be out of order; if that is the case this
- * function will check them one by one until it finds an exact match for
- * @query->key. Otherwise it will search for the key that comes right before
- * @query->key, according to the order given by @query->cmp.
+ * The search will start at index @query->index. In a leaf node the records
+ * may be out of order; if that is the case this function will check them one
+ * by one until it finds an exact match for @query->key. Otherwise it will
+ * search for the key that comes right before @query->key, according to the
+ * order given by @query->cmp.
+ *
+ * The @query->index will be updated to the last index checked. This is
+ * important when searching for multiple entries, since the query may need
+ * to remember where it was on this level. If we are done with this table, the
+ * query will be flagged as APFS_QUERY_DONE, and the search will end in failure
+ * as soon as we return to this level. The function may also return -EAGAIN,
+ * to signal that the search should go on in a different branch.
  *
  * On success returns 0; the offset of the data within the block will be saved
  * in @query->off, and its length in @query->len. The function checks that this
  * length fits within the block; callers must use the returned value to make
  * sure they never operate outside its bounds.
  *
- * An error code will be returned in case of failure.
+ * -ENODATA will be returned if the entry does not exist; -EINVAL in case of
+ * corruption.
  *
  * TODO: the search algorithm is far from optimal for the ordered case, it
  * would be better to search by bisection.
@@ -229,28 +238,51 @@ int apfs_table_query(struct apfs_query *query, bool ordered)
 {
 	struct apfs_table *table = query->table;
 	void *key = query->key;
-	int i;
 
-	for (i = table->t_records - 1; i >= 0; i--) {
+	if (query->flags & APFS_QUERY_DONE)
+		/* Nothing left to search; the query failed */
+		return -ENODATA;
+
+	while (--query->index >= 0) {
 		char *raw = table->t_node.bh->b_data;
 		void *this_key;
 		int off, len;
+		int cmp;
 
-		len = apfs_table_locate_key(table, i, &off);
+		len = apfs_table_locate_key(table, query->index, &off);
 		if (len == 0) /* Filesystem is corrupted */
 			return -EINVAL;
 		this_key = (void *)(raw + off);
+		cmp = query->cmp(this_key, key, len);
 
-		if (!ordered && query->cmp(this_key, key, len) != 0)
+		if (!ordered && cmp != 0)
 			continue;
-		if (query->cmp(this_key, key, len) <= 0) {
-			len = apfs_table_locate_data(table, i, &off);
+
+		if (cmp <= 0) {
+			query->key_off = off;
+			query->key_len = len;
+
+			len = apfs_table_locate_data(table, query->index, &off);
 			if (len == 0) /* Filesystem is corrupted */
 				return -EINVAL;
 			query->off = off;
 			query->len = len;
+			if (query->flags & APFS_QUERY_MULTIPLE &&
+			    ordered && cmp != 0) {
+				/*
+				 * This is the last entry that can be relevant
+				 * in this table. Keep searching the children,
+				 * but don't come back to this level.
+				 */
+				query->flags |= APFS_QUERY_DONE;
+			}
 			return 0;
 		}
+	}
+
+	if (query->flags & APFS_QUERY_MULTIPLE) {
+		/* The next record may be in another table */
+		return -EAGAIN;
 	}
 
 	return -ENODATA;

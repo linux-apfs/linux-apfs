@@ -6,6 +6,7 @@
  */
 
 #include <linux/slab.h>
+#include <linux/buffer_head.h>
 #include "apfs.h"
 
 /**
@@ -37,3 +38,106 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 
 	return apfs_cat_resolve(dir->i_sb, key);
 }
+
+static int apfs_readdir(struct file *file, struct dir_context *ctx)
+{
+	struct inode *inode = file_inode(file);
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_cat_key *key;
+	struct apfs_query *query;
+	u64 cnid = inode->i_ino;
+	loff_t pos;
+	int err = 0;
+
+	if (ctx->pos == 0) {
+		if (!dir_emit_dot(file, ctx))
+			return 0;
+		ctx->pos++;
+	}
+	if (ctx->pos == 1) {
+		if (!dir_emit_dotdot(file, ctx))
+			return 0;
+		ctx->pos++;
+	}
+
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
+	if (!key)
+		return -ENOMEM;
+	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	if (!query) {
+		err = -ENOMEM;
+		goto cleanup;
+	}
+
+	/* We want all the children for the cnid, regardless of the name */
+	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_KEY << 56));
+	query->key = key;
+	query->cmp = apfs_cat_anon_keycmp;
+	query->flags = APFS_QUERY_MULTIPLE;
+
+	pos = ctx->pos - 2;
+	while (1) {
+		/*
+		 * We query for the matching records, one by one. After we
+		 * pass ctx->pos we begin to emit them.
+		 *
+		 * TODO: Faster approach for large directories?
+		 */
+		char *raw;
+		struct apfs_cat_key *de_key;
+		struct apfs_cat_keyrec *de;
+
+		err = apfs_btree_query(sb, &query);
+		if (err == -ENODATA) { /* Got all the records */
+			err = 0;
+			break;
+		}
+		if (err)
+			break;
+
+		/*
+		 * Check that the found key and data are long enough to fit
+		 * the structures we expect, and that the filename is
+		 * NULL-terminated. Otherwise the filesystem is invalid.
+		 */
+		err = -EINVAL;
+		raw = query->table->t_node.bh->b_data;
+		if (query->key_len < sizeof(*de_key))
+			break;
+		de_key = (struct apfs_cat_key *)(raw + query->key_off);
+		if (query->key_len != sizeof(*de_key) + de_key->k_len ||
+		    de_key->k_len == 0 ||
+		    de_key->k_filename[de_key->k_len - 1] != 0)
+			break;
+		if (query->len < sizeof(*de))
+			break;
+		de = (struct apfs_cat_keyrec *)(raw + query->off);
+
+		err = 0;
+		if (pos <= 0) {
+			/* TODO: what if the d_type is corrupted? */
+			if (!dir_emit(ctx, de_key->k_filename,
+				      de_key->k_len - 1, /* Don't count NULL */
+				      le64_to_cpu(de->d_cnid),
+				      le16_to_cpu(de->d_type)))
+				break;
+			ctx->pos++;
+		}
+		pos--;
+	}
+
+	if (pos < 0)
+		ctx->pos -= pos;
+	apfs_free_query(sb, query);
+
+cleanup:
+	kfree(key);
+	return err;
+}
+
+const struct file_operations apfs_dir_operations = {
+	.llseek		= generic_file_llseek,
+	.read		= generic_read_dir,
+	.iterate_shared	= apfs_readdir,
+};

@@ -103,6 +103,10 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 	return container_of(inode, struct apfs_inode_info, vfs_inode);
 }
 
+/* Flags for the query structure */
+#define APFS_QUERY_MULTIPLE	1 /* Search for multiple matching entries */
+#define APFS_QUERY_DONE		2 /* The search at this level is over */
+
 /*
  * Structure used to retrieve data from an APFS B-Tree. For now only used
  * on the calalog and the object map.
@@ -114,11 +118,18 @@ struct apfs_query {
 	/* Decide which of two keys comes first in an ordered table */
 	int (*cmp)(void *k1, void *k2, int len);
 
+	/* For use by readdir */
+	struct apfs_query *parent;	/* Query for parent table */
+	unsigned int flags;
+
 	/* Set by the query on success */
+	int index;			/* Index of the entry in the table */
+	int key_off;			/* Offset of the key in the table */
+	int key_len;			/* Length of the key */
 	int off;			/* Offset of the data in the table */
 	int len;			/* Length of the data */
 
-	int count;			/* Put a limit on recursion */
+	int depth;			/* Put a limit on recursion */
 };
 
 
@@ -350,7 +361,7 @@ struct apfs_cat_key {
 struct apfs_cat_keyrec {
 	__le64 d_cnid;
 	__le64 d_time;		/* Date Added */
-	__le16 unknown;		/* TODO: Could this ever be 8 bytes long? */
+	__le16 d_type;		/* File type */
 } __attribute__ ((__packed__));
 
 /*
@@ -402,7 +413,12 @@ struct apfs_cat_inode_tail {
  */
 
 /* btree.c */
+extern int apfs_cat_anon_keycmp(void *k1, void *k2, int len);
 extern int apfs_cmp64(void *k1, void *k2, int len);
+extern struct apfs_query *apfs_alloc_query(struct apfs_table *table,
+					   struct apfs_query *parent);
+extern void apfs_free_query(struct super_block *sb, struct apfs_query *query);
+extern int apfs_btree_query(struct super_block *sb, struct apfs_query **query);
 extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
 			       int *length, struct apfs_table **table);
 extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key);
@@ -430,6 +446,9 @@ extern int apfs_table_query(struct apfs_query *query, bool ordered);
 /*
  * Inode and file operations
  */
+
+/* dir.c */
+extern const struct file_operations apfs_dir_operations;
 
 /* namei.c */
 extern const struct inode_operations apfs_dir_inode_operations;

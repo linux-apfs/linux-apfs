@@ -139,8 +139,10 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	ai->i_crtime = le64_to_cpu(raw_inode->d_crtime); /* Not used for now */
 
 	/* For now we only bother providing ops for directories */
-	if (S_ISDIR(inode->i_mode))
+	if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &apfs_dir_inode_operations;
+		inode->i_fop = &apfs_dir_operations;
+	}
 
 	/* Print reported number of children, for verifying the disk layout */
 	apfs_msg(sb, KERN_INFO, "Inode children: %llu", raw_inode->d_children);
