@@ -22,6 +22,7 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 	int length;
 	u64 cnid = dir->i_ino;
 	struct apfs_cat_key *key;
+	u64 result;
 
 	length = child->len + 1; /* Count the terminating null byte */
 	key = kmalloc(sizeof(*key) + length, GFP_KERNEL);
@@ -36,7 +37,9 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 	 */
 	strcpy(key->k_filename, child->name);
 
-	return apfs_cat_resolve(dir->i_sb, key);
+	result = apfs_cat_resolve(dir->i_sb, key);
+	kfree(key);
+	return result;
 }
 
 static int apfs_readdir(struct file *file, struct dir_context *ctx)

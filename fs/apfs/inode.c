@@ -37,6 +37,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_INODE << 56));
 
 	raw = apfs_cat_get_data(sb, key, &len, table);
+	kfree(key);
 	if (!raw)
 		return NULL;
 
