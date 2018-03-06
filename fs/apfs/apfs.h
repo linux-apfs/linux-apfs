@@ -338,18 +338,24 @@ struct apfs_btom_data {
 /*
  * Structure of the keys in the catalog tables. This changed in recent
  * versions of APFS, so there is some guesswork involved.
+ *
+ * TODO: is it reasonable to represent all key types with the same struct? The
+ * inconsistencies lead to some ugly magical constants in the code.
  */
 struct apfs_cat_key {
 	/*
-	 * Parent ID, with the record type in the last 8 bits. For some
-	 * record types this is the only field of the struct, in that case
+	 * Parent ID, with the record type in the last 8 bits. For records
+	 * without a name this is the only field of the struct. In that case
 	 * it holds the actual cnid of the record.
 	 */
 	__le64 k_cnid;
 
-	__u8 k_len;		/* Filename length, counting null termination */
-	char unknown_2[3];
-	char k_filename[0];	/* Filename starts here */
+	__u8 k_len;		/* Name length, counting null termination */
+	/*
+	 * The name of the file or attribute, preceded by three mystery bytes
+	 * in the case of filenames, or one in the case of attribute names.
+	 */
+	char k_name[0];
 } __attribute__ ((__packed__));
 
 /*
@@ -414,6 +420,7 @@ struct apfs_cat_inode_tail {
 
 /* btree.c */
 extern int apfs_cat_anon_keycmp(void *k1, void *k2, int len);
+extern int apfs_cat_keycmp(void *k1, void *k2, int len);
 extern int apfs_cmp64(void *k1, void *k2, int len);
 extern struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 					   struct apfs_query *parent);
@@ -443,6 +450,9 @@ extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
 extern int apfs_table_query(struct apfs_query *query, bool ordered);
 
+/* xattr.c */
+extern ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
+
 /*
  * Inode and file operations
  */
@@ -450,7 +460,17 @@ extern int apfs_table_query(struct apfs_query *query, bool ordered);
 /* dir.c */
 extern const struct file_operations apfs_dir_operations;
 
+/* file.c */
+extern const struct inode_operations apfs_file_inode_operations;
+
 /* namei.c */
 extern const struct inode_operations apfs_dir_inode_operations;
+extern const struct inode_operations apfs_special_inode_operations;
+
+/* symlink.c */
+extern const struct inode_operations apfs_symlink_inode_operations;
+
+/* xattr.c */
+extern const struct xattr_handler *apfs_xattr_handlers[];
 
 #endif	/* _APFS_H */

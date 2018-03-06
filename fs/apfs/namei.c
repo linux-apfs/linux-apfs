@@ -27,4 +27,9 @@ static struct dentry *apfs_lookup(struct inode *dir, struct dentry *dentry,
 
 const struct inode_operations apfs_dir_inode_operations = {
 	.lookup		= apfs_lookup,
+	.listxattr      = apfs_listxattr,
+};
+
+const struct inode_operations apfs_special_inode_operations = {
+	.listxattr      = apfs_listxattr,
 };

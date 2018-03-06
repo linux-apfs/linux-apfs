@@ -139,10 +139,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	inode->i_mtime.tv_nsec = le64_to_cpu(raw_inode->d_mtime) % NSEC_PER_SEC;
 	ai->i_crtime = le64_to_cpu(raw_inode->d_crtime); /* Not used for now */
 
-	/* For now we only bother providing ops for directories */
-	if (S_ISDIR(inode->i_mode)) {
+	/* A lot of operations still missing, of course */
+	if (S_ISREG(inode->i_mode)) {
+		inode->i_op = &apfs_file_inode_operations;
+	} else if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &apfs_dir_inode_operations;
 		inode->i_fop = &apfs_dir_operations;
+	} else if (S_ISLNK(inode->i_mode)) {
+		inode->i_op = &apfs_symlink_inode_operations;
+	} else {
+		inode->i_op = &apfs_special_inode_operations;
 	}
 
 	/* Print reported number of children, for verifying the disk layout */

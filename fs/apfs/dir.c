@@ -24,18 +24,14 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 	struct apfs_cat_key *key;
 	u64 result;
 
-	length = child->len + 1; /* Count the terminating null byte */
+	length = child->len + 4; /* Three mystery bytes and terminating null */
 	key = kmalloc(sizeof(*key) + length, GFP_KERNEL);
 	if (!key)
 		return 0;
 	/* We are looking for a key record */
 	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_KEY << 56));
 	key->k_len = length;
-	/*
-	 * The 3 bytes of unknown meaning don't seem to matter for
-	 * the search, so we don't set them.
-	 */
-	strcpy(key->k_filename, child->name);
+	strcpy(key->k_name + 3, child->name);
 
 	result = apfs_cat_resolve(dir->i_sb, key);
 	kfree(key);
@@ -109,9 +105,9 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		if (query->key_len < sizeof(*de_key))
 			break;
 		de_key = (struct apfs_cat_key *)(raw + query->key_off);
-		if (query->key_len != sizeof(*de_key) + de_key->k_len ||
+		if (query->key_len != sizeof(*de_key) + de_key->k_len + 3 ||
 		    de_key->k_len == 0 ||
-		    de_key->k_filename[de_key->k_len - 1] != 0)
+		    de_key->k_name[de_key->k_len + 2] != 0)
 			break;
 		if (query->len < sizeof(*de))
 			break;
@@ -120,7 +116,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		err = 0;
 		if (pos <= 0) {
 			/* TODO: what if the d_type is corrupted? */
-			if (!dir_emit(ctx, de_key->k_filename,
+			if (!dir_emit(ctx, de_key->k_name + 3,
 				      de_key->k_len - 1, /* Don't count NULL */
 				      le64_to_cpu(de->d_cnid),
 				      le16_to_cpu(de->d_type)))

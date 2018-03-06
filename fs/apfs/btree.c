@@ -33,19 +33,6 @@ static inline u64 apfs_cat_cnid(struct apfs_cat_key *key)
 }
 
 /**
- * apfs_key_has_name - Check if a key has a name
- * @key: the catalog key
- *
- * Returns true if the key should have a name string inside, false otherwise.
- */
-static inline bool apfs_key_has_name(struct apfs_cat_key *key)
-{
-	int type = apfs_cat_type(key);
-
-	return type == APFS_RT_KEY || type == APFS_RT_NAMED_ATTR;
-}
-
-/**
  * apfs_cat_anon_keycmp - Compare two catalog keys, ignoring the filenames
  * @k1, @k2:	pointers to the keys to compare, both of type apfs_cat_key
  * @len:	length of @k1
@@ -93,17 +80,30 @@ int apfs_cat_anon_keycmp(void *k1, void *k2, int len)
  *
  * For now we assume filenames are in ascii. TODO: unicode support.
  */
-static int apfs_cat_keycmp(void *k1, void *k2, int len)
+int apfs_cat_keycmp(void *k1, void *k2, int len)
 {
+	int name_off;
 	int ret;
 
 	ret = apfs_cat_anon_keycmp(k1, k2, len);
 	if (ret)
 		return ret;
-	if (!apfs_key_has_name(k1))
+
+	switch (apfs_cat_type(k1)) {
+	case APFS_RT_KEY:
+		/* Three mystery bytes before the name */
+		name_off = 3;
+		break;
+	case APFS_RT_NAMED_ATTR:
+		/* One mystery byte before the name */
+		name_off = 1;
+		break;
+	default:
+		/* No name string at all */
 		return 0;
-	/* TODO: support comparison of two named attributes */
-	if (len < sizeof(struct apfs_cat_key) + 1) {
+	}
+
+	if (len < sizeof(struct apfs_cat_key) + name_off + 1) {
 		/* The filename must have at least one char */
 		return 1;
 	}
@@ -113,8 +113,8 @@ static int apfs_cat_keycmp(void *k1, void *k2, int len)
 	}
 
 	/* TODO: support case sensitive filesystems */
-	return strcasecmp(((struct apfs_cat_key *)k1)->k_filename,
-			  ((struct apfs_cat_key *)k2)->k_filename);
+	return strcasecmp(((struct apfs_cat_key *)k1)->k_name + name_off,
+			  ((struct apfs_cat_key *)k2)->k_name + name_off);
 }
 
 /**
