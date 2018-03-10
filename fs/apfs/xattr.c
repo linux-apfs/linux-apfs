@@ -9,13 +9,21 @@
 #include <linux/xattr.h>
 #include "apfs.h"
 
-/*
- * TODO: there is only one xattr handler for now. In the future most of this
- * code should be moved to a common function so other handlers can use it.
+/**
+ * apfs_xattr_get - Find and read a named attribute
+ * @inode:	inode the attribute belongs to
+ * @name:	name of the attribute
+ * @buffer:	where to copy the attribute data
+ * @size:	size of @buffer
+ *
+ * Finds an extended attribute and copies its value to @buffer, if provided. If
+ * @buffer is NULL, just computes the size of the buffer required.
+ *
+ * Returns the number of bytes used/required, or a negative error code in case
+ * of failure.
  */
-static int apfs_xattr_apple_get(const struct xattr_handler *handler,
-				struct dentry *unused, struct inode *inode,
-				const char *name, void *buffer, size_t size)
+int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
+		   size_t size)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -26,7 +34,6 @@ static int apfs_xattr_apple_get(const struct xattr_handler *handler,
 	u64 cnid = inode->i_ino;
 	int ret = 0;
 
-	name = xattr_full_name(handler, name);
 	name_len = strlen(name) + 2; /* One mystery byte and terminating null */
 
 	key = kmalloc(sizeof(*key) + name_len, GFP_KERNEL);
@@ -67,6 +74,14 @@ done:
 fail:
 	kfree(key);
 	return ret;
+}
+
+static int apfs_xattr_apple_get(const struct xattr_handler *handler,
+				struct dentry *unused, struct inode *inode,
+				const char *name, void *buffer, size_t size)
+{
+	name = xattr_full_name(handler, name);
+	return apfs_xattr_get(inode, name, buffer, size);
 }
 
 static const struct xattr_handler apfs_xattr_apple_handler = {
