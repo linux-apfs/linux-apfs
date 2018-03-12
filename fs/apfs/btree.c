@@ -408,12 +408,7 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key)
 	raw = query->table->t_node.bh->b_data + query->off;
 	data = (struct apfs_cat_keyrec *)raw;
 	switch (query->len) {
-	case 0x22:
-		/*
-		 * These records have something to do with hard links. We
-		 * ignore them for now. TODO: figure this out.
-		 */
-		break;
+	case 0x22: /* hard link */
 	case 0x12:
 		cnid = le64_to_cpu(data->d_cnid);
 		break;

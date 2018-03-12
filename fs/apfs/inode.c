@@ -86,7 +86,7 @@ fail:
 struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct inode *inode;
+	struct inode *inode, *err;
 	struct apfs_inode_info *ai;
 	struct apfs_cat_inode *raw_inode;
 	struct apfs_cat_inode_tail *raw_itail;
@@ -106,8 +106,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 
 	raw_inode = apfs_get_inode(sb, (u64)ino, &table, &raw_itail);
 	if (!raw_inode) {
-		iget_failed(inode);
-		return ERR_PTR(-EIO);
+		err = ERR_PTR(-EIO);
+		goto failed_get;
 	}
 
 	inode->i_mode = le16_to_cpu(raw_inode->d_mode);
@@ -121,6 +121,19 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	else
 		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->d_group));
 
+	if (!S_ISDIR(inode->i_mode)) {
+		/*
+		 * Directory inodes don't store their link count, so to provide
+		 * it we would have to actually count the subdirectories. The
+		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
+		 */
+		set_nlink(inode, le64_to_cpu(raw_inode->d_link_count));
+		if (inode->i_nlink < le64_to_cpu(raw_inode->d_link_count)) {
+			apfs_msg(sb, KERN_WARNING, "hardlink count overflow");
+			err = ERR_PTR(-EOVERFLOW);
+			goto failed_read;
+		}
+	}
 	if (raw_itail) {
 		inode->i_size = le64_to_cpu(raw_itail->d_size);
 		inode->i_blocks = le64_to_cpu(raw_itail->d_phys_size)
@@ -151,12 +164,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		inode->i_op = &apfs_special_inode_operations;
 	}
 
-	/* Print reported number of children, for verifying the disk layout */
-	apfs_msg(sb, KERN_INFO, "Inode children: %llu", raw_inode->d_children);
-
 	if (table != sbi->s_cat_tree->root) /* Never release the root table */
 		apfs_release_table(table);
 	/* Inode flags are not important for now, leave them at 0 */
 	unlock_new_inode(inode);
 	return inode;
+
+failed_read:
+	if (table != sbi->s_cat_tree->root)
+		apfs_release_table(table);
+failed_get:
+	iget_failed(inode);
+	return err;
 }

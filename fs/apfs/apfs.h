@@ -385,7 +385,10 @@ struct apfs_cat_inode {
 	__le64 d_ctime;		/* Last inode change time */
 	__le64 d_atime;		/* Last access time */
 	__le64 unknown_1;
-	__le64 d_children;	/* For a directory, number of children inodes */
+	union {
+		__le64 d_child_count;	/* Children inodes of a directory */
+		__le64 d_link_count;	/* Hard links to a file */
+	};
 	__le64 unknown_2;
 	__le32 d_owner;		/* ID of the owner */
 	__le32 d_group;		/* ID of the group */
