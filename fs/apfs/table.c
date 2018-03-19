@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include "apfs.h"
+#include "key.h"
 
 /**
  * apfs_table_is_valid - Check basic sanity of the table index
@@ -87,12 +88,12 @@ release_bh:
 
 /**
  * apfs_release_table - Release a table structure
- *
- * This function is barely a draft, since it simply frees the table and
- * ignores other possible users.
+ * @table: table to release. If NULL, do nothing.
  */
 void apfs_release_table(struct apfs_table *table)
 {
+	if (!table)
+		return;
 	brelse(table->t_node.bh);
 	kfree(table);
 }
@@ -237,7 +238,6 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 int apfs_table_query(struct apfs_query *query, bool ordered)
 {
 	struct apfs_table *table = query->table;
-	void *key = query->key;
 
 	if (query->flags & APFS_QUERY_DONE)
 		/* Nothing left to search; the query failed */
@@ -248,12 +248,30 @@ int apfs_table_query(struct apfs_query *query, bool ordered)
 		void *this_key;
 		int off, len;
 		int cmp;
+		int err;
 
 		len = apfs_table_locate_key(table, query->index, &off);
-		if (len == 0) /* Filesystem is corrupted */
-			return -EINVAL;
 		this_key = (void *)(raw + off);
-		cmp = query->cmp(this_key, key, len);
+
+		switch (query->flags & APFS_QUERY_TREE_MASK) {
+		case APFS_QUERY_CAT:
+			err = apfs_read_cat_key(this_key, len, query->curr);
+			break;
+		case APFS_QUERY_BTOM:
+			err = apfs_read_btom_key(this_key, len, query->curr);
+			break;
+		case APFS_QUERY_VOL:
+			err = apfs_read_vol_key(this_key, len, query->curr);
+			break;
+		default:
+			/* Not implemented yet */
+			err = -EINVAL;
+			break;
+		}
+		if (err)
+			return err;
+
+		cmp = apfs_keycmp(query->curr, query->key);
 
 		if (!ordered && cmp != 0)
 			continue;

@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include "apfs.h"
+#include "key.h"
 
 /**
  * apfs_inode_by_name - Find the cnid for a given filename
@@ -19,21 +20,19 @@
  */
 u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 {
-	int length;
+	struct apfs_key *key;
 	u64 cnid = dir->i_ino;
-	struct apfs_cat_key *key;
-	u64 result;
+	u64 result = 0;
 
-	length = child->len + 4; /* Three mystery bytes and terminating null */
-	key = kmalloc(sizeof(*key) + length, GFP_KERNEL);
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return 0;
 	/* We are looking for a key record */
-	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_KEY << 56));
-	key->k_len = length;
-	strcpy(key->k_name + 3, child->name);
-
+	if (apfs_init_key(APFS_RT_KEY, cnid, child->name, key))
+		goto fail;
 	result = apfs_cat_resolve(dir->i_sb, key);
+
+fail:
 	kfree(key);
 	return result;
 }
@@ -43,7 +42,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_cat_key *key;
+	struct apfs_key *key;
 	struct apfs_query *query;
 	u64 cnid = inode->i_ino;
 	loff_t pos;
@@ -70,10 +69,9 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	}
 
 	/* We want all the children for the cnid, regardless of the name */
-	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_KEY << 56));
+	apfs_init_key(APFS_RT_KEY, cnid, NULL /* name */, key);
 	query->key = key;
-	query->cmp = apfs_cat_anon_keycmp;
-	query->flags = APFS_QUERY_MULTIPLE;
+	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE;
 
 	pos = ctx->pos - 2;
 	while (1) {
@@ -84,7 +82,8 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		 * TODO: Faster approach for large directories?
 		 */
 		char *raw;
-		struct apfs_cat_key *de_key;
+		int namelen;
+		struct apfs_dentry_key *de_key;
 		struct apfs_cat_keyrec *de;
 
 		err = apfs_btree_query(sb, &query);
@@ -102,12 +101,11 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		 */
 		err = -EINVAL;
 		raw = query->table->t_node.bh->b_data;
-		if (query->key_len < sizeof(*de_key))
+		namelen = query->key_len - sizeof(*de_key);
+		if (namelen <= 0) /* Filename must have at least one char */
 			break;
-		de_key = (struct apfs_cat_key *)(raw + query->key_off);
-		if (query->key_len != sizeof(*de_key) + de_key->k_len + 3 ||
-		    de_key->k_len == 0 ||
-		    de_key->k_name[de_key->k_len + 2] != 0)
+		de_key = (struct apfs_dentry_key *)(raw + query->key_off);
+		if (de_key->name[namelen - 1] != 0)
 			break;
 		if (query->len < sizeof(*de))
 			break;
@@ -116,8 +114,8 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		err = 0;
 		if (pos <= 0) {
 			/* TODO: what if the d_type is corrupted? */
-			if (!dir_emit(ctx, de_key->k_name + 3,
-				      de_key->k_len - 1, /* Don't count NULL */
+			if (!dir_emit(ctx, de_key->name,
+				      namelen - 1, /* Don't count NULL */
 				      le64_to_cpu(de->d_cnid),
 				      le16_to_cpu(de->d_type)))
 				break;

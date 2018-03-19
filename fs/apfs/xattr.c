@@ -8,6 +8,7 @@
 #include <linux/buffer_head.h>
 #include <linux/xattr.h>
 #include "apfs.h"
+#include "key.h"
 
 /**
  * apfs_xattr_get - Find and read a named attribute
@@ -27,21 +28,18 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_cat_key *key;
+	struct apfs_key *key;
 	struct apfs_query *query;
 	char *xattr;
-	int name_len;
 	u64 cnid = inode->i_ino;
-	int ret = 0;
+	int ret;
 
-	name_len = strlen(name) + 2; /* One mystery byte and terminating null */
-
-	key = kmalloc(sizeof(*key) + name_len, GFP_KERNEL);
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_NAMED_ATTR << 56));
-	key->k_len = name_len;
-	strcpy(key->k_name + 1, name); /* TODO: could this just be a pointer? */
+	ret = apfs_init_key(APFS_RT_NAMED_ATTR, cnid, name, key);
+	if (ret)
+		goto fail;
 
 	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
 	if (!query) {
@@ -49,7 +47,7 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 		goto fail;
 	}
 	query->key = key;
-	query->cmp = apfs_cat_keycmp;
+	query->flags |= APFS_QUERY_CAT;
 
 	ret = apfs_btree_query(sb, &query);
 	if (ret)
@@ -99,7 +97,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	struct inode *inode = d_inode(dentry);
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_cat_key *key;
+	struct apfs_key *key;
 	struct apfs_query *query;
 	u64 cnid = inode->i_ino;
 	size_t free = size;
@@ -115,14 +113,14 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	}
 
 	/* We want all the xattrs for the cnid, regardless of the name */
-	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_NAMED_ATTR << 56));
+	apfs_init_key(APFS_RT_NAMED_ATTR, cnid, NULL /* name */, key);
 	query->key = key;
-	query->cmp = apfs_cat_anon_keycmp;
-	query->flags = APFS_QUERY_MULTIPLE;
+	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE;
 
 	while (1) {
 		char *raw;
-		struct apfs_cat_key *key;
+		int namelen;
+		struct apfs_xattr_key *this_key;
 
 		ret = apfs_btree_query(sb, &query);
 		if (ret == -ENODATA) { /* Got all the xattrs */
@@ -139,23 +137,23 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		 */
 		ret = -EINVAL;
 		raw = query->table->t_node.bh->b_data;
-		if (query->key_len < sizeof(*key))
+		namelen = query->key_len - sizeof(*this_key);
+		if (namelen <= 0) /* xattr name must have at least one char */
 			break;
-		key = (struct apfs_cat_key *)(raw + query->key_off);
-		if (query->key_len != sizeof(*key) + key->k_len + 1 ||
-		    key->k_len == 0 || key->k_name[key->k_len] != 0)
+		this_key = (struct apfs_xattr_key *)(raw + query->key_off);
+		if (this_key->name[namelen - 1] != 0)
 			break;
 
 		/* TODO: don't list the xattrs with no handler */
 		if (buffer) {
-			if (key->k_len > free) {
+			if (namelen > free) {
 				ret = -ERANGE;
 				break;
 			}
-			memcpy(buffer, key->k_name + 1, key->k_len);
-			buffer += key->k_len;
+			memcpy(buffer, this_key->name, namelen);
+			buffer += namelen;
 		}
-		free -= key->k_len;
+		free -= namelen;
 	}
 	apfs_free_query(sb, query);
 

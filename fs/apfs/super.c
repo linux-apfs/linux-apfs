@@ -13,6 +13,7 @@
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
 #include "apfs.h"
+#include "key.h"
 
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
 {
@@ -311,6 +312,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct apfs_volume_checkpoint_sb *vcsb_raw;
 	struct apfs_table *vtable;
 	struct apfs_query *query;
+	struct apfs_key *key;
 	struct apfs_table *btom_table = NULL, *root_table = NULL;
 	struct inode *root;
 	u64 vol_id, root_id;
@@ -413,19 +415,25 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Get the Volume Checkpoint Superblock with id == vol_id */
 	query = apfs_alloc_query(vtable, NULL /* parent */);
-	if (!query) {
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
+	if (!query || !key) {
+		/* TODO: I really need to break up apfs_fill_super()... */
+		kfree(key);
+		kfree(query);
 		apfs_release_table(vtable);
 		err = -ENOMEM;
 		goto failed_vol;
 	}
-	query->key = &vol_id;
-	query->cmp = apfs_cmp64;
+	apfs_init_key(0 /* type */, vol_id, NULL /* name */, key);
+	query->key = key;
+	query->flags |= APFS_QUERY_VOL;
 	err = apfs_table_query(query, false /* ordered */);
 	if (!err && query->len >= 16) {
 		/* The block number is in the second 64 bits of data */
 		vcsb = le64_to_cpup((__le64 *)
 				(vtable->t_node.bh->b_data + query->off + 8));
 	}
+	kfree(key);
 	kfree(query);
 	apfs_release_table(vtable);
 	if (vcsb == 0) {

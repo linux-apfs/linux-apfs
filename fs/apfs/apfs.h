@@ -104,8 +104,12 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 }
 
 /* Flags for the query structure */
-#define APFS_QUERY_MULTIPLE	1 /* Search for multiple matching entries */
-#define APFS_QUERY_DONE		2 /* The search at this level is over */
+#define APFS_QUERY_TREE_MASK	007	/* Which b-tree we query */
+#define APFS_QUERY_BTOM		001	/* This is a b-tree object map query */
+#define APFS_QUERY_CAT		002	/* This is a catalog tree query */
+#define APFS_QUERY_VOL		004	/* This is a volume table query */
+#define APFS_QUERY_MULTIPLE	010	/* Search for multiple matches */
+#define APFS_QUERY_DONE		020	/* The search at this level is over */
 
 /*
  * Structure used to retrieve data from an APFS B-Tree. For now only used
@@ -113,12 +117,9 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
  */
 struct apfs_query {
 	struct apfs_table *table;	/* Table being searched */
-	void *key;			/* What the query is looking for */
+	struct apfs_key *key;		/* What the query is looking for */
 
-	/* Decide which of two keys comes first in an ordered table */
-	int (*cmp)(void *k1, void *k2, int len);
-
-	/* For use by readdir */
+	struct apfs_key *curr;		/* Last on-disk key checked */
 	struct apfs_query *parent;	/* Query for parent table */
 	unsigned int flags;
 
@@ -131,7 +132,6 @@ struct apfs_query {
 
 	int depth;			/* Put a limit on recursion */
 };
-
 
 /*
  * This structure apparently heads every metadata block
@@ -301,14 +301,6 @@ struct apfs_index_entry_short {
 } __attribute__ ((__packed__));
 
 /*
- * Structure of the keys in the B-Tree Object Map table
- */
-struct apfs_btom_key {
-	__le64 block_id;	/* Block id of the child */
-	__le64 checkpoint_id;
-} __attribute__ ((__packed__));
-
-/*
  * Structure of the data in the B-Tree Object Map leaf tables. On the index
  * tables the only data is the 64 bit block address of the child.
  */
@@ -316,46 +308,6 @@ struct apfs_btom_data {
 	__le32 unknown;
 	__le32 child_size;	/* Size of the child */
 	__le64 block;		/* Address of the table mapped by this record */
-} __attribute__ ((__packed__));
-
-/*
- * The name length in the catalog key counts the terminating null byte. Hence
- * the maximum length is one less char than the biggest possible k_len.
- */
-#define APFS_NAME_LEN		254
-
-#define APFS_ROOT_CNID		2 /* Root folder cnid */
-
-/* Catalog node record types */
-#define APFS_RT_INODE		0x30
-#define APFS_RT_NAMED_ATTR	0x40
-#define APFS_RT_HARDLINK	0x50
-#define APFS_RT_EXTENT_STATUS	0x60 /* Shows the file object has records */
-#define APFS_RT_UNKNOWN		0x70
-#define APFS_RT_EXTENT		0x80
-#define APFS_RT_KEY		0x90
-
-/*
- * Structure of the keys in the catalog tables. This changed in recent
- * versions of APFS, so there is some guesswork involved.
- *
- * TODO: is it reasonable to represent all key types with the same struct? The
- * inconsistencies lead to some ugly magical constants in the code.
- */
-struct apfs_cat_key {
-	/*
-	 * Parent ID, with the record type in the last 8 bits. For records
-	 * without a name this is the only field of the struct. In that case
-	 * it holds the actual cnid of the record.
-	 */
-	__le64 k_cnid;
-
-	__u8 k_len;		/* Name length, counting null termination */
-	/*
-	 * The name of the file or attribute, preceded by three mystery bytes
-	 * in the case of filenames, or one in the case of attribute names.
-	 */
-	char k_name[0];
 } __attribute__ ((__packed__));
 
 /*
@@ -432,16 +384,13 @@ struct apfs_cat_symlink {
  */
 
 /* btree.c */
-extern int apfs_cat_anon_keycmp(void *k1, void *k2, int len);
-extern int apfs_cat_keycmp(void *k1, void *k2, int len);
-extern int apfs_cmp64(void *k1, void *k2, int len);
 extern struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 					   struct apfs_query *parent);
 extern void apfs_free_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_btree_query(struct super_block *sb, struct apfs_query **query);
-extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_cat_key *key,
+extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 			       int *length, struct apfs_table **table);
-extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_cat_key *key);
+extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key);
 extern struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id);
 
 /* dir.c */

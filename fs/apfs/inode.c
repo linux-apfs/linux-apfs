@@ -7,6 +7,7 @@
 
 #include <linux/slab.h>
 #include "apfs.h"
+#include "key.h"
 
 /**
  * apfs_get_inode - Get the raw metadata corresponding to an inode number
@@ -26,7 +27,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 					     struct apfs_cat_inode_tail **tail)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_cat_key *key;
+	struct apfs_key *key;
 	struct apfs_cat_inode *raw;
 	int len;
 
@@ -34,7 +35,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	if (!key)
 		return NULL;
 	/* Looking for an inode record, so this is the only field of the key */
-	key->k_cnid = cpu_to_le64(cnid | ((u64)APFS_RT_INODE << 56));
+	apfs_init_key(APFS_RT_INODE, cnid, NULL /* name */, key);
 
 	raw = apfs_cat_get_data(sb, key, &len, table);
 	kfree(key);

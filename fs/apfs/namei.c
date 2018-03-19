@@ -6,6 +6,7 @@
  */
 
 #include "apfs.h"
+#include "key.h"
 
 static struct dentry *apfs_lookup(struct inode *dir, struct dentry *dentry,
 				  unsigned int flags)
