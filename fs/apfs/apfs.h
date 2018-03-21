@@ -339,7 +339,8 @@ struct apfs_cat_inode {
 	__le64 unknown_1;
 	union {
 		__le64 d_child_count;	/* Children inodes of a directory */
-		__le64 d_link_count;	/* Hard links to a file */
+		__le64 d_link_count;	/* Hard links to a regular file */
+		char unknown_5[8];	/* Something else for special files */
 	};
 	__le64 unknown_2;
 	__le32 d_owner;		/* ID of the owner */

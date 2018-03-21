@@ -122,8 +122,11 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	else
 		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->d_group));
 
-	if (!S_ISDIR(inode->i_mode)) {
+	if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
 		/*
+		 * It seems that hard links are only allowed for regular files,
+		 * and perhaps for symlinks.
+		 *
 		 * Directory inodes don't store their link count, so to provide
 		 * it we would have to actually count the subdirectories. The
 		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
