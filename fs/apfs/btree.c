@@ -136,7 +136,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		 * forever if the filesystem is damaged. 12 should be more
 		 * than enough to map every block.
 		 */
-		return -EINVAL;
+		return -EFSCORRUPTED;
 	}
 
 	if (apfs_node_is_leaf((*query)->table) &&
@@ -164,7 +164,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	if ((*query)->flags & APFS_QUERY_BTOM) {
 		/* The data on a btom index node is the address of the child */
 		if ((*query)->len != 8)
-			return -EINVAL;
+			return -EFSCORRUPTED;
 		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
 	} else {
 		/*
@@ -173,7 +173,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		 * block number.
 		 */
 		if ((*query)->len != 8)
-			return -EINVAL;
+			return -EFSCORRUPTED;
 		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
 
 		btom_query = apfs_alloc_query(btom, NULL /* parent */);
@@ -195,7 +195,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 			goto fail;
 		raw = btom_query->table->t_node.bh->b_data;
 		if (btom_query->len != sizeof(*data)) {
-			err = -EINVAL;
+			err = -EFSCORRUPTED;
 			goto fail;
 		}
 		data = (struct apfs_btom_data *)(raw + btom_query->off);

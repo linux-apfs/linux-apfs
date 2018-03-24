@@ -71,8 +71,8 @@ int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
  */
 int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 {
-	if (size < 8) /* Invalid filesystem, all keys must have a type */
-		return -EINVAL;
+	if (size < 8) /* All keys must have a type */
+		return -EFSCORRUPTED;
 	key->type = apfs_cat_type(raw);
 	key->id = apfs_cat_cnid(raw);
 
@@ -80,8 +80,8 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 	case APFS_RT_KEY:
 		if (size < sizeof(struct apfs_dentry_key) + 1 ||
 		    *((char *)raw + size - 1) != 0) {
-			/* Filename is empty or lacks NULL-termination */
-			return -EINVAL;
+			/* Filename must have NULL-termination */
+			return -EFSCORRUPTED;
 		}
 		key->hash = le32_to_cpu(((struct apfs_dentry_key *)raw)->hash);
 		key->name = ((struct apfs_dentry_key *)raw)->name;
@@ -89,8 +89,8 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 	case APFS_RT_NAMED_ATTR:
 		if (size < sizeof(struct apfs_xattr_key) + 1 ||
 		    *((char *)raw + size - 1) != 0) {
-			/* xattr name is empty or lacks NULL-termination */
-			return -EINVAL;
+			/* xattr name must have NULL-termination */
+			return -EFSCORRUPTED;
 		}
 		key->hash = 0; /* TODO: figure out the xattr name hash */
 		key->name = ((struct apfs_xattr_key *)raw)->name;
@@ -115,7 +115,7 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 int apfs_read_btom_key(void *raw, int size, struct apfs_key *key)
 {
 	if (size < sizeof(struct apfs_btom_key))
-		return -EINVAL;
+		return -EFSCORRUPTED;
 
 	key->type = 0;
 	key->id = le64_to_cpu(((struct apfs_btom_key *)raw)->block_id);
@@ -135,8 +135,8 @@ int apfs_read_btom_key(void *raw, int size, struct apfs_key *key)
  */
 int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
 {
-	if (size < 8) /* Invalid filesystem */
-		return -EINVAL;
+	if (size < 8)
+		return -EFSCORRUPTED;
 
 	key->type = 0;
 	key->name = NULL;

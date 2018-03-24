@@ -12,6 +12,8 @@
 #include <linux/types.h>
 #include <linux/magic.h>
 
+#define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
+
 #define APFS_DEFAULT_BLOCKSIZE	4096
 
 /*

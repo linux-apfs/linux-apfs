@@ -135,7 +135,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		 * we expect, and that the attribute name is NULL-terminated.
 		 * Otherwise the filesystem is invalid.
 		 */
-		ret = -EINVAL;
+		ret = -EFSCORRUPTED;
 		raw = query->table->t_node.bh->b_data;
 		namelen = query->key_len - sizeof(*this_key);
 		if (namelen <= 0) /* xattr name must have at least one char */

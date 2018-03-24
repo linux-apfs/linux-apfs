@@ -99,7 +99,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		 * the structures we expect, and that the filename is
 		 * NULL-terminated. Otherwise the filesystem is invalid.
 		 */
-		err = -EINVAL;
+		err = -EFSCORRUPTED;
 		raw = query->table->t_node.bh->b_data;
 		namelen = query->key_len - sizeof(*de_key);
 		if (namelen <= 0) /* Filename must have at least one char */

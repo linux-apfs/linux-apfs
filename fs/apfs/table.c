@@ -229,8 +229,8 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
  * length fits within the block; callers must use the returned value to make
  * sure they never operate outside its bounds.
  *
- * -ENODATA will be returned if the entry does not exist; -EINVAL in case of
- * corruption.
+ * -ENODATA will be returned if the entry does not exist; -EFSCORRUPTED in case
+ * of corruption.
  *
  * TODO: the search algorithm is far from optimal for the ordered case, it
  * would be better to search by bisection.
@@ -281,8 +281,8 @@ int apfs_table_query(struct apfs_query *query, bool ordered)
 			query->key_len = len;
 
 			len = apfs_table_locate_data(table, query->index, &off);
-			if (len == 0) /* Filesystem is corrupted */
-				return -EINVAL;
+			if (len == 0)
+				return -EFSCORRUPTED;
 			query->off = off;
 			query->len = len;
 			if (query->flags & APFS_QUERY_MULTIPLE &&

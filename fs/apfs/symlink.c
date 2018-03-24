@@ -32,7 +32,7 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 	if (size < 0) /* TODO: return a better error code */
 		return ERR_PTR(size);
 	if (size < sizeof(*link) + 1)
-		return ERR_PTR(-EINVAL);
+		return ERR_PTR(-EFSCORRUPTED);
 
 	link = kmalloc(size, GFP_KERNEL);
 	if (!link)
@@ -45,8 +45,7 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 	}
 	if (size != sizeof(*link) + le16_to_cpu(link->len) ||
 	    *((char *)link + size - 1) != 0) {
-		/* Filesystem is corrupted */
-		err = ERR_PTR(-EINVAL);
+		err = ERR_PTR(-EFSCORRUPTED);
 		goto fail;
 	}
 
