@@ -6,6 +6,7 @@
  */
 
 #include <linux/slab.h>
+#include <asm/div64.h>
 #include "apfs.h"
 #include "key.h"
 
@@ -93,6 +94,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	struct apfs_cat_inode_tail *raw_itail;
 	struct apfs_table *table;
 	unsigned long ino = cnid;
+	u64 secs;
 
 	if (ino < cnid) {
 		apfs_msg(sb, KERN_WARNING, "inode number overflow");
@@ -148,12 +150,15 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	}
 
 	/* APFS stores the time as unsigned nanoseconds since the epoch */
-	inode->i_atime.tv_sec = le64_to_cpu(raw_inode->d_atime) / NSEC_PER_SEC;
-	inode->i_atime.tv_nsec = le64_to_cpu(raw_inode->d_atime) % NSEC_PER_SEC;
-	inode->i_ctime.tv_sec = le64_to_cpu(raw_inode->d_ctime) / NSEC_PER_SEC;
-	inode->i_ctime.tv_nsec = le64_to_cpu(raw_inode->d_ctime) % NSEC_PER_SEC;
-	inode->i_mtime.tv_sec = le64_to_cpu(raw_inode->d_mtime) / NSEC_PER_SEC;
-	inode->i_mtime.tv_nsec = le64_to_cpu(raw_inode->d_mtime) % NSEC_PER_SEC;
+	secs = le64_to_cpu(raw_inode->d_atime);
+	inode->i_atime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	inode->i_atime.tv_sec = secs;
+	secs = le64_to_cpu(raw_inode->d_ctime);
+	inode->i_ctime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	inode->i_ctime.tv_sec = secs;
+	secs = le64_to_cpu(raw_inode->d_mtime);
+	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	inode->i_mtime.tv_sec = secs;
 	ai->i_crtime = le64_to_cpu(raw_inode->d_crtime); /* Not used for now */
 
 	/* A lot of operations still missing, of course */
