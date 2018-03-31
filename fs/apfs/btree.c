@@ -10,29 +10,6 @@
 #include "key.h"
 
 /**
- * apfs_node_is_leaf - Check if a b-tree node is a leaf
- * @table: the node to check
- *
- * This function would probably not be necessary if I just gave a name to the
- * magical constant 2 that it uses, but I'm not sure of its meaning.
- */
-static inline bool apfs_node_is_leaf(struct apfs_table *table)
-{
-	return (table->t_type & 2) != 0;
-}
-
-/**
- * apfs_node_is_btom - Check if a b-tree node belongs to the btom
- * @table: the node to check
- *
- * This function is no longer used, but I'm keeping it as documentation for now.
- */
-static inline bool apfs_node_is_btom(struct apfs_table *table)
-{
-	return (table->t_type & 4) != 0;
-}
-
-/**
  * apfs_alloc_query - Allocates a query structure
  * @table:	table to be searched
  * @parent:	query for the parent table
@@ -127,7 +104,6 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	struct apfs_btom_data *data;
 	char *raw = (*query)->table->t_node.bh->b_data;
 	u64 child = 0;
-	bool ordered = true;
 	int err;
 
 	if ((*query)->depth >= 12) {
@@ -139,12 +115,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		return -EFSCORRUPTED;
 	}
 
-	if (apfs_node_is_leaf((*query)->table) &&
-	    (*query)->flags & APFS_QUERY_CAT) {
-		/* The leaves of a catalog tree are not ordered */
-		ordered = false;
-	}
-	err = apfs_table_query(*query, ordered);
+	err = apfs_table_query(*query);
 	if (err == -EAGAIN) {
 		if (!(*query)->parent) /* We are at the root of the tree */
 			return -ENODATA;
@@ -159,7 +130,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	}
 	if (err)
 		return err;
-	if (apfs_node_is_leaf((*query)->table)) /* All done */
+	if (apfs_table_is_leaf((*query)->table)) /* All done */
 		return 0;
 	if ((*query)->flags & APFS_QUERY_BTOM) {
 		/* The data on a btom index node is the address of the child */
@@ -187,7 +158,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		}
 		apfs_init_key(0 /* type */, child, NULL /* name */, btom_key);
 		btom_query->key = btom_key;
-		btom_query->flags |= APFS_QUERY_BTOM;
+		btom_query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
 
 		err = apfs_btree_query(sb, &btom_query);
 		kfree(btom_key);
@@ -256,7 +227,7 @@ void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 	if (!query)
 		return NULL;
 	query->key = key;
-	query->flags |= APFS_QUERY_CAT;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
 	if (apfs_btree_query(sb, &query))
 		goto fail;
@@ -292,7 +263,7 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
 	if (!query)
 		return 0;
 	query->key = key;
-	query->flags |= APFS_QUERY_CAT;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
 	if (apfs_btree_query(sb, &query))
 		goto fail;
@@ -340,7 +311,7 @@ struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 		goto fail;
 	apfs_init_key(0 /* type */, id, NULL /* name */, key);
 	query->key = key;
-	query->flags |= APFS_QUERY_BTOM;
+	query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
 
 	if (apfs_btree_query(sb, &query))
 		goto fail;

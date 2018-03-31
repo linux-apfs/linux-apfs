@@ -209,13 +209,9 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 /**
  * apfs_table_query - Execute a query on a single table
  * @query:	the query to execute
- * @ordered:	are the table records in order?
  *
- * The search will start at index @query->index. In a leaf node the records
- * may be out of order; if that is the case this function will check them one
- * by one until it finds an exact match for @query->key. Otherwise it will
- * search for the key that comes right before @query->key, according to the
- * order given by @query->cmp.
+ * The search will start at index @query->index, looking for the key that comes
+ * right before @query->key, according to the order given by apfs_keycmp().
  *
  * The @query->index will be updated to the last index checked. This is
  * important when searching for multiple entries, since the query may need
@@ -229,13 +225,13 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
  * length fits within the block; callers must use the returned value to make
  * sure they never operate outside its bounds.
  *
- * -ENODATA will be returned if the entry does not exist; -EFSCORRUPTED in case
- * of corruption.
+ * -ENODATA will be returned if no appropriate entry was found, -EFSCORRUPTED
+ * in case of corruption.
  *
  * TODO: the search algorithm is far from optimal for the ordered case, it
  * would be better to search by bisection.
  */
-int apfs_table_query(struct apfs_query *query, bool ordered)
+int apfs_table_query(struct apfs_query *query)
 {
 	struct apfs_table *table = query->table;
 
@@ -273,10 +269,12 @@ int apfs_table_query(struct apfs_query *query, bool ordered)
 
 		cmp = apfs_keycmp(query->curr, query->key);
 
-		if (!ordered && cmp != 0)
-			continue;
-
 		if (cmp <= 0) {
+			if (apfs_table_is_leaf(query->table) &&
+			    query->flags & APFS_QUERY_EXACT &&
+			    cmp != 0)
+				return -ENODATA;
+
 			query->key_off = off;
 			query->key_len = len;
 
@@ -285,8 +283,9 @@ int apfs_table_query(struct apfs_query *query, bool ordered)
 				return -EFSCORRUPTED;
 			query->off = off;
 			query->len = len;
-			if (query->flags & APFS_QUERY_MULTIPLE &&
-			    ordered && cmp != 0) {
+			if (apfs_table_is_leaf(query->table) &&
+			    query->flags & APFS_QUERY_MULTIPLE &&
+			    cmp != 0) {
 				/*
 				 * This is the last entry that can be relevant
 				 * in this table. Keep searching the children,

@@ -91,6 +91,29 @@ struct apfs_table {
 	struct apfs_node t_node;/* Node holding the table */
 };
 
+/**
+ * apfs_table_is_leaf - Check if a b-tree table is a leaf
+ * @table: the table to check
+ *
+ * This function would probably not be necessary if I just gave a name to the
+ * magical constant 2 that it uses, but I'm not sure of its meaning.
+ */
+static inline bool apfs_table_is_leaf(struct apfs_table *table)
+{
+	return (table->t_type & 2) != 0;
+}
+
+/**
+ * apfs_table_is_btom - Check if a b-tree table belongs to the btom
+ * @table: the table to check
+ *
+ * This function is no longer used, but I'm keeping it as documentation for now.
+ */
+static inline bool apfs_table_is_btom(struct apfs_table *table)
+{
+	return (table->t_type & 4) != 0;
+}
+
 /*
  * APFS inode data in memory
  */
@@ -111,7 +134,8 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 #define APFS_QUERY_CAT		002	/* This is a catalog tree query */
 #define APFS_QUERY_VOL		004	/* This is a volume table query */
 #define APFS_QUERY_MULTIPLE	010	/* Search for multiple matches */
-#define APFS_QUERY_DONE		020	/* The search at this level is over */
+#define APFS_QUERY_EXACT	020	/* Search for an exact match */
+#define APFS_QUERY_DONE		040	/* The search at this level is over */
 
 /*
  * Structure used to retrieve data from an APFS B-Tree. For now only used
@@ -413,7 +437,7 @@ extern int apfs_table_locate_key(struct apfs_table *table,
 				 int index, int *off);
 extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
-extern int apfs_table_query(struct apfs_query *query, bool ordered);
+extern int apfs_table_query(struct apfs_query *query);
 
 /* xattr.c */
 extern int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,

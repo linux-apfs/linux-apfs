@@ -71,7 +71,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	/* We want all the children for the cnid, regardless of the name */
 	apfs_init_key(APFS_RT_KEY, cnid, NULL /* name */, key);
 	query->key = key;
-	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE;
+	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 
 	pos = ctx->pos - 2;
 	while (1) {
