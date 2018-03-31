@@ -55,8 +55,8 @@ struct apfs_dentry_key {
 struct apfs_xattr_key {
 	/* Inode the xattr belongs to, with record type 0x40 in the last byte */
 	__le64 cnid;
-	/* Hash of the attribute name, details unknown. TODO: Figure this out */
-	__le16 hash;
+	/* Length of the attribute name */
+	__le16 length;
 	/* Attribute name */
 	char name[0];
 } __attribute__ ((__packed__));

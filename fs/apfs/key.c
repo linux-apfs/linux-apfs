@@ -92,7 +92,7 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 			/* xattr name must have NULL-termination */
 			return -EFSCORRUPTED;
 		}
-		key->hash = 0; /* TODO: figure out the xattr name hash */
+		key->hash = 0; /* TODO: does the xattr length matter? */
 		key->name = ((struct apfs_xattr_key *)raw)->name;
 		break;
 	default:
