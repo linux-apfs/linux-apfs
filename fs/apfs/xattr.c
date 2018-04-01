@@ -51,7 +51,7 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 
 	ret = apfs_btree_query(sb, &query);
 	if (ret)
-		goto fail;
+		goto done;
 
 	ret = query->len; /* Return the length of the xattr */
 	if (!buffer) {
