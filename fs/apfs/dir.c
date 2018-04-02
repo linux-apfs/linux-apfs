@@ -28,7 +28,7 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 	if (!key)
 		return 0;
 	/* We are looking for a key record */
-	if (apfs_init_key(APFS_RT_KEY, cnid, child->name, key))
+	if (apfs_init_key(APFS_RT_KEY, cnid, child->name, 0 /* offset */, key))
 		goto fail;
 	result = apfs_cat_resolve(dir->i_sb, key);
 
@@ -69,7 +69,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	}
 
 	/* We want all the children for the cnid, regardless of the name */
-	apfs_init_key(APFS_RT_KEY, cnid, NULL /* name */, key);
+	apfs_init_key(APFS_RT_KEY, cnid, NULL /* name */, 0 /* offset */, key);
 	query->key = key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 

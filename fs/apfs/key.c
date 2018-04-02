@@ -52,6 +52,8 @@ int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
 		return k1->id < k2->id ? -1 : 1;
 	if (k1->type != k2->type)
 		return k1->type < k2->type ? -1 : 1;
+	if (k1->offset != k2->offset)
+		return k1->offset < k2->offset ? -1 : 1;
 	if (k2->name == NULL) /* We ignore the names (if they exist) */
 		return 0;
 	if (k1->hash != k2->hash)
@@ -85,6 +87,7 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 		}
 		key->hash = le32_to_cpu(((struct apfs_dentry_key *)raw)->hash);
 		key->name = ((struct apfs_dentry_key *)raw)->name;
+		key->offset = 0;
 		break;
 	case APFS_RT_NAMED_ATTR:
 		if (size < sizeof(struct apfs_xattr_key) + 1 ||
@@ -94,10 +97,19 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 		}
 		key->hash = 0; /* TODO: does the xattr length matter? */
 		key->name = ((struct apfs_xattr_key *)raw)->name;
+		key->offset = 0;
+		break;
+	case APFS_RT_EXTENT:
+		if (size != sizeof(struct apfs_extent_key))
+			return -EFSCORRUPTED;
+		key->hash = 0;
+		key->name = NULL;
+		key->offset = le64_to_cpu(((struct apfs_extent_key *)raw)->off);
 		break;
 	default:
 		key->hash = 0;
 		key->name = NULL;
+		key->offset = 0;
 		break;
 	}
 
@@ -121,6 +133,7 @@ int apfs_read_btom_key(void *raw, int size, struct apfs_key *key)
 	key->id = le64_to_cpu(((struct apfs_btom_key *)raw)->block_id);
 	key->name = NULL;
 	key->hash = 0;
+	key->offset = 0;
 
 	return 0;
 }
@@ -141,6 +154,7 @@ int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
 	key->type = 0;
 	key->name = NULL;
 	key->hash = 0;
+	key->offset = 0;
 	key->id = le64_to_cpup(raw);
 	return 0;
 }
@@ -150,13 +164,15 @@ int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
  * @type:	type of the record
  * @id:		id for the record
  * @name:	name of the record (may be NULL)
+ * @offset:	for extent records, offset within the file; otherwise 0
  * @key:	apfs_key structure to initialize
  *
  * On success, @key will be ready to query for the record and 0 will be
  * returned. Otherwise, returns a negative error code. Note that the function
  * cannot fail if name == NULL.
  */
-int apfs_init_key(int type, u64 id, const char *name, struct apfs_key *key)
+int apfs_init_key(int type, u64 id, const char *name,
+		  u64 offset, struct apfs_key *key)
 {
 	int len;
 	char tmp8;
@@ -166,6 +182,7 @@ int apfs_init_key(int type, u64 id, const char *name, struct apfs_key *key)
 	key->type = type;
 	key->id = id;
 	key->name = name;
+	key->offset = offset;
 	if (name == NULL || type == APFS_RT_NAMED_ATTR) {
 		/* TODO: Figure out the hashing scheme for xattr names */
 		key->hash = 0;

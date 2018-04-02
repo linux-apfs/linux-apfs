@@ -6,9 +6,90 @@
  */
 
 #include <linux/slab.h>
+#include <linux/buffer_head.h>
+#include <linux/mpage.h>
 #include <asm/div64.h>
 #include "apfs.h"
 #include "key.h"
+
+static int apfs_get_block(struct inode *inode, sector_t iblock,
+			  struct buffer_head *bh_result, int create)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key *key;
+	struct apfs_query *query;
+	struct apfs_cat_extent *ext;
+	struct apfs_extent_key *ext_key;
+	char *raw;
+	u64 blk_off, bno, length;
+	int ret = 0;
+
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
+	if (!key)
+		return -ENOMEM;
+	/* We will search for the extent that covers iblock */
+	apfs_init_key(APFS_RT_EXTENT, inode->i_ino, NULL /* name */,
+		      iblock << inode->i_blkbits, key);
+
+	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	if (!query) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+	query->key = key;
+	query->flags = APFS_QUERY_CAT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret)
+		goto done;
+
+	if (query->len != sizeof(*ext) || query->key_len != sizeof(*ext_key)) {
+		ret = -EFSCORRUPTED;
+		goto done;
+	}
+	raw = query->table->t_node.bh->b_data;
+	ext = (struct apfs_cat_extent *)(raw + query->off);
+	ext_key = (struct apfs_extent_key *)(raw + query->key_off);
+
+	/* Find the block offset of iblock within the extent */
+	blk_off = iblock - (le64_to_cpu(ext_key->off) >> inode->i_blkbits);
+
+	/* Find the block number of iblock within the disk */
+	bno = le64_to_cpu(ext->block) + blk_off;
+	map_bh(bh_result, sb, bno);
+
+	length = le64_to_cpu(ext->length) - (blk_off << inode->i_blkbits);
+	bh_result->b_size = length;
+
+done:
+	apfs_free_query(sb, query);
+fail:
+	kfree(key);
+	return ret;
+}
+
+static int apfs_readpage(struct file *file, struct page *page)
+{
+	return mpage_readpage(page, apfs_get_block);
+}
+
+static int apfs_readpages(struct file *file, struct address_space *mapping,
+			  struct list_head *pages, unsigned int nr_pages)
+{
+	return mpage_readpages(mapping, pages, nr_pages, apfs_get_block);
+}
+
+static sector_t apfs_bmap(struct address_space *mapping, sector_t block)
+{
+	return generic_block_bmap(mapping, block, apfs_get_block);
+}
+
+const struct address_space_operations apfs_aops = {
+	.readpage	= apfs_readpage,
+	.readpages	= apfs_readpages,
+	.bmap		= apfs_bmap,
+};
 
 /**
  * apfs_get_inode - Get the raw metadata corresponding to an inode number
@@ -36,7 +117,8 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	if (!key)
 		return NULL;
 	/* Looking for an inode record, so this is the only field of the key */
-	apfs_init_key(APFS_RT_INODE, cnid, NULL /* name */, key);
+	apfs_init_key(APFS_RT_INODE, cnid, NULL /* name */,
+		      0 /* offset */, key);
 
 	raw = apfs_cat_get_data(sb, key, &len, table);
 	kfree(key);
@@ -164,6 +246,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	/* A lot of operations still missing, of course */
 	if (S_ISREG(inode->i_mode)) {
 		inode->i_op = &apfs_file_inode_operations;
+		inode->i_fop = &apfs_file_operations;
+		inode->i_mapping->a_ops = &apfs_aops;
 	} else if (S_ISDIR(inode->i_mode)) {
 		inode->i_op = &apfs_dir_inode_operations;
 		inode->i_fop = &apfs_dir_operations;

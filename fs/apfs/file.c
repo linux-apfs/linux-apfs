@@ -7,6 +7,13 @@
 
 #include "apfs.h"
 
+const struct file_operations apfs_file_operations = {
+	.llseek		= generic_file_llseek,
+	.read_iter	= generic_file_read_iter,
+	.mmap		= generic_file_readonly_mmap,
+	.open		= generic_file_open,
+};
+
 const struct inode_operations apfs_file_inode_operations = {
 	.listxattr	= apfs_listxattr,
 };

@@ -397,6 +397,15 @@ struct apfs_cat_inode_tail {
 } __attribute__ ((__packed__));
 
 /*
+ * Structure of the data in the catalog tables for record type APFS_RT_EXTENT.
+ */
+struct apfs_cat_extent {
+	__le64	length;		/* Length of the extent, in bytes */
+	__le64	block;		/* Number of the first block in the extent */
+	char	unknown[8];	/* Often all zeros */
+} __attribute__ ((__packed__));
+
+/*
  * Structure of the catalog data for xattrs of name "com.apple.fs.symlink",
  * which are used to implement symlinks.
  */
@@ -452,6 +461,7 @@ extern ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 extern const struct file_operations apfs_dir_operations;
 
 /* file.c */
+extern const struct file_operations apfs_file_operations;
 extern const struct inode_operations apfs_file_inode_operations;
 
 /* namei.c */

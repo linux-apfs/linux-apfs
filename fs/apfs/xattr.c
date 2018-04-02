@@ -37,7 +37,8 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	ret = apfs_init_key(APFS_RT_NAMED_ATTR, cnid, name, key);
+	ret = apfs_init_key(APFS_RT_NAMED_ATTR, cnid, name,
+			    0 /* offset */, key);
 	if (ret)
 		goto fail;
 
@@ -113,7 +114,8 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	}
 
 	/* We want all the xattrs for the cnid, regardless of the name */
-	apfs_init_key(APFS_RT_NAMED_ATTR, cnid, NULL /* name */, key);
+	apfs_init_key(APFS_RT_NAMED_ATTR, cnid, NULL /* name */,
+		      0 /* offset */, key);
 	query->key = key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 

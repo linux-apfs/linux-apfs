@@ -62,17 +62,27 @@ struct apfs_xattr_key {
 } __attribute__ ((__packed__));
 
 /*
- * Structure of all keys in the catalog tables that don't include a name.
+ * Structure of the extent keys in the catalog tables.
+ */
+struct apfs_extent_key {
+	__le64 cnid;	/* Inode number, with 0x80 in the last byte */
+	__le64 off;	/* Offset of the extent in the file */
+} __attribute__ ((__packed__));
+
+/*
+ * Structure of catalog keys that don't include a name (other than extents).
  */
 struct apfs_anon_key {
 	__le64 cnid;	/* Id of the record, with the type in the last 8 bits */
 } __attribute__ ((__packed__));
 
 /*
- * In-memory representation of a b-tree key
+ * In-memory representation of a b-tree key. Many of the fields are unused for
+ * any given key type, so maybe this struct should have some unions. TODO
  */
 struct apfs_key {
 	u64			id;
+	u64			offset;		/* Extent offset in the file */
 	const char		*name;		/* On-disk name string */
 	int			type;		/* 0 for non-catalog keys */
 	unsigned int		hash;		/* Hash of the name */
@@ -83,6 +93,6 @@ extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_btom_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_vol_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_init_key(int type, u64 id, const char *name,
-			 struct apfs_key *key);
+			 u64 offset, struct apfs_key *key);
 
 #endif	/* _KEY_H */

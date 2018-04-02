@@ -156,7 +156,8 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 			err = -ENOMEM;
 			goto fail;
 		}
-		apfs_init_key(0 /* type */, child, NULL /* name */, btom_key);
+		apfs_init_key(0 /* type */, child, NULL /* name */,
+			      0 /* offset */, btom_key);
 		btom_query->key = btom_key;
 		btom_query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
 
@@ -309,7 +310,7 @@ struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		goto fail;
-	apfs_init_key(0 /* type */, id, NULL /* name */, key);
+	apfs_init_key(0 /* type */, id, NULL /* name */, 0 /* offset */, key);
 	query->key = key;
 	query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
 
