@@ -59,6 +59,11 @@ int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
 	if (k1->hash != k2->hash)
 		return k1->hash < k2->hash ? -1 : 1;
 
+	if (k1->type == APFS_RT_NAMED_ATTR) {
+		/* xattr names seem to be always case sensitive */
+		return strcmp(k1->name, k2->name);
+	}
+
 	/* Only guessing, I've never seen two names with the same hash. TODO */
 	return strcasecmp(k1->name, k2->name);
 }
@@ -95,7 +100,7 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 			/* xattr name must have NULL-termination */
 			return -EFSCORRUPTED;
 		}
-		key->hash = 0; /* TODO: does the xattr length matter? */
+		key->hash = 0;
 		key->name = ((struct apfs_xattr_key *)raw)->name;
 		key->offset = 0;
 		break;
@@ -184,7 +189,6 @@ int apfs_init_key(int type, u64 id, const char *name,
 	key->name = name;
 	key->offset = offset;
 	if (name == NULL || type == APFS_RT_NAMED_ATTR) {
-		/* TODO: Figure out the hashing scheme for xattr names */
 		key->hash = 0;
 		return 0;
 	}
