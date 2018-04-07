@@ -9,6 +9,7 @@
 #include <linux/xattr.h>
 #include "apfs.h"
 #include "key.h"
+#include "xattr.h"
 
 /**
  * apfs_xattr_get - Find and read a named attribute

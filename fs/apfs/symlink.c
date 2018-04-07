@@ -7,6 +7,7 @@
 
 #include <linux/slab.h>
 #include "apfs.h"
+#include "xattr.h"
 
 /**
  * apfs_get_link - Follow a symbolic link

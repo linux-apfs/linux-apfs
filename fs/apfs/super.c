@@ -14,6 +14,7 @@
 #include <linux/seq_file.h>
 #include "apfs.h"
 #include "key.h"
+#include "xattr.h"
 
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
 {

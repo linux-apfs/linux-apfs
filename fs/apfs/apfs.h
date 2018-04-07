@@ -406,16 +406,6 @@ struct apfs_cat_extent {
 } __attribute__ ((__packed__));
 
 /*
- * Structure of the catalog data for xattrs of name "com.apple.fs.symlink",
- * which are used to implement symlinks.
- */
-struct apfs_cat_symlink {
-	char	unknown[2];
-	__le16	len;		/* Length of target path (counting NULL) */
-	char	target[0];	/* Target path (NULL-terminated) */
-} __attribute__ ((__packed__));
-
-/*
  * Function prototypes
  */
 
@@ -448,11 +438,6 @@ extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
 extern int apfs_table_query(struct apfs_query *query);
 
-/* xattr.c */
-extern int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
-			  size_t size);
-extern ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
-
 /*
  * Inode and file operations
  */
@@ -470,8 +455,5 @@ extern const struct inode_operations apfs_special_inode_operations;
 
 /* symlink.c */
 extern const struct inode_operations apfs_symlink_inode_operations;
-
-/* xattr.c */
-extern const struct xattr_handler *apfs_xattr_handlers[];
 
 #endif	/* _APFS_H */
