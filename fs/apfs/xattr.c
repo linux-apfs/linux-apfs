@@ -12,10 +12,163 @@
 #include "xattr.h"
 
 /**
+ * apfs_xattr_extents_read - Read the value of a xattr from its extents
+ * @parent:	inode the attribute belongs to
+ * @xattr:	the xattr data in the catalog tree
+ * @buffer:	where to copy the attribute value
+ * @size:	size of @buffer
+ *
+ * Copies the value of @xattr to @buffer, if provided. If @buffer is NULL, just
+ * computes the size of the buffer required.
+ *
+ * Returns the number of bytes used/required, or a negative error code in case
+ * of failure.
+ */
+static int apfs_xattr_extents_read(struct inode *parent,
+				   struct apfs_xattr_ext *xattr,
+				   void *buffer, size_t size)
+{
+	struct super_block *sb = parent->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key *key = NULL;
+	struct apfs_query *query;
+	int length;
+	int ret;
+	int i;
+
+	if (le16_to_cpu(xattr->header.len) + sizeof(xattr->header) !=
+								sizeof(*xattr))
+		return -EFSCORRUPTED;
+
+	length = le64_to_cpu(xattr->size);
+	if (length < 0 || length < le64_to_cpu(xattr->size))
+		return -EOVERFLOW;
+
+	if (!buffer) /* All we want is the length */
+		return length;
+	if (length > size) /* xattr won't fit in the buffer */
+		return -ERANGE;
+
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
+	if (!key)
+		return -ENOMEM;
+	/* We will read all the extents, starting with the last one */
+	apfs_init_key(APFS_RT_EXTENT, xattr->cnid, NULL /* name */,
+		      length, key);
+
+	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	if (!query) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+	query->key = key;
+	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE;
+
+	/*
+	 * The logic in this loop would allow a crafted filesystem with a large
+	 * number of redundant extents to become stuck for a long time. We use
+	 * the xattr length to put a limit on the number of iterations.
+	 */
+	ret = -EFSCORRUPTED;
+	for (i = 0; i < (length >> parent->i_blkbits) + 2; i++) {
+		struct apfs_cat_extent *ext;
+		struct apfs_extent_key *ext_key;
+		char *raw;
+		u64 block, block_count, file_off;
+		int err;
+		int j;
+
+		err = apfs_btree_query(sb, &query);
+		if (err == -ENODATA) { /* No more records to search */
+			ret = length;
+			goto done;
+		}
+		if (err) {
+			ret = err;
+			goto done;
+		}
+		if (query->curr->type != APFS_RT_EXTENT) {
+			/*
+			 * Non-exact multiple query means we will get a record
+			 * of the wrong type after finding all the extents.
+			 */
+			ret = length;
+			goto done;
+		}
+
+		if (query->len != sizeof(*ext) ||
+		    query->key_len != sizeof(*ext_key)) {
+			ret = -EFSCORRUPTED;
+			goto done;
+		}
+		raw = query->table->t_node.bh->b_data;
+		ext = (struct apfs_cat_extent *)(raw + query->off);
+		ext_key = (struct apfs_extent_key *)(raw + query->key_off);
+
+		block = le64_to_cpu(ext->block);
+		block_count = (le64_to_cpu(ext->length) + sb->s_blocksize) >>
+			      sb->s_blocksize_bits;
+		file_off = le64_to_cpu(ext_key->off);
+		for (j = 0; j < block_count; ++j) {
+			struct buffer_head *bh;
+			int bytes;
+
+			if (length <= file_off) /* Read the whole extent */
+				break;
+			bytes = min(sb->s_blocksize,
+				    (unsigned long)(length - file_off));
+
+			bh = sb_bread(sb, block + j);
+			if (!bh) {
+				ret = -EIO;
+				goto done;
+			}
+			memcpy(buffer + file_off, bh->b_data, bytes);
+			brelse(bh);
+			block++;
+			file_off = file_off + bytes;
+		}
+	}
+
+done:
+	apfs_free_query(sb, query);
+fail:
+	kfree(key);
+	return ret;
+}
+
+/**
+ * apfs_xattr_inline_read - Read the value of an inline xattr
+ * @parent:	inode the attribute belongs to
+ * @xattr:	the xattr data in the catalog tree
+ * @buffer:	where to copy the attribute value
+ * @size:	size of @buffer
+ *
+ * Copies the inline value of @xattr to @buffer, if provided. If @buffer is
+ * NULL, just computes the size of the buffer required.
+ *
+ * Returns the number of bytes used/required, or a negative error code in case
+ * of failure.
+ */
+static int apfs_xattr_inline_read(struct inode *parent,
+				  struct apfs_xattr_inline *xattr,
+				  void *buffer, size_t size)
+{
+	int length = le16_to_cpu(xattr->header.len);
+
+	if (!buffer) /* All we want is the length */
+		return length;
+	if (length > size) /* xattr won't fit in the buffer */
+		return -ERANGE;
+	memcpy(buffer, xattr->value, length);
+	return length;
+}
+
+/**
  * apfs_xattr_get - Find and read a named attribute
  * @inode:	inode the attribute belongs to
  * @name:	name of the attribute
- * @buffer:	where to copy the attribute data
+ * @buffer:	where to copy the attribute value
  * @size:	size of @buffer
  *
  * Finds an extended attribute and copies its value to @buffer, if provided. If
@@ -31,7 +184,8 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
 	struct apfs_query *query;
-	char *xattr;
+	struct apfs_xattr_header *header;
+	char *raw;
 	u64 cnid = inode->i_ino;
 	int ret;
 
@@ -55,19 +209,25 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	if (ret)
 		goto done;
 
-	ret = query->len; /* Return the length of the xattr */
-	if (!buffer) {
-		/* All we want is the length */
+	if (query->len < sizeof(*header)) {
+		ret = -EFSCORRUPTED;
 		goto done;
 	}
-	if (ret > size) {
-		/* xattr won't fit in the buffer */
-		ret = -ERANGE;
+	raw = query->table->t_node.bh->b_data;
+	header = (struct apfs_xattr_header *)(raw + query->off);
+	if (sizeof(*header) + le16_to_cpu(header->len) != query->len) {
+		ret = -EFSCORRUPTED;
 		goto done;
 	}
 
-	xattr = query->table->t_node.bh->b_data + query->off;
-	memcpy(buffer, xattr, ret);
+	if (le16_to_cpu(header->flags) & APFS_XATTR_HAS_EXTENTS)
+		ret = apfs_xattr_extents_read(inode,
+					      (struct apfs_xattr_ext *)header,
+					      buffer, size);
+	else
+		ret = apfs_xattr_inline_read(inode,
+					     (struct apfs_xattr_inline *)header,
+					     buffer, size);
 
 done:
 	apfs_free_query(sb, query);

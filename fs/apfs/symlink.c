@@ -21,8 +21,7 @@
 static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 				 struct delayed_call *done)
 {
-	struct apfs_cat_symlink *link;
-	char *err;
+	char *target, *err;
 	int size;
 
 	if (!dentry)
@@ -32,29 +31,27 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 			      NULL /* buffer */, 0 /* size */);
 	if (size < 0) /* TODO: return a better error code */
 		return ERR_PTR(size);
-	if (size < sizeof(*link) + 1)
-		return ERR_PTR(-EFSCORRUPTED);
 
-	link = kmalloc(size, GFP_KERNEL);
-	if (!link)
+	target = kmalloc(size, GFP_KERNEL);
+	if (!target)
 		return ERR_PTR(-ENOMEM);
 
-	size = apfs_xattr_get(inode, "com.apple.fs.symlink", link, size);
+	size = apfs_xattr_get(inode, "com.apple.fs.symlink", target, size);
 	if (size < 0) {
 		err = ERR_PTR(size);
 		goto fail;
 	}
-	if (size != sizeof(*link) + le16_to_cpu(link->len) ||
-	    *((char *)link + size - 1) != 0) {
+	if (size == 0 || *(target + size - 1) != 0) {
+		/* Target path must be NULL-terminated */
 		err = ERR_PTR(-EFSCORRUPTED);
 		goto fail;
 	}
 
-	set_delayed_call(done, kfree_link, link);
-	return link->target;
+	set_delayed_call(done, kfree_link, target);
+	return target;
 
 fail:
-	kfree(link);
+	kfree(target);
 	return err;
 }
 

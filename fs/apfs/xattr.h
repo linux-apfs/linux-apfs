@@ -10,14 +10,36 @@
 
 #include <linux/types.h>
 
+/* xattr header flags */
+#define APFS_XATTR_HAS_EXTENTS	0x0001	/* The xattr value is kept on extents */
+
 /*
- * Structure of the catalog data for xattrs of name "com.apple.fs.symlink",
- * which are used to implement symlinks.
+ * This structure heads the data of all xattr catalog entries
  */
-struct apfs_cat_symlink {
-	char	unknown[2];
-	__le16	len;		/* Length of target path (counting NULL) */
-	char	target[0];	/* Target path (NULL-terminated) */
+struct apfs_xattr_header {
+	__le16	flags;
+	__le16	len;		/* Length of the xattr body */
+} __attribute__ ((__packed__));
+
+/*
+ * Structure of xattr catalog entries with an inline value
+ */
+struct apfs_xattr_inline {
+	struct apfs_xattr_header header;
+
+	char value[0];	/* Value of the xattr */
+} __attribute__ ((__packed__));
+
+/*
+ * Structure of xattr catalog entries that keep their value on extents
+ */
+struct apfs_xattr_ext {
+	struct apfs_xattr_header header;
+
+	__le64	cnid;		/* Catalog id for the value extents */
+	__le64	size;		/* Logical size of the value */
+	__le64	phys_size;	/* Physical size of the value */
+	char	unknown[24];
 } __attribute__ ((__packed__));
 
 extern int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
