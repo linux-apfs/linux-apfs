@@ -428,7 +428,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	apfs_init_key(0 /* type */, vol_id, NULL /* name */,
 		      0 /* offset */, key);
 	query->key = key;
-	query->flags |= APFS_QUERY_VOL;
+	query->flags |= APFS_QUERY_VOL | APFS_QUERY_EXACT;
 	err = apfs_table_query(query);
 	if (!err && query->len >= 16) {
 		/* The block number is in the second 64 bits of data */
