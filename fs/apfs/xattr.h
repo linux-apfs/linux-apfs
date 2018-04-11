@@ -5,8 +5,8 @@
  * Copyright (C) 2018 Ernesto A. Fernandez <ernesto.mnd.fernandez@gmail.com>
  */
 
-#ifndef _XATTR_H
-#define _XATTR_H
+#ifndef _APFS_XATTR_H
+#define _APFS_XATTR_H
 
 #include <linux/types.h>
 
@@ -48,4 +48,4 @@ extern ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
 
 extern const struct xattr_handler *apfs_xattr_handlers[];
 
-#endif	/* _XATTR_H */
+#endif	/* _APFS_XATTR_H */

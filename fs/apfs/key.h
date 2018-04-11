@@ -5,8 +5,8 @@
  * Copyright (C) 2018 Ernesto A. Fernandez <ernesto.mnd.fernandez@gmail.com>
  */
 
-#ifndef _KEY_H
-#define _KEY_H
+#ifndef _APFS_KEY_H
+#define _APFS_KEY_H
 
 #include <linux/types.h>
 
@@ -95,4 +95,4 @@ extern int apfs_read_vol_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_init_key(int type, u64 id, const char *name,
 			 u64 offset, struct apfs_key *key);
 
-#endif	/* _KEY_H */
+#endif	/* _APFS_KEY_H */
