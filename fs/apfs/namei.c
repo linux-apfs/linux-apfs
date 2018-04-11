@@ -2,7 +2,7 @@
 /*
  *  linux/fs/apfs/namei.c
  *
- * Copyright (C) 2018 Ernesto A. Fernandez <ernesto.mnd.fernandez@gmail.com>
+ * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
 #include "apfs.h"

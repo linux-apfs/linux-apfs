@@ -2,7 +2,7 @@
 /*
  *  linux/fs/apfs/super.c
  *
- * Copyright (C) 2018 Ernesto A. Fernandez <ernesto.mnd.fernandez@gmail.com>
+ * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
 #include <linux/module.h>
@@ -572,7 +572,7 @@ static void __exit exit_apfs_fs(void)
 	destroy_inodecache();
 }
 
-MODULE_AUTHOR("Ernesto A. Fernandez");
+MODULE_AUTHOR("Ernesto A. Fernández");
 MODULE_DESCRIPTION("Apple File System");
 MODULE_LICENSE("GPL");
 module_init(init_apfs_fs)
