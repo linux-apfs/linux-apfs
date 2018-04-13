@@ -30,7 +30,7 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 		return -ENOMEM;
 	/* We will search for the extent that covers iblock */
 	apfs_init_key(APFS_RT_EXTENT, inode->i_ino, NULL /* name */,
-		      iblock << inode->i_blkbits, key);
+		      0 /* namelen */, iblock << inode->i_blkbits, key);
 
 	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
 	if (!query) {
@@ -117,7 +117,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	if (!key)
 		return NULL;
 	/* Looking for an inode record, so this is the only field of the key */
-	apfs_init_key(APFS_RT_INODE, cnid, NULL /* name */,
+	apfs_init_key(APFS_RT_INODE, cnid, NULL /* name */, 0 /* namelen */,
 		      0 /* offset */, key);
 
 	raw = apfs_cat_get_data(sb, key, &len, table);

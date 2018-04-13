@@ -425,7 +425,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		err = -ENOMEM;
 		goto failed_vol;
 	}
-	apfs_init_key(0 /* type */, vol_id, NULL /* name */,
+	apfs_init_key(0 /* type */, vol_id, NULL /* name */, 0 /* namelen */,
 		      0 /* offset */, key);
 	query->key = key;
 	query->flags |= APFS_QUERY_VOL | APFS_QUERY_EXACT;

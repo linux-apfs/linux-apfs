@@ -169,6 +169,7 @@ int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
  * @type:	type of the record
  * @id:		id for the record
  * @name:	name of the record (may be NULL)
+ * @namelen:	for dentry keys, length of @name (without the NULL); otherwise 0
  * @offset:	for extent records, offset within the file; otherwise 0
  * @key:	apfs_key structure to initialize
  *
@@ -176,13 +177,12 @@ int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
  * returned. Otherwise, returns a negative error code. Note that the function
  * cannot fail if name == NULL.
  */
-int apfs_init_key(int type, u64 id, const char *name,
+int apfs_init_key(int type, u64 id, const char *name, int namelen,
 		  u64 offset, struct apfs_key *key)
 {
-	int len;
-	char tmp8;
-	unicode_t tmp32;
+	int charlen;
 	u32 hash;
+	int i;
 
 	key->type = type;
 	key->id = id;
@@ -193,19 +193,21 @@ int apfs_init_key(int type, u64 id, const char *name,
 		return 0;
 	}
 
-	len = 1; /* Count the terminating NULL */
 	hash = 0xFFFFFFFF;
-	while (*name != 0) {
-		++len;
+	for (i = 0; i < namelen; i += charlen) {
+		char utf8[4];
+		unicode_t utf32;
 
-		/* TODO: support for unicode and case sensitivity */
-		tmp8 = tolower(*name++);
-		if (utf8_to_utf32(&tmp8, 1, &tmp32) < 0) /* Invalid unicode */
+		/* TODO: unicode decomposition */
+		strncpy(utf8, &name[i], sizeof(utf8));
+		/* TODO: case insensitive unicode and case sensitive ascii */
+		utf8[0] = tolower(utf8[0]);
+		charlen = utf8_to_utf32(utf8, 4, &utf32);
+		if (charlen < 0) /* Invalid unicode */
 			return -EINVAL;
-
-		hash = crc32c(hash, &tmp32, 4);
+		hash = crc32c(hash, &utf32, 4);
 	}
-
-	key->hash = ((hash & 0x3FFFFF) << 10) | (len & 0x3FF);
+	/* APFS counts the NULL termination for the filename length */
+	key->hash = ((hash & 0x3FFFFF) << 10) | ((namelen + 1) & 0x3FF);
 	return 0;
 }
