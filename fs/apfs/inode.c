@@ -55,9 +55,12 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	/* Find the block offset of iblock within the extent */
 	blk_off = iblock - (le64_to_cpu(ext_key->off) >> inode->i_blkbits);
 
-	/* Find the block number of iblock within the disk */
-	bno = le64_to_cpu(ext->block) + blk_off;
-	map_bh(bh_result, sb, bno);
+	/* Extents representing holes have block number 0 */
+	if (ext->block != 0) {
+		/* Find the block number of iblock within the disk */
+		bno = le64_to_cpu(ext->block) + blk_off;
+		map_bh(bh_result, sb, bno);
+	}
 
 	length = le64_to_cpu(ext->length) - (blk_off << inode->i_blkbits);
 	/* I think b_size needs to be a multiple of the block size */
