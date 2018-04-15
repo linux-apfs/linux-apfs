@@ -60,6 +60,11 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	map_bh(bh_result, sb, bno);
 
 	length = le64_to_cpu(ext->length) - (blk_off << inode->i_blkbits);
+	/* I think b_size needs to be a multiple of the block size */
+	length = round_up(length, sb->s_blocksize);
+	if (length > bh_result->b_size) /* Don't map more than requested */
+		length = bh_result->b_size;
+
 	bh_result->b_size = length;
 
 done:
