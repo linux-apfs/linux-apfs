@@ -13,6 +13,7 @@
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
 #include "apfs.h"
+#include "inode.h"
 #include "key.h"
 #include "xattr.h"
 

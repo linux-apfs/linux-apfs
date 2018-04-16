@@ -10,6 +10,7 @@
 #include <linux/mpage.h>
 #include <asm/div64.h>
 #include "apfs.h"
+#include "inode.h"
 #include "key.h"
 
 static int apfs_get_block(struct inode *inode, sector_t iblock,
@@ -112,13 +113,13 @@ const struct address_space_operations apfs_aops = {
  * On success, the caller must release @table after using the data, unless it's
  * the root table of the catalog.
  */
-static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
-					     struct apfs_table **table,
-					     struct apfs_cat_inode_tail **tail)
+static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
+					 struct apfs_table **table,
+					 struct apfs_inode_tail **tail)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
-	struct apfs_cat_inode *raw;
+	struct apfs_inode *raw;
 	int len;
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
@@ -135,7 +136,7 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 
 	if (sizeof(*raw) > len) {
 		/*
-		 * Sanity check: prevent out of bounds read of d_len and the
+		 * Sanity check: prevent out of bounds read of i_len and the
 		 * other raw inode fields. I don't yet know how to safely read
 		 * the filename, because four bytes sometimes show up before
 		 * it that would mess with the length.
@@ -143,12 +144,12 @@ static struct apfs_cat_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 		goto fail;
 	}
 	*tail = NULL;
-	if (sizeof(*raw) + le16_to_cpu(raw->d_len) + sizeof(**tail) <= len) {
+	if (sizeof(*raw) + le16_to_cpu(raw->i_len) + sizeof(**tail) <= len) {
 		/*
 		 * A tail fits in this inode record. The extra bytes around
 		 * the filename are too few to make a difference.
 		 */
-		*tail = (struct apfs_cat_inode_tail *)
+		*tail = (struct apfs_inode_tail *)
 				((char *)raw + len - sizeof(**tail));
 	}
 
@@ -180,8 +181,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode, *err;
 	struct apfs_inode_info *ai;
-	struct apfs_cat_inode *raw_inode;
-	struct apfs_cat_inode_tail *raw_itail;
+	struct apfs_inode *raw_inode;
+	struct apfs_inode_tail *raw_itail;
 	struct apfs_table *table;
 	unsigned long ino = cnid;
 	u64 secs;
@@ -203,16 +204,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		goto failed_get;
 	}
 
-	inode->i_mode = le16_to_cpu(raw_inode->d_mode);
+	inode->i_mode = le16_to_cpu(raw_inode->i_mode);
 	/* Allow the user to override the ownership */
 	if (sbi->s_flags & APFS_UID_OVERRIDE)
 		inode->i_uid = sbi->s_uid;
 	else
-		i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->d_owner));
+		i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->i_owner));
 	if (sbi->s_flags & APFS_GID_OVERRIDE)
 		inode->i_gid = sbi->s_gid;
 	else
-		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->d_group));
+		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->i_group));
 
 	if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
 		/*
@@ -223,16 +224,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		 * it we would have to actually count the subdirectories. The
 		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
 		 */
-		set_nlink(inode, le64_to_cpu(raw_inode->d_link_count));
-		if (inode->i_nlink < le64_to_cpu(raw_inode->d_link_count)) {
+		set_nlink(inode, le64_to_cpu(raw_inode->i_link_count));
+		if (inode->i_nlink < le64_to_cpu(raw_inode->i_link_count)) {
 			apfs_msg(sb, KERN_WARNING, "hardlink count overflow");
 			err = ERR_PTR(-EOVERFLOW);
 			goto failed_read;
 		}
 	}
 	if (raw_itail) {
-		inode->i_size = le64_to_cpu(raw_itail->d_size);
-		inode->i_blocks = le64_to_cpu(raw_itail->d_phys_size)
+		inode->i_size = le64_to_cpu(raw_itail->i_size);
+		inode->i_blocks = le64_to_cpu(raw_itail->i_phys_size)
 							>> inode->i_blkbits;
 	} else {
 		/* Assume empty for now, but the real size must be elsewhere. */
@@ -240,16 +241,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	}
 
 	/* APFS stores the time as unsigned nanoseconds since the epoch */
-	secs = le64_to_cpu(raw_inode->d_atime);
+	secs = le64_to_cpu(raw_inode->i_atime);
 	inode->i_atime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_atime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->d_ctime);
+	secs = le64_to_cpu(raw_inode->i_ctime);
 	inode->i_ctime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_ctime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->d_mtime);
+	secs = le64_to_cpu(raw_inode->i_mtime);
 	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_mtime.tv_sec = secs;
-	ai->i_crtime = le64_to_cpu(raw_inode->d_crtime); /* Not used for now */
+	ai->i_crtime = le64_to_cpu(raw_inode->i_crtime); /* Not used for now */
 
 	/* A lot of operations still missing, of course */
 	if (S_ISREG(inode->i_mode)) {
