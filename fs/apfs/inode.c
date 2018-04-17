@@ -105,7 +105,7 @@ const struct address_space_operations apfs_aops = {
  * @sb:		filesystem superblock
  * @cnid:	the inode number
  * @table:	on success it will point to the table that stores the data
- * @tail:	on success points to the record tail, or NULL if it's not there
+ * @isize:	on success points to the inode size attr. NULL if there is none
  *
  * Returns a pointer to the data, or NULL in case of failure. TODO: use more
  * descriptive error pointers.
@@ -115,12 +115,13 @@ const struct address_space_operations apfs_aops = {
  */
 static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 					 struct apfs_table **table,
-					 struct apfs_inode_tail **tail)
+					 struct apfs_inode_size **isize)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
 	struct apfs_inode *raw;
-	int len;
+	int len, rest;
+	int i;
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
@@ -134,23 +135,35 @@ static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	if (!raw)
 		return NULL;
 
+	/* Now we must parse the optional attrs to find the one for the size */
+	*isize = NULL;
 	if (sizeof(*raw) > len) {
 		/*
-		 * Sanity check: prevent out of bounds read of i_len and the
-		 * other raw inode fields. I don't yet know how to safely read
-		 * the filename, because four bytes sometimes show up before
-		 * it that would mess with the length.
+		 * Sanity check: prevent out of bounds read of i_attr_count
+		 * and the other raw inode fields.
 		 */
 		goto fail;
 	}
-	*tail = NULL;
-	if (sizeof(*raw) + le16_to_cpu(raw->i_len) + sizeof(**tail) <= len) {
-		/*
-		 * A tail fits in this inode record. The extra bytes around
-		 * the filename are too few to make a difference.
-		 */
-		*tail = (struct apfs_inode_tail *)
-				((char *)raw + len - sizeof(**tail));
+	rest = len - sizeof(*raw);
+	rest -= le16_to_cpu(raw->i_attr_count) * sizeof(raw->i_opt_attrs[0]);
+	if (rest < 0)
+		goto fail;
+	for (i = 0; i < le16_to_cpu(raw->i_attr_count); ++i) {
+		int attrlen;
+		int attrtype;
+
+		/* Attribute length is padded to a multiple of 8 */
+		attrlen = round_up(le16_to_cpu(raw->i_opt_attrs[i].ia_len), 8);
+		if (attrlen > rest)
+			break;
+		attrtype = le16_to_cpu(raw->i_opt_attrs[i].ia_type);
+		if (attrtype == APFS_INODE_SIZE) {
+			/* The only optional attr we care about, for now */
+			*isize = (struct apfs_inode_size *)((char *)raw +
+							    len - rest);
+			break;
+		}
+		rest -= attrlen;
 	}
 
 	return raw;
@@ -182,7 +195,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	struct inode *inode, *err;
 	struct apfs_inode_info *ai;
 	struct apfs_inode *raw_inode;
-	struct apfs_inode_tail *raw_itail;
+	struct apfs_inode_size *raw_isize;
 	struct apfs_table *table;
 	unsigned long ino = cnid;
 	u64 secs;
@@ -198,7 +211,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		return inode;
 	ai = APFS_I(inode);
 
-	raw_inode = apfs_get_inode(sb, (u64)ino, &table, &raw_itail);
+	raw_inode = apfs_get_inode(sb, (u64)ino, &table, &raw_isize);
 	if (!raw_inode) {
 		err = ERR_PTR(-EIO);
 		goto failed_get;
@@ -231,12 +244,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 			goto failed_read;
 		}
 	}
-	if (raw_itail) {
-		inode->i_size = le64_to_cpu(raw_itail->i_size);
-		inode->i_blocks = le64_to_cpu(raw_itail->i_phys_size)
+	if (raw_isize) {
+		inode->i_size = le64_to_cpu(raw_isize->i_size);
+		inode->i_blocks = le64_to_cpu(raw_isize->i_phys_size)
 							>> inode->i_blkbits;
 	} else {
-		/* Assume empty for now, but the real size must be elsewhere. */
+		/*
+		 * This inode is "empty", but it may actually hold compressed
+		 * data in the named attribute com.apple.decmpfs, and sometimes
+		 * in com.apple.ResourceFork
+		 */
 		inode->i_size = inode->i_blocks = 0;
 	}
 

@@ -25,12 +25,15 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 	return container_of(inode, struct apfs_inode_info, vfs_inode);
 }
 
+/* Optional attribute types observed so far */
+#define APFS_INODE_NAME	0x0204
+#define APFS_INODE_SIZE	0x2008
+#define APFS_INODE_UNK1	0x280D
+#define APFS_INODE_UNK2	0x0005
+
 /*
- * Structure of the data in the catalog tables for record type APFS_RT_INODE.
- * For some type of records there will be more data in an apfs_inode_tail
- * structure, right after the filename and some null bytes. As far as I know
- * this happens only for regular files, though some of them don't have it
- * either.
+ * Structure of an on-disk inode. This is the data in the catalog tables
+ * for record type APFS_RT_INODE.
  */
 struct apfs_inode {
 	__le64 i_parent;	/* Parent ID */
@@ -50,24 +53,24 @@ struct apfs_inode {
 	__le32 i_group;		/* ID of the group */
 	__le16 i_mode;
 	char unknown_3[6];	/* Flags of some kind? */
-	__le64 unknown_4;
-	__le16 i_datatype;
-	__le16 i_len;		/* Filename length, counting null termination */
+	__le32 unknown_4;
 
 	/*
-	 * Filename starts here, sometimes preceded by four bytes of unknown
-	 * meaning. Also seems to be followed by a padding of null bytes.
-	 * Don't try to work with this field for now.
+	 * The inode is followed by a variable number of optional attributes.
+	 * Their type and length are declared here.
 	 */
-	char i_filename[0];
+	__le16 i_attr_count;	/* Number of the attributes */
+	__le16 i_attr_len;	/* Length of the attributes */
+	struct {
+		__le16 ia_type;	/* Attr type */
+		__le16 ia_len;	/* Attr length (not counting padding) */
+	} i_opt_attrs[0];
 } __attribute__ ((__packed__));
 
 /*
- * Tail of the data for an APFS_RT_INODE record. I'm not sure where it starts,
- * since the padding of the filename is confusing, but it ends with the record.
- * For now we decide if this tail is present by checking if it fits.
+ * Optional attribute of type APFS_INODE_SIZE, storing the size of the inode
  */
-struct apfs_inode_tail {
+struct apfs_inode_size {
 	__le64 i_size;		/* Logical file size */
 	__le64 i_phys_size;	/* Physical file size */
 	char unknown[24];	/* Or is it 8 bytes? */
