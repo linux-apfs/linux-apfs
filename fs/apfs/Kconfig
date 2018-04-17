@@ -1,5 +1,7 @@
 config APFS_FS
 	tristate "APFS filesystem support"
+	select LIBCRC32C
+	select NLS
 	help
 	  This module provides a small degree of experimental support for the
 	  Apple File System (APFS).
