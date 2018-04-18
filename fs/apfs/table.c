@@ -10,6 +10,7 @@
 #include "apfs.h"
 #include "key.h"
 #include "super.h"
+#include "table.h"
 
 /**
  * apfs_table_is_valid - Check basic sanity of the table index

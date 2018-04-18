@@ -9,6 +9,7 @@
 #include "apfs.h"
 #include "key.h"
 #include "super.h"
+#include "table.h"
 
 /**
  * apfs_alloc_query - Allocates a query structure

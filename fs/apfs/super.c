@@ -17,6 +17,7 @@
 #include "inode.h"
 #include "key.h"
 #include "super.h"
+#include "table.h"
 #include "xattr.h"
 
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
@@ -132,7 +133,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	vrb_raw = (struct apfs_table_raw *)bh->b_data;
 
 	/* Get the Volume Block */
-	vb = le64_to_cpu(vrb_raw->t_sd.t_single_rec);
+	vb = le64_to_cpu(vrb_raw->t_single_rec);
 	vrb_raw = NULL;
 	brelse(bh);
 	bh = NULL;
@@ -407,7 +408,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	vrb_raw = (struct apfs_table_raw *)bh2->b_data;
 
 	/* Get the Volume Block */
-	vb = le64_to_cpu(vrb_raw->t_sd.t_single_rec);
+	vb = le64_to_cpu(vrb_raw->t_single_rec);
 	vrb_raw = NULL;
 	brelse(bh2);
 	vtable = apfs_read_table(sb, vb);
@@ -475,7 +476,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Get the B-Tree object map */
 	/* TODO: could the catb_raw table hold more than one record? */
-	btom_blk = le64_to_cpu(catb_raw->t_sd.t_single_rec);
+	btom_blk = le64_to_cpu(catb_raw->t_single_rec);
 	brelse(bh3);
 	btom_table = apfs_read_table(sb, btom_blk);
 	if (!btom_table) {

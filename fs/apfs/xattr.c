@@ -10,6 +10,7 @@
 #include "apfs.h"
 #include "key.h"
 #include "super.h"
+#include "table.h"
 #include "xattr.h"
 
 /**

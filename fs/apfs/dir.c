@@ -10,6 +10,7 @@
 #include "apfs.h"
 #include "key.h"
 #include "super.h"
+#include "table.h"
 
 /**
  * apfs_inode_by_name - Find the cnid for a given filename
