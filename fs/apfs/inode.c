@@ -12,6 +12,7 @@
 #include "apfs.h"
 #include "inode.h"
 #include "key.h"
+#include "super.h"
 
 static int apfs_get_block(struct inode *inode, sector_t iblock,
 			  struct buffer_head *bh_result, int create)
@@ -33,7 +34,7 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	apfs_init_key(APFS_RT_EXTENT, inode->i_ino, NULL /* name */,
 		      0 /* namelen */, iblock << inode->i_blkbits, key);
 
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
 		ret = -ENOMEM;
 		goto fail;
@@ -169,7 +170,7 @@ static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 	return raw;
 
 fail:
-	if (*table != sbi->s_cat_tree->root)
+	if (*table != sbi->s_cat_root)
 		apfs_release_table(*table);
 	return NULL;
 }
@@ -283,14 +284,14 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		inode->i_op = &apfs_special_inode_operations;
 	}
 
-	if (table != sbi->s_cat_tree->root) /* Never release the root table */
+	if (table != sbi->s_cat_root) /* Never release the root table */
 		apfs_release_table(table);
 	/* Inode flags are not important for now, leave them at 0 */
 	unlock_new_inode(inode);
 	return inode;
 
 failed_read:
-	if (table != sbi->s_cat_tree->root)
+	if (table != sbi->s_cat_root)
 		apfs_release_table(table);
 failed_get:
 	iget_failed(inode);

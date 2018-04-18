@@ -8,6 +8,7 @@
 #include <linux/buffer_head.h>
 #include "apfs.h"
 #include "key.h"
+#include "super.h"
 
 /**
  * apfs_alloc_query - Allocates a query structure
@@ -67,8 +68,8 @@ fail:
 void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *root = sbi->s_cat_tree->root;
-	struct apfs_table *btom = sbi->s_cat_tree->btom;
+	struct apfs_table *root = sbi->s_cat_root;
+	struct apfs_table *btom = sbi->s_btom_root;
 
 	kfree(query->curr);
 	if (query->table != root && query->table != btom)
@@ -95,8 +96,8 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *root = sbi->s_cat_tree->root;
-	struct apfs_table *btom = sbi->s_cat_tree->btom;
+	struct apfs_table *root = sbi->s_cat_root;
+	struct apfs_table *btom = sbi->s_btom_root;
 	struct apfs_table *table;
 	struct apfs_query *btom_query;
 	struct apfs_key *btom_key;
@@ -224,7 +225,7 @@ void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 	struct apfs_query *query;
 	void *data = NULL;
 
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return NULL;
 	query->key = key;
@@ -260,7 +261,7 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
 	char *raw;
 	u64 cnid = 0;
 
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return 0;
 	query->key = key;
@@ -303,7 +304,7 @@ struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 	char *raw;
 	u64 block;
 
-	query = apfs_alloc_query(sbi->s_cat_tree->btom, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_btom_root, NULL /* parent */);
 	if (!query)
 		return NULL;
 

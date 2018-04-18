@@ -7,6 +7,7 @@
 
 #include <linux/module.h>
 #include <linux/fs.h>
+#include <linux/magic.h>
 #include <linux/slab.h>
 #include <linux/parser.h>
 #include <linux/buffer_head.h>
@@ -15,6 +16,7 @@
 #include "apfs.h"
 #include "inode.h"
 #include "key.h"
+#include "super.h"
 #include "xattr.h"
 
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
@@ -38,9 +40,8 @@ static void apfs_put_super(struct super_block *sb)
 
 	sb->s_fs_info = NULL;
 
-	apfs_release_table(sbi->s_cat_tree->root);
-	apfs_release_table(sbi->s_cat_tree->btom);
-	kfree(sbi->s_cat_tree);
+	apfs_release_table(sbi->s_cat_root);
+	apfs_release_table(sbi->s_btom_root);
 
 	brelse(sbi->s_mnode.bh);
 	brelse(sbi->s_vnode.bh);
@@ -483,11 +484,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 
 	/* The btom needs to be set before the call to apfs_btom_read_table() */
-	sbi->s_cat_tree = kmalloc(sizeof(*sbi->s_cat_tree), GFP_KERNEL);
-	err = -ENOMEM;
-	if (!sbi->s_cat_tree)
-		goto failed_tree;
-	sbi->s_cat_tree->btom = btom_table;
+	sbi->s_btom_root = btom_table;
 
 	/* Get the root node from the b-tree object map */
 	/* TODO: if files are few, could the btom and root node be the same? */
@@ -498,7 +495,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		apfs_msg(sb, KERN_ERR, "unable to read catalog root node");
 		goto failed_root;
 	}
-	sbi->s_cat_tree->root = root_table;
+	sbi->s_cat_root = root_table;
 
 	/* Print the last write time to verify the mount was successful */
 	apfs_msg(sb, KERN_INFO, "volume last modified at %llx",
@@ -526,8 +523,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 failed_mount:
 	apfs_release_table(root_table);
 failed_root:
-	kfree(sbi->s_cat_tree);
-failed_tree:
 	apfs_release_table(btom_table);
 failed_cat:
 	brelse(bh2);

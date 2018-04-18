@@ -9,6 +9,7 @@
 #include <linux/xattr.h>
 #include "apfs.h"
 #include "key.h"
+#include "super.h"
 #include "xattr.h"
 
 /**
@@ -56,7 +57,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	apfs_init_key(APFS_RT_EXTENT, xattr->cnid, NULL /* name */,
 		      0 /* namelen */, length, key);
 
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
 		ret = -ENOMEM;
 		goto fail;
@@ -197,7 +198,7 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	if (ret)
 		goto fail;
 
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
 		ret = -ENOMEM;
 		goto fail;
@@ -268,7 +269,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
 		ret = -ENOMEM;
 		goto cleanup;

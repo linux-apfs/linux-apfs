@@ -9,6 +9,7 @@
 #include <linux/buffer_head.h>
 #include "apfs.h"
 #include "key.h"
+#include "super.h"
 
 /**
  * apfs_inode_by_name - Find the cnid for a given filename
@@ -63,7 +64,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	query = apfs_alloc_query(sbi->s_cat_tree->root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
 		err = -ENOMEM;
 		goto cleanup;
