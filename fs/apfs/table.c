@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include "apfs.h"
+#include "btree.h"
 #include "key.h"
 #include "super.h"
 #include "table.h"

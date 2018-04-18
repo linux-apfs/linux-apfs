@@ -7,6 +7,7 @@
 
 #include <linux/buffer_head.h>
 #include "apfs.h"
+#include "btree.h"
 #include "dir.h"
 #include "key.h"
 #include "super.h"

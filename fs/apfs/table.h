@@ -11,6 +11,7 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 #include "apfs.h"
+#include "btree.h"
 
 /*
  * In-memory representation of an APFS table
