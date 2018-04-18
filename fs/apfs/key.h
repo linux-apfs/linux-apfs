@@ -35,7 +35,7 @@ struct apfs_btom_key {
 #define APFS_RT_EXTENT_STATUS	0x60 /* Shows the file object has records */
 #define APFS_RT_UNKNOWN		0x70
 #define APFS_RT_EXTENT		0x80
-#define APFS_RT_KEY		0x90
+#define APFS_RT_DENTRY		0x90
 
 /*
  * Structure of the dentry keys in the catalog tables.

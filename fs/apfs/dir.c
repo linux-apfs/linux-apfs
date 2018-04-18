@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include "apfs.h"
+#include "dir.h"
 #include "key.h"
 #include "super.h"
 #include "table.h"
@@ -30,7 +31,7 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 	if (!key)
 		return 0;
 	/* We are looking for a key record */
-	if (apfs_init_key(APFS_RT_KEY, cnid, child->name, child->len,
+	if (apfs_init_key(APFS_RT_DENTRY, cnid, child->name, child->len,
 			  0 /* offset */, key))
 		goto fail;
 	result = apfs_cat_resolve(dir->i_sb, key);
@@ -72,7 +73,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	}
 
 	/* We want all the children for the cnid, regardless of the name */
-	apfs_init_key(APFS_RT_KEY, cnid, NULL /* name */, 0 /* namelen */,
+	apfs_init_key(APFS_RT_DENTRY, cnid, NULL /* name */, 0 /* namelen */,
 		      0 /* offset */, key);
 	query->key = key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
@@ -88,7 +89,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		char *raw;
 		int namelen;
 		struct apfs_dentry_key *de_key;
-		struct apfs_cat_keyrec *de;
+		struct apfs_dentry *de;
 
 		err = apfs_btree_query(sb, &query);
 		if (err == -ENODATA) { /* Got all the records */
@@ -113,7 +114,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 			break;
 		if (query->len < sizeof(*de))
 			break;
-		de = (struct apfs_cat_keyrec *)(raw + query->off);
+		de = (struct apfs_dentry *)(raw + query->off);
 
 		err = 0;
 		if (pos <= 0) {

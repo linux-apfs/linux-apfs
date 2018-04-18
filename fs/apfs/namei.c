@@ -6,6 +6,7 @@
  */
 
 #include "apfs.h"
+#include "dir.h"
 #include "inode.h"
 #include "key.h"
 #include "xattr.h"

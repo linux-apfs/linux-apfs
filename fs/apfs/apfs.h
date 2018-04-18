@@ -87,18 +87,6 @@ struct apfs_btom_data {
 } __attribute__ ((__packed__));
 
 /*
- * Structure of the data in the catalog tables for record type APFS_RT_KEY.
- *
- * Sometimes an extra 64-bit field will exist; this has something to do with
- * hard links. Either way, the cnid remains first.
- */
-struct apfs_cat_keyrec {
-	__le64 d_cnid;
-	__le64 d_time;		/* Date Added */
-	__le16 d_type;		/* File type */
-} __attribute__ ((__packed__));
-
-/*
  * Structure of the data in the catalog tables for record type APFS_RT_EXTENT.
  */
 struct apfs_cat_extent {
@@ -121,15 +109,9 @@ extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 extern u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key);
 extern struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id);
 
-/* dir.c */
-extern u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child);
-
 /*
  * Inode and file operations
  */
-
-/* dir.c */
-extern const struct file_operations apfs_dir_operations;
 
 /* file.c */
 extern const struct file_operations apfs_file_operations;

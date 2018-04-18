@@ -84,7 +84,7 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 	key->id = apfs_cat_cnid(raw);
 
 	switch (key->type) {
-	case APFS_RT_KEY:
+	case APFS_RT_DENTRY:
 		if (size < sizeof(struct apfs_dentry_key) + 1 ||
 		    *((char *)raw + size - 1) != 0) {
 			/* Filename must have NULL-termination */

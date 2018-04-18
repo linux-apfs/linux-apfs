@@ -10,6 +10,7 @@
 #include <linux/mpage.h>
 #include <asm/div64.h>
 #include "apfs.h"
+#include "dir.h"
 #include "inode.h"
 #include "key.h"
 #include "super.h"

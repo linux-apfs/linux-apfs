@@ -7,6 +7,7 @@
 
 #include <linux/buffer_head.h>
 #include "apfs.h"
+#include "dir.h"
 #include "key.h"
 #include "super.h"
 #include "table.h"
@@ -258,7 +259,7 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
-	struct apfs_cat_keyrec *data;
+	struct apfs_dentry *data;
 	char *raw;
 	u64 cnid = 0;
 
@@ -272,7 +273,7 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
 		goto fail;
 
 	raw = query->table->t_node.bh->b_data + query->off;
-	data = (struct apfs_cat_keyrec *)raw;
+	data = (struct apfs_dentry *)raw;
 	switch (query->len) {
 	case 0x22: /* hard link */
 	case 0x12:
