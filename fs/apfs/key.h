@@ -26,7 +26,7 @@ struct apfs_btom_key {
  */
 #define APFS_NAME_LEN		254
 
-#define APFS_ROOT_CNID		2 /* Root folder cnid */
+#define APFS_ROOT_CNID		2 /* Root directory cnid */
 
 /* Catalog node record types */
 #define APFS_RT_INODE		0x30

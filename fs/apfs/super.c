@@ -201,7 +201,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	/* The file count is only for the mounted volume */
 	buf->f_files = le64_to_cpu(vol->v_file_count) +
-		       le64_to_cpu(vol->v_fold_count);
+		       le64_to_cpu(vol->v_dir_count);
 
 	/*
 	 * buf->f_ffree is left undefined for now. Maybe it should report the
@@ -505,7 +505,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	/* Also the number of files */
 	apfs_msg(sb, KERN_INFO, "volume has %llu files and %llu directories",
 		 le64_to_cpu(vcsb_raw->v_file_count),
-		 le64_to_cpu(vcsb_raw->v_fold_count));
+		 le64_to_cpu(vcsb_raw->v_dir_count));
 
 	sb->s_op = &apfs_sops;
 	sb->s_xattr = apfs_xattr_handlers;

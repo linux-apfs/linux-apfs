@@ -114,7 +114,7 @@ struct apfs_volume_checkpoint_sb {
 	char	unknown_5[16];
 /*B0*/	__le64	v_next_cnid;
 	__le64	v_file_count;	/* Number of files in the volume */
-/*C0*/	__le64	v_fold_count;	/* Number of folders in the volume */
+/*C0*/	__le64	v_dir_count;	/* Number of directories in the volume */
 	char	unknown_6[40];
 /*F0*/	char	v_uuid[16];	/* uuid of the volume */
 /*100*/	__le64	v_wtime;	/* Last modification to the volume */
