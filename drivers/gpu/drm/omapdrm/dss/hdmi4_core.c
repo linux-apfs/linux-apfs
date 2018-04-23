@@ -1,7 +1,6 @@
 /*
- * ti_hdmi_4xxx_ip.c
- *
  * HDMI TI81xx, TI38xx, TI OMAP4 etc IP driver Library
+ *
  * Copyright (C) 2010-2011 Texas Instruments Incorporated - http://www.ti.com/
  * Authors: Yong Zhi
  *	Mythri pk <mythripk@ti.com>
@@ -886,25 +885,36 @@ struct hdmi4_features {
 	bool audio_use_mclk;
 };
 
-static const struct hdmi4_features hdmi4_es1_features = {
+static const struct hdmi4_features hdmi4430_es1_features = {
 	.cts_swmode = false,
 	.audio_use_mclk = false,
 };
 
-static const struct hdmi4_features hdmi4_es2_features = {
+static const struct hdmi4_features hdmi4430_es2_features = {
 	.cts_swmode = true,
 	.audio_use_mclk = false,
 };
 
-static const struct hdmi4_features hdmi4_es3_features = {
+static const struct hdmi4_features hdmi4_features = {
 	.cts_swmode = true,
 	.audio_use_mclk = true,
 };
 
 static const struct soc_device_attribute hdmi4_soc_devices[] = {
-	{ .family = "OMAP4", .revision = "ES1.?", .data = &hdmi4_es1_features },
-	{ .family = "OMAP4", .revision = "ES2.?", .data = &hdmi4_es2_features },
-	{ .family = "OMAP4",			  .data = &hdmi4_es3_features },
+	{
+		.machine = "OMAP4430",
+		.revision = "ES1.?",
+		.data = &hdmi4430_es1_features,
+	},
+	{
+		.machine = "OMAP4430",
+		.revision = "ES2.?",
+		.data = &hdmi4430_es2_features,
+	},
+	{
+		.family = "OMAP4",
+		.data = &hdmi4_features,
+	},
 	{ /* sentinel */ }
 };
 

@@ -483,7 +483,8 @@ static int sun8i_dwmac_init(struct platform_device *pdev, void *priv)
 	return 0;
 }
 
-static void sun8i_dwmac_core_init(struct mac_device_info *hw, int mtu)
+static void sun8i_dwmac_core_init(struct mac_device_info *hw,
+				  struct net_device *dev)
 {
 	void __iomem *ioaddr = hw->pcsr;
 	u32 v;
@@ -808,8 +809,7 @@ static int sun8i_dwmac_set_syscon(struct stmmac_priv *priv)
 			 val, reg);
 
 	if (gmac->variant->soc_has_internal_phy) {
-		if (of_property_read_bool(priv->plat->phy_node,
-					  "allwinner,leds-active-low"))
+		if (of_property_read_bool(node, "allwinner,leds-active-low"))
 			reg |= H3_EPHY_LED_POL;
 		else
 			reg &= ~H3_EPHY_LED_POL;

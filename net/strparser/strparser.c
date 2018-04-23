@@ -60,7 +60,7 @@ static void strp_abort_strp(struct strparser *strp, int err)
 		struct sock *sk = strp->sk;
 
 		/* Report an error on the lower socket */
-		sk->sk_err = err;
+		sk->sk_err = -err;
 		sk->sk_error_report(sk);
 	}
 }
@@ -401,7 +401,7 @@ void strp_data_ready(struct strparser *strp)
 	 * allows a thread in BH context to safely check if the process
 	 * lock is held. In this case, if the lock is held, queue work.
 	 */
-	if (sock_owned_by_user(strp->sk)) {
+	if (sock_owned_by_user_nocheck(strp->sk)) {
 		queue_work(strp_wq, &strp->work);
 		return;
 	}
@@ -458,7 +458,7 @@ static void strp_msg_timeout(struct work_struct *w)
 	/* Message assembly timed out */
 	STRP_STATS_INCR(strp->stats.msg_timeouts);
 	strp->cb.lock(strp);
-	strp->cb.abort_parser(strp, ETIMEDOUT);
+	strp->cb.abort_parser(strp, -ETIMEDOUT);
 	strp->cb.unlock(strp);
 }
 

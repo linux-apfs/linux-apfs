@@ -513,7 +513,7 @@ static enum i40iw_status_code i40iw_sc_cqp_create(struct i40iw_sc_cqp *cqp,
 
 	ret_code = i40iw_allocate_dma_mem(cqp->dev->hw,
 					  &cqp->sdbuf,
-					  128,
+					  I40IW_UPDATE_SD_BUF_SIZE * cqp->sq_size,
 					  I40IW_SD_BUF_ALIGNMENT);
 
 	if (ret_code)
@@ -596,14 +596,15 @@ void i40iw_sc_cqp_post_sq(struct i40iw_sc_cqp *cqp)
 }
 
 /**
- * i40iw_sc_cqp_get_next_send_wqe - get next wqe on cqp sq
- * @cqp: struct for cqp hw
- * @wqe_idx: we index of cqp ring
+ * i40iw_sc_cqp_get_next_send_wqe_idx - get next WQE on CQP SQ and pass back the index
+ * @cqp: pointer to CQP structure
+ * @scratch: private data for CQP WQE
+ * @wqe_idx: WQE index for next WQE on CQP SQ
  */
-u64 *i40iw_sc_cqp_get_next_send_wqe(struct i40iw_sc_cqp *cqp, u64 scratch)
+static u64 *i40iw_sc_cqp_get_next_send_wqe_idx(struct i40iw_sc_cqp *cqp,
+					       u64 scratch, u32 *wqe_idx)
 {
 	u64 *wqe = NULL;
-	u32	wqe_idx;
 	enum i40iw_status_code ret_code;
 
 	if (I40IW_RING_FULL_ERR(cqp->sq_ring)) {
@@ -616,18 +617,30 @@ u64 *i40iw_sc_cqp_get_next_send_wqe(struct i40iw_sc_cqp *cqp, u64 scratch)
 			    cqp->sq_ring.size);
 		return NULL;
 	}
-	I40IW_ATOMIC_RING_MOVE_HEAD(cqp->sq_ring, wqe_idx, ret_code);
+	I40IW_ATOMIC_RING_MOVE_HEAD(cqp->sq_ring, *wqe_idx, ret_code);
 	cqp->dev->cqp_cmd_stats[OP_REQUESTED_COMMANDS]++;
 	if (ret_code)
 		return NULL;
-	if (!wqe_idx)
+	if (!*wqe_idx)
 		cqp->polarity = !cqp->polarity;
 
-	wqe = cqp->sq_base[wqe_idx].elem;
-	cqp->scratch_array[wqe_idx] = scratch;
+	wqe = cqp->sq_base[*wqe_idx].elem;
+	cqp->scratch_array[*wqe_idx] = scratch;
 	I40IW_CQP_INIT_WQE(wqe);
 
 	return wqe;
+}
+
+/**
+ * i40iw_sc_cqp_get_next_send_wqe - get next wqe on cqp sq
+ * @cqp: struct for cqp hw
+ * @scratch: private data for CQP WQE
+ */
+u64 *i40iw_sc_cqp_get_next_send_wqe(struct i40iw_sc_cqp *cqp, u64 scratch)
+{
+	u32 wqe_idx;
+
+	return i40iw_sc_cqp_get_next_send_wqe_idx(cqp, scratch, &wqe_idx);
 }
 
 /**
@@ -1880,8 +1893,6 @@ static enum i40iw_status_code i40iw_sc_get_next_aeqe(struct i40iw_sc_aeq *aeq,
 static enum i40iw_status_code i40iw_sc_repost_aeq_entries(struct i40iw_sc_dev *dev,
 							  u32 count)
 {
-	if (count > I40IW_MAX_AEQ_ALLOCATE_COUNT)
-		return I40IW_ERR_INVALID_SIZE;
 
 	if (dev->is_pf)
 		i40iw_wr32(dev->hw, I40E_PFPE_AEQALLOC, count);
@@ -3587,8 +3598,10 @@ static enum i40iw_status_code cqp_sds_wqe_fill(struct i40iw_sc_cqp *cqp,
 	u64 *wqe;
 	int mem_entries, wqe_entries;
 	struct i40iw_dma_mem *sdbuf = &cqp->sdbuf;
+	u64 offset;
+	u32 wqe_idx;
 
-	wqe = i40iw_sc_cqp_get_next_send_wqe(cqp, scratch);
+	wqe = i40iw_sc_cqp_get_next_send_wqe_idx(cqp, scratch, &wqe_idx);
 	if (!wqe)
 		return I40IW_ERR_RING_FULL;
 
@@ -3601,8 +3614,10 @@ static enum i40iw_status_code cqp_sds_wqe_fill(struct i40iw_sc_cqp *cqp,
 		 LS_64(mem_entries, I40IW_CQPSQ_UPESD_ENTRY_COUNT);
 
 	if (mem_entries) {
-		memcpy(sdbuf->va, &info->entry[3], (mem_entries << 4));
-		data = sdbuf->pa;
+		offset = wqe_idx * I40IW_UPDATE_SD_BUF_SIZE;
+		memcpy((char *)sdbuf->va + offset, &info->entry[3],
+		       mem_entries << 4);
+		data = (u64)sdbuf->pa + offset;
 	} else {
 		data = 0;
 	}
@@ -3855,7 +3870,6 @@ enum i40iw_status_code i40iw_config_fpm_values(struct i40iw_sc_dev *dev, u32 qp_
 	struct i40iw_virt_mem virt_mem;
 	u32 i, mem_size;
 	u32 qpwantedoriginal, qpwanted, mrwanted, pblewanted;
-	u32 powerof2;
 	u64 sd_needed;
 	u32 loop_count = 0;
 
@@ -3911,8 +3925,10 @@ enum i40iw_status_code i40iw_config_fpm_values(struct i40iw_sc_dev *dev, u32 qp_
 		hmc_info->hmc_obj[I40IW_HMC_IW_APBVT_ENTRY].cnt = 1;
 		hmc_info->hmc_obj[I40IW_HMC_IW_MR].cnt = mrwanted;
 
-		hmc_info->hmc_obj[I40IW_HMC_IW_XF].cnt = I40IW_MAX_WQ_ENTRIES * qpwanted;
-		hmc_info->hmc_obj[I40IW_HMC_IW_Q1].cnt = 4 * I40IW_MAX_IRD_SIZE * qpwanted;
+		hmc_info->hmc_obj[I40IW_HMC_IW_XF].cnt =
+			roundup_pow_of_two(I40IW_MAX_WQ_ENTRIES * qpwanted);
+		hmc_info->hmc_obj[I40IW_HMC_IW_Q1].cnt =
+			roundup_pow_of_two(2 * I40IW_MAX_IRD_SIZE * qpwanted);
 		hmc_info->hmc_obj[I40IW_HMC_IW_XFFL].cnt =
 			hmc_info->hmc_obj[I40IW_HMC_IW_XF].cnt / hmc_fpm_misc->xf_block_size;
 		hmc_info->hmc_obj[I40IW_HMC_IW_Q1FL].cnt =
@@ -3928,24 +3944,16 @@ enum i40iw_status_code i40iw_config_fpm_values(struct i40iw_sc_dev *dev, u32 qp_
 		if ((loop_count > 1000) ||
 		    ((!(loop_count % 10)) &&
 		    (qpwanted > qpwantedoriginal * 2 / 3))) {
-			if (qpwanted > FPM_MULTIPLIER) {
-				qpwanted -= FPM_MULTIPLIER;
-				powerof2 = 1;
-				while (powerof2 < qpwanted)
-					powerof2 *= 2;
-				powerof2 /= 2;
-				qpwanted = powerof2;
-			} else {
-				qpwanted /= 2;
-			}
+			if (qpwanted > FPM_MULTIPLIER)
+				qpwanted = roundup_pow_of_two(qpwanted -
+							      FPM_MULTIPLIER);
+			qpwanted >>= 1;
 		}
 		if (mrwanted > FPM_MULTIPLIER * 10)
 			mrwanted -= FPM_MULTIPLIER * 10;
 		if (pblewanted > FPM_MULTIPLIER * 1000)
 			pblewanted -= FPM_MULTIPLIER * 1000;
 	} while (sd_needed > hmc_fpm_misc->max_sds && loop_count < 2000);
-
-	sd_needed = i40iw_est_sd(dev, hmc_info);
 
 	i40iw_debug(dev, I40IW_DEBUG_HMC,
 		    "loop_cnt=%d, sd_needed=%lld, qpcnt = %d, cqcnt=%d, mrcnt=%d, pblecnt=%d\n",

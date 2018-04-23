@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Support for dynamic device trees.
  *
@@ -695,7 +696,7 @@ int __of_changeset_apply_entries(struct of_changeset *ocs, int *ret_revert)
 /*
  * Returns 0 on success, a negative error value in case of an error.
  *
- * If multiple changset entry notification errors occur then only the
+ * If multiple changeset entry notification errors occur then only the
  * final notification error is reported.
  */
 int __of_changeset_apply_notify(struct of_changeset *ocs)
@@ -795,7 +796,7 @@ int __of_changeset_revert_entries(struct of_changeset *ocs, int *ret_apply)
 }
 
 /*
- * If multiple changset entry notification errors occur then only the
+ * If multiple changeset entry notification errors occur then only the
  * final notification error is reported.
  */
 int __of_changeset_revert_notify(struct of_changeset *ocs)

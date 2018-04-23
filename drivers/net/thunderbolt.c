@@ -166,6 +166,8 @@ struct tbnet_ring {
  * @connected_work: Worker that finalizes the ThunderboltIP connection
  *		    setup and enables DMA paths for high speed data
  *		    transfers
+ * @disconnect_work: Worker that handles tearing down the ThunderboltIP
+ *		     connection
  * @rx_hdr: Copy of the currently processed Rx frame. Used when a
  *	    network packet consists of multiple Thunderbolt frames.
  *	    In host byte order.
@@ -190,6 +192,7 @@ struct tbnet {
 	int login_retries;
 	struct delayed_work login_work;
 	struct work_struct connected_work;
+	struct work_struct disconnect_work;
 	struct thunderbolt_ip_frame_header rx_hdr;
 	struct tbnet_ring rx_ring;
 	atomic_t frame_id;
@@ -335,7 +338,7 @@ static void tbnet_free_buffers(struct tbnet_ring *ring)
 		if (ring->ring->is_tx) {
 			dir = DMA_TO_DEVICE;
 			order = 0;
-			size = tbnet_frame_size(tf);
+			size = TBNET_FRAME_SIZE;
 		} else {
 			dir = DMA_FROM_DEVICE;
 			order = TBNET_RX_PAGE_ORDER;
@@ -445,7 +448,7 @@ static int tbnet_handle_packet(const void *buf, size_t size, void *data)
 	case TBIP_LOGOUT:
 		ret = tbnet_logout_response(net, route, sequence, command_id);
 		if (!ret)
-			tbnet_tear_down(net, false);
+			queue_work(system_long_wq, &net->disconnect_work);
 		break;
 
 	default:
@@ -512,6 +515,7 @@ err_free:
 static struct tbnet_frame *tbnet_get_tx_buffer(struct tbnet *net)
 {
 	struct tbnet_ring *ring = &net->tx_ring;
+	struct device *dma_dev = tb_ring_dma_device(ring->ring);
 	struct tbnet_frame *tf;
 	unsigned int index;
 
@@ -522,7 +526,9 @@ static struct tbnet_frame *tbnet_get_tx_buffer(struct tbnet *net)
 
 	tf = &ring->frames[index];
 	tf->frame.size = 0;
-	tf->frame.buffer_phy = 0;
+
+	dma_sync_single_for_cpu(dma_dev, tf->frame.buffer_phy,
+				tbnet_frame_size(tf), DMA_TO_DEVICE);
 
 	return tf;
 }
@@ -531,12 +537,7 @@ static void tbnet_tx_callback(struct tb_ring *ring, struct ring_frame *frame,
 			      bool canceled)
 {
 	struct tbnet_frame *tf = container_of(frame, typeof(*tf), frame);
-	struct device *dma_dev = tb_ring_dma_device(ring);
 	struct tbnet *net = netdev_priv(tf->dev);
-
-	dma_unmap_page(dma_dev, tf->frame.buffer_phy, tbnet_frame_size(tf),
-		       DMA_TO_DEVICE);
-	tf->frame.buffer_phy = 0;
 
 	/* Return buffer to the ring */
 	net->tx_ring.prod++;
@@ -548,10 +549,12 @@ static void tbnet_tx_callback(struct tb_ring *ring, struct ring_frame *frame,
 static int tbnet_alloc_tx_buffers(struct tbnet *net)
 {
 	struct tbnet_ring *ring = &net->tx_ring;
+	struct device *dma_dev = tb_ring_dma_device(ring->ring);
 	unsigned int i;
 
 	for (i = 0; i < TBNET_RING_SIZE; i++) {
 		struct tbnet_frame *tf = &ring->frames[i];
+		dma_addr_t dma_addr;
 
 		tf->page = alloc_page(GFP_KERNEL);
 		if (!tf->page) {
@@ -559,7 +562,17 @@ static int tbnet_alloc_tx_buffers(struct tbnet *net)
 			return -ENOMEM;
 		}
 
+		dma_addr = dma_map_page(dma_dev, tf->page, 0, TBNET_FRAME_SIZE,
+					DMA_TO_DEVICE);
+		if (dma_mapping_error(dma_dev, dma_addr)) {
+			__free_page(tf->page);
+			tf->page = NULL;
+			tbnet_free_buffers(ring);
+			return -ENOMEM;
+		}
+
 		tf->dev = net->dev;
+		tf->frame.buffer_phy = dma_addr;
 		tf->frame.callback = tbnet_tx_callback;
 		tf->frame.sof = TBIP_PDF_FRAME_START;
 		tf->frame.eof = TBIP_PDF_FRAME_END;
@@ -647,6 +660,13 @@ static void tbnet_login_work(struct work_struct *work)
 
 		queue_work(system_long_wq, &net->connected_work);
 	}
+}
+
+static void tbnet_disconnect_work(struct work_struct *work)
+{
+	struct tbnet *net = container_of(work, typeof(*net), disconnect_work);
+
+	tbnet_tear_down(net, false);
 }
 
 static bool tbnet_check_frame(struct tbnet *net, const struct tbnet_frame *tf,
@@ -871,6 +891,7 @@ static int tbnet_stop(struct net_device *dev)
 
 	napi_disable(&net->napi);
 
+	cancel_work_sync(&net->disconnect_work);
 	tbnet_tear_down(net, true);
 
 	tb_ring_free(net->rx_ring.ring);
@@ -879,19 +900,6 @@ static int tbnet_stop(struct net_device *dev)
 	net->tx_ring.ring = NULL;
 
 	return 0;
-}
-
-static bool tbnet_xmit_map(struct device *dma_dev, struct tbnet_frame *tf)
-{
-	dma_addr_t dma_addr;
-
-	dma_addr = dma_map_page(dma_dev, tf->page, 0, tbnet_frame_size(tf),
-				DMA_TO_DEVICE);
-	if (dma_mapping_error(dma_dev, dma_addr))
-		return false;
-
-	tf->frame.buffer_phy = dma_addr;
-	return true;
 }
 
 static bool tbnet_xmit_csum_and_map(struct tbnet *net, struct sk_buff *skb,
@@ -908,13 +916,14 @@ static bool tbnet_xmit_csum_and_map(struct tbnet *net, struct sk_buff *skb,
 
 	if (skb->ip_summed != CHECKSUM_PARTIAL) {
 		/* No need to calculate checksum so we just update the
-		 * total frame count and map the frames for DMA.
+		 * total frame count and sync the frames for DMA.
 		 */
 		for (i = 0; i < frame_count; i++) {
 			hdr = page_address(frames[i]->page);
 			hdr->frame_count = cpu_to_le32(frame_count);
-			if (!tbnet_xmit_map(dma_dev, frames[i]))
-				goto err_unmap;
+			dma_sync_single_for_device(dma_dev,
+				frames[i]->frame.buffer_phy,
+				tbnet_frame_size(frames[i]), DMA_TO_DEVICE);
 		}
 
 		return true;
@@ -983,21 +992,14 @@ static bool tbnet_xmit_csum_and_map(struct tbnet *net, struct sk_buff *skb,
 	*tucso = csum_fold(wsum);
 
 	/* Checksum is finally calculated and we don't touch the memory
-	 * anymore, so DMA map the frames now.
+	 * anymore, so DMA sync the frames now.
 	 */
 	for (i = 0; i < frame_count; i++) {
-		if (!tbnet_xmit_map(dma_dev, frames[i]))
-			goto err_unmap;
+		dma_sync_single_for_device(dma_dev, frames[i]->frame.buffer_phy,
+			tbnet_frame_size(frames[i]), DMA_TO_DEVICE);
 	}
 
 	return true;
-
-err_unmap:
-	while (i--)
-		dma_unmap_page(dma_dev, frames[i]->frame.buffer_phy,
-			       tbnet_frame_size(frames[i]), DMA_TO_DEVICE);
-
-	return false;
 }
 
 static void *tbnet_kmap_frag(struct sk_buff *skb, unsigned int frag_num,
@@ -1204,6 +1206,7 @@ static int tbnet_probe(struct tb_service *svc, const struct tb_service_id *id)
 	net = netdev_priv(dev);
 	INIT_DELAYED_WORK(&net->login_work, tbnet_login_work);
 	INIT_WORK(&net->connected_work, tbnet_connected_work);
+	INIT_WORK(&net->disconnect_work, tbnet_disconnect_work);
 	mutex_init(&net->connection_lock);
 	atomic_set(&net->command_id, 0);
 	atomic_set(&net->frame_id, 0);
@@ -1279,10 +1282,7 @@ static int __maybe_unused tbnet_suspend(struct device *dev)
 	stop_login(net);
 	if (netif_running(net->dev)) {
 		netif_device_detach(net->dev);
-		tb_ring_stop(net->rx_ring.ring);
-		tb_ring_stop(net->tx_ring.ring);
-		tbnet_free_buffers(&net->rx_ring);
-		tbnet_free_buffers(&net->tx_ring);
+		tbnet_tear_down(net, true);
 	}
 
 	return 0;

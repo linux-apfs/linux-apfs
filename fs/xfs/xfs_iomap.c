@@ -955,15 +955,29 @@ static inline bool imap_needs_alloc(struct inode *inode,
 		(IS_DAX(inode) && imap->br_state == XFS_EXT_UNWRITTEN);
 }
 
+static inline bool needs_cow_for_zeroing(struct xfs_bmbt_irec *imap, int nimaps)
+{
+	return nimaps &&
+		imap->br_startblock != HOLESTARTBLOCK &&
+		imap->br_state != XFS_EXT_UNWRITTEN;
+}
+
 static inline bool need_excl_ilock(struct xfs_inode *ip, unsigned flags)
 {
 	/*
-	 * COW writes will allocate delalloc space, so we need to make sure
-	 * to take the lock exclusively here.
+	 * COW writes may allocate delalloc space or convert unwritten COW
+	 * extents, so we need to make sure to take the lock exclusively here.
 	 */
 	if (xfs_is_reflink_inode(ip) && (flags & (IOMAP_WRITE | IOMAP_ZERO)))
 		return true;
-	if ((flags & IOMAP_DIRECT) && (flags & IOMAP_WRITE))
+
+	/*
+	 * Extents not yet cached requires exclusive access, don't block.
+	 * This is an opencoded xfs_ilock_data_map_shared() to cater for the
+	 * non-blocking behaviour.
+	 */
+	if (ip->i_d.di_format == XFS_DINODE_FMT_BTREE &&
+	    !(ip->i_df.if_flags & XFS_IFEXTENTS))
 		return true;
 	return false;
 }
@@ -993,20 +1007,22 @@ xfs_file_iomap_begin(
 		return xfs_file_iomap_begin_delay(inode, offset, length, iomap);
 	}
 
-	if (need_excl_ilock(ip, flags)) {
+	if (need_excl_ilock(ip, flags))
 		lockmode = XFS_ILOCK_EXCL;
-		xfs_ilock(ip, XFS_ILOCK_EXCL);
-	} else {
-		lockmode = xfs_ilock_data_map_shared(ip);
-	}
+	else
+		lockmode = XFS_ILOCK_SHARED;
 
-	if ((flags & IOMAP_NOWAIT) && !(ip->i_df.if_flags & XFS_IFEXTENTS)) {
-		error = -EAGAIN;
-		goto out_unlock;
+	if (flags & IOMAP_NOWAIT) {
+		if (!(ip->i_df.if_flags & XFS_IFEXTENTS))
+			return -EAGAIN;
+		if (!xfs_ilock_nowait(ip, lockmode))
+			return -EAGAIN;
+	} else {
+		xfs_ilock(ip, lockmode);
 	}
 
 	ASSERT(offset <= mp->m_super->s_maxbytes);
-	if ((xfs_fsize_t)offset + length > mp->m_super->s_maxbytes)
+	if (offset > mp->m_super->s_maxbytes - length)
 		length = mp->m_super->s_maxbytes - offset;
 	offset_fsb = XFS_B_TO_FSBT(mp, offset);
 	end_fsb = XFS_B_TO_FSB(mp, offset + length);
@@ -1024,7 +1040,9 @@ xfs_file_iomap_begin(
 			goto out_unlock;
 	}
 
-	if ((flags & (IOMAP_WRITE | IOMAP_ZERO)) && xfs_is_reflink_inode(ip)) {
+	if (xfs_is_reflink_inode(ip) &&
+	    ((flags & IOMAP_WRITE) ||
+	     ((flags & IOMAP_ZERO) && needs_cow_for_zeroing(&imap, nimaps)))) {
 		if (flags & IOMAP_DIRECT) {
 			/*
 			 * A reflinked inode will result in CoW alloc.
@@ -1213,7 +1231,7 @@ xfs_xattr_iomap_begin(
 
 	ASSERT(ip->i_d.di_aformat != XFS_DINODE_FMT_LOCAL);
 	error = xfs_bmapi_read(ip, offset_fsb, end_fsb - offset_fsb, &imap,
-			       &nimaps, XFS_BMAPI_ENTIRE | XFS_BMAPI_ATTRFORK);
+			       &nimaps, XFS_BMAPI_ATTRFORK);
 out_unlock:
 	xfs_iunlock(ip, lockmode);
 

@@ -1,16 +1,7 @@
-/* ir-nec-decoder.c - handle NEC IR Pulse/Space protocol
- *
- * Copyright (C) 2010 by Mauro Carvalho Chehab
- *
- * This program is free software; you can redistribute it and/or modify
- *  it under the terms of the GNU General Public License as published by
- *  the Free Software Foundation version 2 of the License.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- */
+// SPDX-License-Identifier: GPL-2.0
+// ir-nec-decoder.c - handle NEC IR Pulse/Space protocol
+//
+// Copyright (C) 2010 by Mauro Carvalho Chehab
 
 #include <linux/bitrev.h>
 #include <linux/module.h>
@@ -41,7 +32,7 @@ enum nec_state {
 /**
  * ir_nec_decode() - Decode one NEC pulse or space
  * @dev:	the struct rc_dev descriptor of the device
- * @duration:	the struct ir_raw_event descriptor of the pulse/space
+ * @ev:		the struct ir_raw_event descriptor of the pulse/space
  *
  * This function returns -EINVAL if the pulse violates the state machine
  */
@@ -183,7 +174,6 @@ static int ir_nec_decode(struct rc_dev *dev, struct ir_raw_event ev)
  * ir_nec_scancode_to_raw() - encode an NEC scancode ready for modulation.
  * @protocol:	specific protocol to use
  * @scancode:	a single NEC scancode.
- * @raw:	raw data to be modulated.
  */
 static u32 ir_nec_scancode_to_raw(enum rc_proto protocol, u32 scancode)
 {
@@ -264,6 +254,7 @@ static struct ir_raw_handler nec_handler = {
 							RC_PROTO_BIT_NEC32,
 	.decode		= ir_nec_decode,
 	.encode		= ir_nec_encode,
+	.carrier	= 38000,
 };
 
 static int __init ir_nec_decode_init(void)
@@ -282,7 +273,7 @@ static void __exit ir_nec_decode_exit(void)
 module_init(ir_nec_decode_init);
 module_exit(ir_nec_decode_exit);
 
-MODULE_LICENSE("GPL");
+MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Mauro Carvalho Chehab");
 MODULE_AUTHOR("Red Hat Inc. (http://www.redhat.com)");
 MODULE_DESCRIPTION("NEC IR protocol decoder");

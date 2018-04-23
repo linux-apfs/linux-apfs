@@ -146,8 +146,7 @@ static void ll_free_sbi(struct super_block *sb)
 	kfree(sbi);
 }
 
-static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
-				    struct vfsmount *mnt)
+static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 {
 	struct inode *root = NULL;
 	struct ll_sb_info *sbi = ll_s2sbi(sb);
@@ -236,7 +235,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 				   "An MDT (md %s) is performing recovery, of which this client is not a part. Please wait for recovery to complete, abort, or time out.\n",
 				   md);
 		goto out;
-	} else if (err) {
+	}
+
+	if (err) {
 		CERROR("cannot connect to %s: rc = %d\n", md, err);
 		goto out;
 	}
@@ -313,11 +314,11 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 	}
 
 	if (data->ocd_connect_flags & OBD_CONNECT_ACL) {
-		sb->s_flags |= MS_POSIXACL;
+		sb->s_flags |= SB_POSIXACL;
 		sbi->ll_flags |= LL_SBI_ACL;
 	} else {
 		LCONSOLE_INFO("client wants to enable acl, but mdt not!\n");
-		sb->s_flags &= ~MS_POSIXACL;
+		sb->s_flags &= ~SB_POSIXACL;
 		sbi->ll_flags &= ~LL_SBI_ACL;
 	}
 
@@ -660,7 +661,7 @@ void ll_kill_super(struct super_block *sb)
 	struct ll_sb_info *sbi;
 
 	/* not init sb ?*/
-	if (!(sb->s_flags & MS_ACTIVE))
+	if (!(sb->s_flags & SB_ACTIVE))
 		return;
 
 	sbi = ll_s2sbi(sb);
@@ -865,7 +866,7 @@ void ll_lli_init(struct ll_inode_info *lli)
 	mutex_init(&lli->lli_layout_mutex);
 }
 
-int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
+int ll_fill_super(struct super_block *sb)
 {
 	struct lustre_profile *lprof = NULL;
 	struct lustre_sb_info *lsi = s2lsi(sb);
@@ -942,7 +943,7 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 	}
 
 	/* connections, registrations, sb setup */
-	err = client_common_fill_super(sb, md, dt, mnt);
+	err = client_common_fill_super(sb, md, dt);
 	if (!err)
 		sbi->ll_client_common_fill_super_succeeded = 1;
 
@@ -2039,8 +2040,8 @@ int ll_remount_fs(struct super_block *sb, int *flags, char *data)
 	int err;
 	__u32 read_only;
 
-	if ((bool)(*flags & MS_RDONLY) != sb_rdonly(sb)) {
-		read_only = *flags & MS_RDONLY;
+	if ((bool)(*flags & SB_RDONLY) != sb_rdonly(sb)) {
+		read_only = *flags & SB_RDONLY;
 		err = obd_set_info_async(NULL, sbi->ll_md_exp,
 					 sizeof(KEY_READ_ONLY),
 					 KEY_READ_ONLY, sizeof(read_only),
@@ -2053,9 +2054,9 @@ int ll_remount_fs(struct super_block *sb, int *flags, char *data)
 		}
 
 		if (read_only)
-			sb->s_flags |= MS_RDONLY;
+			sb->s_flags |= SB_RDONLY;
 		else
-			sb->s_flags &= ~MS_RDONLY;
+			sb->s_flags &= ~SB_RDONLY;
 
 		if (sbi->ll_flags & LL_SBI_VERBOSE)
 			LCONSOLE_WARN("Remounted %s %s\n", profilenm,

@@ -82,11 +82,11 @@ DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
  * @start_addr_lo:	DMA ring buffer start address, lower part
  * @start_addr_hi:	DMA ring buffer start address, higher part
  * @size:		DMA ring buffer size register
-			Bits [0-7]:	DMA packet size, 188 bytes
-			Bits [16-23]:	packets count in block, 128 packets
-			Bits [24-31]:	blocks count, 8 blocks
+ *			* Bits [0-7]:	DMA packet size, 188 bytes
+ *			* Bits [16-23]:	packets count in block, 128 packets
+ *			* Bits [24-31]:	blocks count, 8 blocks
  * @timeout:		DMA timeout in units of 8ns
-			For example, value of 375000000 equals to 3 sec
+ *			For example, value of 375000000 equals to 3 sec
  * @curr_addr_lo:	Current ring buffer head address, lower part
  * @curr_addr_hi:	Current ring buffer head address, higher part
  * @stat_pkt_received:	Statistic register, not tested
@@ -862,7 +862,7 @@ static int netup_unidvb_initdev(struct pci_dev *pci_dev,
 		PCI_EXP_DEVCTL_NOSNOOP_EN, 0);
 	/* Adjust PCIe completion timeout. */
 	pcie_capability_clear_and_set_word(pci_dev,
-		PCI_EXP_DEVCTL2, 0xf, 0x2);
+		PCI_EXP_DEVCTL2, PCI_EXP_DEVCTL2_COMP_TIMEOUT, 0x2);
 
 	if (netup_unidvb_request_mmio(pci_dev)) {
 		dev_err(&pci_dev->dev,

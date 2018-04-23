@@ -47,7 +47,7 @@ void ttm_page_alloc_fini(void);
  *
  * Add backing pages to all of @ttm
  */
-int ttm_pool_populate(struct ttm_tt *ttm);
+int ttm_pool_populate(struct ttm_tt *ttm, struct ttm_operation_ctx *ctx);
 
 /**
  * ttm_pool_unpopulate:
@@ -59,10 +59,20 @@ int ttm_pool_populate(struct ttm_tt *ttm);
 void ttm_pool_unpopulate(struct ttm_tt *ttm);
 
 /**
+ * Populates and DMA maps pages to fullfil a ttm_dma_populate() request
+ */
+int ttm_populate_and_map_pages(struct device *dev, struct ttm_dma_tt *tt,
+				struct ttm_operation_ctx *ctx);
+
+/**
+ * Unpopulates and DMA unmaps pages as part of a
+ * ttm_dma_unpopulate() request */
+void ttm_unmap_and_unpopulate_pages(struct device *dev, struct ttm_dma_tt *tt);
+
+/**
  * Output the state of pools to debugfs file
  */
 int ttm_page_alloc_debugfs(struct seq_file *m, void *data);
-
 
 #if defined(CONFIG_SWIOTLB) || defined(CONFIG_INTEL_IOMMU)
 /**
@@ -80,19 +90,9 @@ void ttm_dma_page_alloc_fini(void);
  */
 int ttm_dma_page_alloc_debugfs(struct seq_file *m, void *data);
 
-int ttm_dma_populate(struct ttm_dma_tt *ttm_dma, struct device *dev);
+int ttm_dma_populate(struct ttm_dma_tt *ttm_dma, struct device *dev,
+			struct ttm_operation_ctx *ctx);
 void ttm_dma_unpopulate(struct ttm_dma_tt *ttm_dma, struct device *dev);
-
-
-/**
- * Populates and DMA maps pages to fullfil a ttm_dma_populate() request
- */
-int ttm_populate_and_map_pages(struct device *dev, struct ttm_dma_tt *tt);
-
-/**
- * Unpopulates and DMA unmaps pages as part of a
- * ttm_dma_unpopulate() request */
-void ttm_unmap_and_unpopulate_pages(struct device *dev, struct ttm_dma_tt *tt);
 
 #else
 static inline int ttm_dma_page_alloc_init(struct ttm_mem_global *glob,
@@ -108,7 +108,8 @@ static inline int ttm_dma_page_alloc_debugfs(struct seq_file *m, void *data)
 	return 0;
 }
 static inline int ttm_dma_populate(struct ttm_dma_tt *ttm_dma,
-				   struct device *dev)
+				struct device *dev,
+				struct ttm_operation_ctx *ctx)
 {
 	return -ENOMEM;
 }
@@ -116,16 +117,6 @@ static inline void ttm_dma_unpopulate(struct ttm_dma_tt *ttm_dma,
 				      struct device *dev)
 {
 }
-
-static inline int ttm_populate_and_map_pages(struct device *dev, struct ttm_dma_tt *tt)
-{
-	return -ENOMEM;
-}
-
-static inline void ttm_unmap_and_unpopulate_pages(struct device *dev, struct ttm_dma_tt *tt)
-{
-}
-
 #endif
 
 #endif

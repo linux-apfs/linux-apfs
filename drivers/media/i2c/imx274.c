@@ -634,7 +634,7 @@ static int imx274_regmap_util_write_table_8(struct regmap *regmap,
 					    const struct reg_8 table[],
 					    u16 wait_ms_addr, u16 end_addr)
 {
-	int err;
+	int err = 0;
 	const struct reg_8 *next;
 	u8 val;
 
@@ -655,6 +655,8 @@ static int imx274_regmap_util_write_table_8(struct regmap *regmap,
 				err = regmap_bulk_write(regmap, range_start,
 							&range_vals[0],
 							range_count);
+			else
+				err = 0;
 
 			if (err)
 				return err;
@@ -1770,8 +1772,7 @@ static int imx274_probe(struct i2c_client *client,
 	return 0;
 
 err_ctrls:
-	v4l2_async_unregister_subdev(sd);
-	v4l2_ctrl_handler_free(sd->ctrl_handler);
+	v4l2_ctrl_handler_free(&imx274->ctrls.handler);
 err_me:
 	media_entity_cleanup(&sd->entity);
 err_regmap:
@@ -1788,7 +1789,7 @@ static int imx274_remove(struct i2c_client *client)
 	imx274_write_table(imx274, mode_table[IMX274_MODE_STOP_STREAM]);
 
 	v4l2_async_unregister_subdev(sd);
-	v4l2_ctrl_handler_free(sd->ctrl_handler);
+	v4l2_ctrl_handler_free(&imx274->ctrls.handler);
 	media_entity_cleanup(&sd->entity);
 	mutex_destroy(&imx274->lock);
 	return 0;

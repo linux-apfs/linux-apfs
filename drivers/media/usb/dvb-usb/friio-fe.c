@@ -13,6 +13,7 @@
 #include <linux/init.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/kernel.h>
 
 #include "friio.h"
 
@@ -297,7 +298,7 @@ static int jdvbt90502_set_frontend(struct dvb_frontend *fe)
 }
 
 
-/**
+/*
  * (reg, val) commad list to initialize this module.
  *  captured on a Windows box.
  */
@@ -340,8 +341,6 @@ static u8 init_code[][2] = {
 	{0x76, 0x0C},
 };
 
-static const int init_code_len = sizeof(init_code) / sizeof(u8[2]);
-
 static int jdvbt90502_init(struct dvb_frontend *fe)
 {
 	int i = -1;
@@ -355,7 +354,7 @@ static int jdvbt90502_init(struct dvb_frontend *fe)
 	msg.addr = state->config.demod_address;
 	msg.flags = 0;
 	msg.len = 2;
-	for (i = 0; i < init_code_len; i++) {
+	for (i = 0; i < ARRAY_SIZE(init_code); i++) {
 		msg.buf = init_code[i];
 		ret = i2c_transfer(state->i2c, &msg, 1);
 		if (ret != 1)

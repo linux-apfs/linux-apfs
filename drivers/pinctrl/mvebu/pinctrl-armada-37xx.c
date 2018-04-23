@@ -408,12 +408,21 @@ static int armada_37xx_gpio_direction_output(struct gpio_chip *chip,
 {
 	struct armada_37xx_pinctrl *info = gpiochip_get_data(chip);
 	unsigned int reg = OUTPUT_EN;
-	unsigned int mask;
+	unsigned int mask, val, ret;
 
 	armada_37xx_update_reg(&reg, offset);
 	mask = BIT(offset);
 
-	return regmap_update_bits(info->regmap, reg, mask, mask);
+	ret = regmap_update_bits(info->regmap, reg, mask, mask);
+
+	if (ret)
+		return ret;
+
+	reg = OUTPUT_VAL;
+	val = value ? mask : 0;
+	regmap_update_bits(info->regmap, reg, mask, val);
+
+	return 0;
 }
 
 static int armada_37xx_gpio_get(struct gpio_chip *chip, unsigned int offset)
@@ -997,11 +1006,11 @@ static int armada_37xx_pinctrl_register(struct platform_device *pdev,
 static const struct of_device_id armada_37xx_pinctrl_of_match[] = {
 	{
 		.compatible = "marvell,armada3710-sb-pinctrl",
-		.data = (void *)&armada_37xx_pin_sb,
+		.data = &armada_37xx_pin_sb,
 	},
 	{
 		.compatible = "marvell,armada3710-nb-pinctrl",
-		.data = (void *)&armada_37xx_pin_nb,
+		.data = &armada_37xx_pin_nb,
 	},
 	{ },
 };

@@ -2205,8 +2205,7 @@ out_dma_free:
 	if (chip_id != RCAR_GEN2)
 		ravb_ptp_stop(ndev);
 out_release:
-	if (ndev)
-		free_netdev(ndev);
+	free_netdev(ndev);
 
 	pm_runtime_put(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
@@ -2256,9 +2255,6 @@ static int ravb_wol_setup(struct net_device *ndev)
 	/* Enable MagicPacket */
 	ravb_modify(ndev, ECMR, ECMR_MPDE, ECMR_MPDE);
 
-	/* Increased clock usage so device won't be suspended */
-	clk_enable(priv->clk);
-
 	return enable_irq_wake(priv->emac_irq);
 }
 
@@ -2276,9 +2272,6 @@ static int ravb_wol_restore(struct net_device *ndev)
 	ret = ravb_close(ndev);
 	if (ret < 0)
 		return ret;
-
-	/* Restore clock usage count */
-	clk_disable(priv->clk);
 
 	return disable_irq_wake(priv->emac_irq);
 }
@@ -2308,32 +2301,9 @@ static int __maybe_unused ravb_resume(struct device *dev)
 	struct ravb_private *priv = netdev_priv(ndev);
 	int ret = 0;
 
-	if (priv->wol_enabled) {
-		/* Reduce the usecount of the clock to zero and then
-		 * restore it to its original value. This is done to force
-		 * the clock to be re-enabled which is a workaround
-		 * for renesas-cpg-mssr driver which do not enable clocks
-		 * when resuming from PSCI suspend/resume.
-		 *
-		 * Without this workaround the driver fails to communicate
-		 * with the hardware if WoL was enabled when the system
-		 * entered PSCI suspend. This is due to that if WoL is enabled
-		 * we explicitly keep the clock from being turned off when
-		 * suspending, but in PSCI sleep power is cut so the clock
-		 * is disabled anyhow, the clock driver is not aware of this
-		 * so the clock is not turned back on when resuming.
-		 *
-		 * TODO: once the renesas-cpg-mssr suspend/resume is working
-		 *       this clock dance should be removed.
-		 */
-		clk_disable(priv->clk);
-		clk_disable(priv->clk);
-		clk_enable(priv->clk);
-		clk_enable(priv->clk);
-
-		/* Set reset mode to rearm the WoL logic */
+	/* If WoL is enabled set reset mode to rearm the WoL logic */
+	if (priv->wol_enabled)
 		ravb_write(ndev, CCC_OPC_RESET, CCC);
-	}
 
 	/* All register have been reset to default values.
 	 * Restore all registers which where setup at probe time and

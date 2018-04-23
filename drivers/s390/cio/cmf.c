@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Linux on zSeries Channel Measurement Facility support
  *
@@ -7,20 +8,6 @@
  *	    Cornelia Huck <cornelia.huck@de.ibm.com>
  *
  * original idea from Natarajan Krishnaswami <nkrishna@us.ibm.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2, or (at your option)
- * any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 #define KMSG_COMPONENT "cio"
@@ -1131,9 +1118,10 @@ int ccw_set_cmf(struct ccw_device *cdev, int enable)
  * enable_cmf() - switch on the channel measurement for a specific device
  *  @cdev:	The ccw device to be enabled
  *
- *  Returns %0 for success or a negative error value.
- *  Note: If this is called on a device for which channel measurement is already
- *	  enabled a reset of the measurement data is triggered.
+ *  Enable channel measurements for @cdev. If this is called on a device
+ *  for which channel measurement is already enabled a reset of the
+ *  measurement data is triggered.
+ *  Returns: %0 for success or a negative error value.
  *  Context:
  *    non-atomic
  */
@@ -1173,7 +1161,7 @@ out_unlock:
  * __disable_cmf() - switch off the channel measurement for a specific device
  *  @cdev:	The ccw device to be disabled
  *
- *  Returns %0 for success or a negative error value.
+ *  Returns: %0 for success or a negative error value.
  *
  *  Context:
  *    non-atomic, device_lock() held.
@@ -1197,7 +1185,7 @@ int __disable_cmf(struct ccw_device *cdev)
  * disable_cmf() - switch off the channel measurement for a specific device
  *  @cdev:	The ccw device to be disabled
  *
- *  Returns %0 for success or a negative error value.
+ *  Returns: %0 for success or a negative error value.
  *
  *  Context:
  *    non-atomic
@@ -1218,7 +1206,7 @@ int disable_cmf(struct ccw_device *cdev)
  * @cdev:	the channel to be read
  * @index:	the index of the value to be read
  *
- * Returns the value read or %0 if the value cannot be read.
+ * Returns: The value read or %0 if the value cannot be read.
  *
  *  Context:
  *    any
@@ -1233,7 +1221,7 @@ u64 cmf_read(struct ccw_device *cdev, int index)
  * @cdev:	the channel to be read
  * @data:	a pointer to a data block that will be filled
  *
- * Returns %0 on success, a negative error value otherwise.
+ * Returns: %0 on success, a negative error value otherwise.
  *
  *  Context:
  *    any

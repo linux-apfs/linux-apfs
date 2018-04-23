@@ -15,6 +15,7 @@
 #include <linux/linkage.h>
 #include <linux/syscalls.h>
 #include <asm-generic/syscalls.h>
+#include <asm/vdso.h>
 
 #undef __SYSCALL
 #define __SYSCALL(nr, call)	[nr] = (call),

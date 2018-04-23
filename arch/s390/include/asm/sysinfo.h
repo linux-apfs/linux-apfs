@@ -1,11 +1,8 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * definition for store system information stsi
  *
  * Copyright IBM Corp. 2001, 2008
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License (version 2 only)
- * as published by the Free Software Foundation.
  *
  *    Author(s): Ulrich Weigand <weigand@de.ibm.com>
  *		 Christian Borntraeger <borntraeger@de.ibm.com>
@@ -24,7 +21,8 @@ struct sysinfo_1_1_1 {
 	unsigned char :8;
 	unsigned char ccr;
 	unsigned char cai;
-	char reserved_0[28];
+	char reserved_0[20];
+	unsigned long lic;
 	char manufacturer[16];
 	char type[4];
 	char reserved_1[12];

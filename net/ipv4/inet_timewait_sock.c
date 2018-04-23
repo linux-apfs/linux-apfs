@@ -93,11 +93,11 @@ static void inet_twsk_add_bind_node(struct inet_timewait_sock *tw,
 }
 
 /*
- * Enter the time wait state.
+ * Enter the time wait state. This is called with locally disabled BH.
  * Essentially we whip up a timewait bucket, copy the relevant info into it
  * from the SK, and mess with hash chains and list linkage.
  */
-void __inet_twsk_hashdance(struct inet_timewait_sock *tw, struct sock *sk,
+void inet_twsk_hashdance(struct inet_timewait_sock *tw, struct sock *sk,
 			   struct inet_hashinfo *hashinfo)
 {
 	const struct inet_sock *inet = inet_sk(sk);
@@ -111,7 +111,7 @@ void __inet_twsk_hashdance(struct inet_timewait_sock *tw, struct sock *sk,
 	 */
 	bhead = &hashinfo->bhash[inet_bhashfn(twsk_net(tw), inet->inet_num,
 			hashinfo->bhash_size)];
-	spin_lock_bh(&bhead->lock);
+	spin_lock(&bhead->lock);
 	tw->tw_tb = icsk->icsk_bind_hash;
 	WARN_ON(!icsk->icsk_bind_hash);
 	inet_twsk_add_bind_node(tw, &tw->tw_tb->owners);
@@ -119,27 +119,26 @@ void __inet_twsk_hashdance(struct inet_timewait_sock *tw, struct sock *sk,
 
 	spin_lock(lock);
 
-	/*
-	 * Step 2: Hash TW into tcp ehash chain.
-	 * Notes :
-	 * - tw_refcnt is set to 4 because :
-	 * - We have one reference from bhash chain.
-	 * - We have one reference from ehash chain.
-	 * - We have one reference from timer.
-	 * - One reference for ourself (our caller will release it).
-	 * We can use atomic_set() because prior spin_lock()/spin_unlock()
-	 * committed into memory all tw fields.
-	 */
-	refcount_set(&tw->tw_refcnt, 4);
 	inet_twsk_add_node_rcu(tw, &ehead->chain);
 
 	/* Step 3: Remove SK from hash chain */
 	if (__sk_nulls_del_node_init_rcu(sk))
 		sock_prot_inuse_add(sock_net(sk), sk->sk_prot, -1);
 
-	spin_unlock_bh(lock);
+	spin_unlock(lock);
+
+	/* tw_refcnt is set to 3 because we have :
+	 * - one reference for bhash chain.
+	 * - one reference for ehash chain.
+	 * - one reference for timer.
+	 * We can use atomic_set() because prior spin_lock()/spin_unlock()
+	 * committed into memory all tw fields.
+	 * Also note that after this point, we lost our implicit reference
+	 * so we are not allowed to use tw anymore.
+	 */
+	refcount_set(&tw->tw_refcnt, 3);
 }
-EXPORT_SYMBOL_GPL(__inet_twsk_hashdance);
+EXPORT_SYMBOL_GPL(inet_twsk_hashdance);
 
 static void tw_timer_handler(struct timer_list *t)
 {
@@ -271,14 +270,14 @@ restart:
 				continue;
 			tw = inet_twsk(sk);
 			if ((tw->tw_family != family) ||
-				atomic_read(&twsk_net(tw)->count))
+				refcount_read(&twsk_net(tw)->count))
 				continue;
 
 			if (unlikely(!refcount_inc_not_zero(&tw->tw_refcnt)))
 				continue;
 
 			if (unlikely((tw->tw_family != family) ||
-				     atomic_read(&twsk_net(tw)->count))) {
+				     refcount_read(&twsk_net(tw)->count))) {
 				inet_twsk_put(tw);
 				goto restart;
 			}

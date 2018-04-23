@@ -27,6 +27,7 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/ktime.h>
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
@@ -37,7 +38,6 @@
 #include <linux/usb/input.h>
 #include <media/rc-core.h>
 
-#include <linux/time.h>
 #include <linux/timer.h>
 
 #define MOD_AUTHOR	"Jarod Wilson <jarod@wilsonet.com>"
@@ -492,7 +492,7 @@ static void free_imon_context(struct imon_context *ictx)
 	dev_dbg(dev, "%s: iMON context freed\n", __func__);
 }
 
-/**
+/*
  * Called when the Display device (e.g. /dev/lcd0)
  * is opened by the application.
  */
@@ -542,7 +542,7 @@ exit:
 	return retval;
 }
 
-/**
+/*
  * Called when the display device (e.g. /dev/lcd0)
  * is closed by the application.
  */
@@ -575,7 +575,7 @@ static int display_close(struct inode *inode, struct file *file)
 	return retval;
 }
 
-/**
+/*
  * Sends a packet to the device -- this function must be called with
  * ictx->lock held, or its unlock/lock sequence while waiting for tx
  * to complete can/will lead to a deadlock.
@@ -664,7 +664,7 @@ static int send_packet(struct imon_context *ictx)
 	return retval;
 }
 
-/**
+/*
  * Sends an associate packet to the iMON 2.4G.
  *
  * This might not be such a good idea, since it has an id collision with
@@ -694,7 +694,7 @@ static int send_associate_24g(struct imon_context *ictx)
 	return retval;
 }
 
-/**
+/*
  * Sends packets to setup and show clock on iMON display
  *
  * Arguments: year - last 2 digits of year, month - 1..12,
@@ -781,7 +781,7 @@ static int send_set_imon_clock(struct imon_context *ictx,
 	return retval;
 }
 
-/**
+/*
  * These are the sysfs functions to handle the association on the iMON 2.4G LT.
  */
 static ssize_t show_associate_remote(struct device *d,
@@ -823,7 +823,7 @@ static ssize_t store_associate_remote(struct device *d,
 	return count;
 }
 
-/**
+/*
  * sysfs functions to control internal imon clock
  */
 static ssize_t show_imon_clock(struct device *d,
@@ -923,7 +923,7 @@ static const struct attribute_group imon_rf_attr_group = {
 	.attrs = imon_rf_sysfs_entries
 };
 
-/**
+/*
  * Writes data to the VFD.  The iMON VFD is 2x16 characters
  * and requires data in 5 consecutive USB interrupt packets,
  * each packet but the last carrying 7 bytes.
@@ -1008,7 +1008,7 @@ exit:
 	return (!retval) ? n_bytes : retval;
 }
 
-/**
+/*
  * Writes data to the LCD.  The iMON OEM LCD screen expects 8-byte
  * packets. We accept data as 16 hexadecimal digits, followed by a
  * newline (to make it easy to drive the device from a command-line
@@ -1066,7 +1066,7 @@ exit:
 	return (!retval) ? n_bytes : retval;
 }
 
-/**
+/*
  * Callback function for USB core API: transmit data
  */
 static void usb_tx_callback(struct urb *urb)
@@ -1087,7 +1087,7 @@ static void usb_tx_callback(struct urb *urb)
 	complete(&ictx->tx.finished);
 }
 
-/**
+/*
  * report touchscreen input
  */
 static void imon_touch_display_timeout(struct timer_list *t)
@@ -1103,7 +1103,7 @@ static void imon_touch_display_timeout(struct timer_list *t)
 	input_sync(ictx->touch);
 }
 
-/**
+/*
  * iMON IR receivers support two different signal sets -- those used by
  * the iMON remotes, and those used by the Windows MCE remotes (which is
  * really just RC-6), but only one or the other at a time, as the signals
@@ -1168,30 +1168,7 @@ out:
 	return retval;
 }
 
-static inline int tv2int(const struct timeval *a, const struct timeval *b)
-{
-	int usecs = 0;
-	int sec   = 0;
-
-	if (b->tv_usec > a->tv_usec) {
-		usecs = 1000000;
-		sec--;
-	}
-
-	usecs += a->tv_usec - b->tv_usec;
-
-	sec += a->tv_sec - b->tv_sec;
-	sec *= 1000;
-	usecs /= 1000;
-	sec += usecs;
-
-	if (sec < 0)
-		sec = 1000;
-
-	return sec;
-}
-
-/**
+/*
  * The directional pad behaves a bit differently, depending on whether this is
  * one of the older ffdc devices or a newer device. Newer devices appear to
  * have a higher resolution matrix for more precise mouse movement, but it
@@ -1201,16 +1178,16 @@ static inline int tv2int(const struct timeval *a, const struct timeval *b)
  */
 static int stabilize(int a, int b, u16 timeout, u16 threshold)
 {
-	struct timeval ct;
-	static struct timeval prev_time = {0, 0};
-	static struct timeval hit_time  = {0, 0};
+	ktime_t ct;
+	static ktime_t prev_time;
+	static ktime_t hit_time;
 	static int x, y, prev_result, hits;
 	int result = 0;
-	int msec, msec_hit;
+	long msec, msec_hit;
 
-	do_gettimeofday(&ct);
-	msec = tv2int(&ct, &prev_time);
-	msec_hit = tv2int(&ct, &hit_time);
+	ct = ktime_get();
+	msec = ktime_ms_delta(ct, prev_time);
+	msec_hit = ktime_ms_delta(ct, hit_time);
 
 	if (msec > 100) {
 		x = 0;
@@ -1543,7 +1520,7 @@ static void imon_pad_to_keys(struct imon_context *ictx, unsigned char *buf)
 	}
 }
 
-/**
+/*
  * figure out if these is a press or a release. We don't actually
  * care about repeats, as those will be auto-generated within the IR
  * subsystem for repeating scancodes.
@@ -1592,10 +1569,10 @@ static int imon_parse_press_type(struct imon_context *ictx,
 	return press_type;
 }
 
-/**
+/*
  * Process the incoming packet
  */
-/**
+/*
  * Convert bit count to time duration (in us) and submit
  * the value to lirc_dev.
  */
@@ -1608,7 +1585,7 @@ static void submit_data(struct imon_context *context)
 	ir_raw_event_store_with_filter(context->rdev, &ev);
 }
 
-/**
+/*
  * Process the incoming packet
  */
 static void imon_incoming_ir_raw(struct imon_context *context,
@@ -1688,9 +1665,9 @@ static void imon_incoming_scancode(struct imon_context *ictx,
 	u32 kc;
 	u64 scancode;
 	int press_type = 0;
-	int msec;
-	struct timeval t;
-	static struct timeval prev_time = { 0, 0 };
+	long msec;
+	ktime_t t;
+	static ktime_t prev_time;
 	u8 ktype;
 
 	/* filter out junk data on the older 0xffdc imon devices */
@@ -1783,10 +1760,10 @@ static void imon_incoming_scancode(struct imon_context *ictx,
 	/* Only panel type events left to process now */
 	spin_lock_irqsave(&ictx->kc_lock, flags);
 
-	do_gettimeofday(&t);
+	t = ktime_get();
 	/* KEY_MUTE repeats from knob need to be suppressed */
 	if (ictx->kc == KEY_MUTE && ictx->kc == ictx->last_keycode) {
-		msec = tv2int(&t, &prev_time);
+		msec = ktime_ms_delta(t, prev_time);
 		if (msec < ictx->idev->rep[REP_DELAY]) {
 			spin_unlock_irqrestore(&ictx->kc_lock, flags);
 			return;
@@ -1831,7 +1808,7 @@ not_input_data:
 	}
 }
 
-/**
+/*
  * Callback function for USB core API: receive data
  */
 static void usb_rx_callback_intf0(struct urb *urb)
@@ -1956,6 +1933,7 @@ static void imon_get_ffdc_type(struct imon_context *ictx)
 		break;
 	/* iMON VFD, iMON IR */
 	case 0x24:
+	case 0x30:
 	case 0x85:
 		dev_info(ictx->dev, "0xffdc iMON VFD, iMON IR");
 		detected_display_type = IMON_DISPLAY_TYPE_VFD;
@@ -1973,6 +1951,11 @@ static void imon_get_ffdc_type(struct imon_context *ictx)
 		dev_info(ictx->dev, "0xffdc iMON LCD, MCE IR");
 		detected_display_type = IMON_DISPLAY_TYPE_LCD;
 		allowed_protos = RC_PROTO_BIT_RC6_MCE;
+		break;
+	/* no display, iMON IR */
+	case 0x26:
+		dev_info(ictx->dev, "0xffdc iMON Inside, iMON IR");
+		ictx->display_supported = false;
 		break;
 	default:
 		dev_info(ictx->dev, "Unknown 0xffdc device, defaulting to VFD and iMON IR");
@@ -2485,7 +2468,7 @@ static void imon_init_display(struct imon_context *ictx,
 
 }
 
-/**
+/*
  * Callback function for USB core API: Probe
  */
 static int imon_probe(struct usb_interface *interface,
@@ -2583,7 +2566,7 @@ fail:
 	return ret;
 }
 
-/**
+/*
  * Callback function for USB core API: disconnect
  */
 static void imon_disconnect(struct usb_interface *interface)

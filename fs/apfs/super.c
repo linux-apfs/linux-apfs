@@ -13,6 +13,7 @@
 #include <linux/buffer_head.h>
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
+#include <linux/iversion.h>
 #include "apfs.h"
 #include "btree.h"
 #include "inode.h"
@@ -59,7 +60,7 @@ static struct inode *apfs_alloc_inode(struct super_block *sb)
 	ai = kmem_cache_alloc(apfs_inode_cachep, GFP_KERNEL);
 	if (!ai)
 		return NULL;
-	ai->vfs_inode.i_version = 1;
+	inode_set_iversion(&ai->vfs_inode, 1);
 	return &ai->vfs_inode;
 }
 
