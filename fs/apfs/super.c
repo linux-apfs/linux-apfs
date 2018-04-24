@@ -328,7 +328,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	int err = -EINVAL;
 
 	apfs_msg(sb, KERN_NOTICE, "this module is read-only");
-	sb->s_flags |= MS_RDONLY;
+	sb->s_flags |= SB_RDONLY;
 
 	/*
 	 * For now assume a small blocksize, we only need it so that we can
