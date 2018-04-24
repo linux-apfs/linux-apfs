@@ -16,6 +16,7 @@
 #include "key.h"
 #include "super.h"
 #include "table.h"
+#include "xattr.h"
 
 static int apfs_get_block(struct inode *inode, sector_t iblock,
 			  struct buffer_head *bh_result, int create)
@@ -271,7 +272,9 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	secs = le64_to_cpu(raw_inode->i_mtime);
 	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_mtime.tv_sec = secs;
-	ai->i_crtime = le64_to_cpu(raw_inode->i_crtime); /* Not used for now */
+	secs = le64_to_cpu(raw_inode->i_crtime);
+	ai->i_crtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	ai->i_crtime.tv_sec = secs;
 
 	/* A lot of operations still missing, of course */
 	if (S_ISREG(inode->i_mode)) {
@@ -299,4 +302,23 @@ failed_read:
 failed_get:
 	iget_failed(inode);
 	return err;
+}
+
+int apfs_getattr(const struct path *path, struct kstat *stat,
+		 u32 request_mask, unsigned int query_flags)
+{
+	struct inode *inode = d_inode(path->dentry);
+	struct apfs_inode_info *ai = APFS_I(inode);
+
+	stat->result_mask |= STATX_BTIME;
+	stat->btime.tv_sec = ai->i_crtime.tv_sec;
+	stat->btime.tv_nsec = ai->i_crtime.tv_nsec;
+
+	if (apfs_xattr_get(inode, "com.apple.decmpfs", NULL, 0) >= 0)
+		stat->attributes |= STATX_ATTR_COMPRESSED;
+
+	stat->attributes_mask |= STATX_ATTR_COMPRESSED;
+
+	generic_fillattr(inode, stat);
+	return 0;
 }

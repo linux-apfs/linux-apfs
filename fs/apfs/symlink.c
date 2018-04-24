@@ -7,6 +7,7 @@
 
 #include <linux/slab.h>
 #include "apfs.h"
+#include "inode.h"
 #include "xattr.h"
 
 /**
@@ -57,5 +58,6 @@ fail:
 
 const struct inode_operations apfs_symlink_inode_operations = {
 	.get_link	= apfs_get_link,
+	.getattr	= apfs_getattr,
 	.listxattr	= apfs_listxattr,
 };

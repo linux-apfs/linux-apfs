@@ -6,6 +6,7 @@
  */
 
 #include "apfs.h"
+#include "inode.h"
 #include "xattr.h"
 
 const struct file_operations apfs_file_operations = {
@@ -16,5 +17,6 @@ const struct file_operations apfs_file_operations = {
 };
 
 const struct inode_operations apfs_file_inode_operations = {
+	.getattr	= apfs_getattr,
 	.listxattr	= apfs_listxattr,
 };

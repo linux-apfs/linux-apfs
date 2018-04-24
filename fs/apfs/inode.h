@@ -15,7 +15,7 @@
  * APFS inode data in memory
  */
 struct apfs_inode_info {
-	u64 i_crtime;			/* Time of creation */
+	struct timespec i_crtime;	/* Time of creation */
 
 	struct inode vfs_inode;
 };
@@ -77,5 +77,7 @@ struct apfs_inode_size {
 } __attribute__ ((__packed__));
 
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
+extern int apfs_getattr(const struct path *path, struct kstat *stat,
+			u32 request_mask, unsigned int query_flags);
 
 #endif	/* _APFS_INODE_H */
