@@ -18,24 +18,10 @@
 #include "btree.h"
 #include "inode.h"
 #include "key.h"
+#include "message.h"
 #include "super.h"
 #include "table.h"
 #include "xattr.h"
-
-void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
-{
-	struct va_format vaf;
-	va_list args;
-
-	va_start(args, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &args;
-
-	printk("%sAPFS: %pV\n", prefix, &vaf);
-
-	va_end(args);
-}
 
 static void apfs_put_super(struct super_block *sb)
 {
@@ -129,7 +115,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	vrb = le32_to_cpu(msb_raw->s_volume_index);
 	bh = sb_bread(sb, vrb);
 	if (!bh) {
-		apfs_msg(sb, KERN_ERR, "unable to read volume root block");
+		apfs_err(sb, "unable to read volume root block");
 		return -EIO;
 	}
 	vrb_raw = (struct apfs_table_raw *)bh->b_data;
@@ -141,7 +127,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	bh = NULL;
 	vtable = apfs_read_table(sb, vb);
 	if (!vtable) {
-		apfs_msg(sb, KERN_ERR, "unable to read volume block");
+		apfs_err(sb, "unable to read volume block");
 		return -EIO;
 	}
 
@@ -154,7 +140,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 		len = apfs_table_locate_data(vtable, i, &off);
 		if (len != 16) {
 			err = -EIO;
-			apfs_msg(sb, KERN_ERR, "bad index in volume block");
+			apfs_err(sb, "bad index in volume block");
 			goto cleanup;
 		}
 
@@ -165,7 +151,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 		bh = sb_bread(sb, vcsb);
 		if (!bh) {
 			err = -EIO;
-			apfs_msg(sb, KERN_ERR, "unable to read vol superblock");
+			apfs_err(sb, "unable to read volume superblock");
 			goto cleanup;
 		}
 
@@ -281,7 +267,7 @@ static int parse_options(struct super_block *sb, char *options)
 				return err;
 			sbi->s_uid = make_kuid(current_user_ns(), option);
 			if (!uid_valid(sbi->s_uid)) {
-				apfs_msg(sb, KERN_ERR, "invalid uid");
+				apfs_err(sb, "invalid uid");
 				return -EINVAL;
 			}
 			sbi->s_flags |= APFS_UID_OVERRIDE;
@@ -292,7 +278,7 @@ static int parse_options(struct super_block *sb, char *options)
 				return err;
 			sbi->s_gid = make_kgid(current_user_ns(), option);
 			if (!gid_valid(sbi->s_gid)) {
-				apfs_msg(sb, KERN_ERR, "invalid gid");
+				apfs_err(sb, "invalid gid");
 				return -EINVAL;
 			}
 			sbi->s_flags |= APFS_GID_OVERRIDE;
@@ -327,7 +313,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	int blocksize;
 	int err = -EINVAL;
 
-	apfs_msg(sb, KERN_NOTICE, "this module is read-only");
+	apfs_notice(sb, "this module is read-only");
 	sb->s_flags |= SB_RDONLY;
 
 	/*
@@ -335,12 +321,12 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	 * read the actual blocksize from disk.
 	 */
 	if (!sb_set_blocksize(sb, APFS_DEFAULT_BLOCKSIZE)) {
-		apfs_msg(sb, KERN_ERR, "unable to set blocksize");
+		apfs_err(sb, "unable to set blocksize");
 		return err;
 	}
 	bh = sb_bread(sb, APFS_SB_BLOCK);
 	if (!bh) {
-		apfs_msg(sb, KERN_ERR, "unable to read superblock");
+		apfs_err(sb, "unable to read superblock");
 		return err;
 	}
 	msb_raw = (struct apfs_super_block *)bh->b_data;
@@ -349,13 +335,12 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		brelse(bh);
 
 		if (!sb_set_blocksize(sb, blocksize)) {
-			apfs_msg(sb, KERN_ERR, "bad blocksize %d", blocksize);
+			apfs_err(sb, "bad blocksize %d", blocksize);
 			return err;
 		}
 		bh = sb_bread(sb, APFS_SB_BLOCK);
 		if (!bh) {
-			apfs_msg(sb, KERN_ERR,
-				 "unable to read superblock 2nd time");
+			apfs_err(sb, "unable to read superblock 2nd time");
 			return err;
 		}
 		msb_raw = (struct apfs_super_block *)bh->b_data;
@@ -363,7 +348,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	sb->s_magic = le32_to_cpu(msb_raw->s_magic);
 	if (sb->s_magic != APFS_SUPER_MAGIC) {
-		apfs_msg(sb, KERN_ERR, "not an apfs filesystem");
+		apfs_err(sb, "not an apfs filesystem");
 		goto failed_super;
 	}
 
@@ -391,12 +376,12 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	/* Get the id for the requested volume number */
 	if (sizeof(*msb_raw) + 8 * (sbi->s_vol_nr + 1) >= sb->s_blocksize) {
 		/* For now we assume that nodesize <= PAGE_SIZE */
-		apfs_msg(sb, KERN_ERR, "volume number out of range");
+		apfs_err(sb, "volume number out of range");
 		goto failed_vol;
 	}
 	vol_id = le64_to_cpu(msb_raw->volume_ids[sbi->s_vol_nr]);
 	if (vol_id == 0) {
-		apfs_msg(sb, KERN_ERR, "requested volume does not exist");
+		apfs_err(sb, "requested volume does not exist");
 		goto failed_vol;
 	}
 
@@ -404,7 +389,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	vrb = le32_to_cpu(msb_raw->s_volume_index);
 	bh2 = sb_bread(sb, vrb);
 	if (!bh2) {
-		apfs_msg(sb, KERN_ERR, "unable to read volume root block");
+		apfs_err(sb, "unable to read volume root block");
 		goto failed_vol;
 	}
 	vrb_raw = (struct apfs_table_raw *)bh2->b_data;
@@ -415,7 +400,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	brelse(bh2);
 	vtable = apfs_read_table(sb, vb);
 	if (!vtable) {
-		apfs_msg(sb, KERN_ERR, "unable to read volume block");
+		apfs_err(sb, "unable to read volume block");
 		goto failed_vol;
 	}
 
@@ -444,20 +429,20 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	kfree(query);
 	apfs_release_table(vtable);
 	if (vcsb == 0) {
-		apfs_msg(sb, KERN_ERR, "volume not found, likely corruption");
+		apfs_err(sb, "volume not found, likely corruption");
 		goto failed_vol;
 	}
 
 	err = -EINVAL;
 	bh2 = sb_bread(sb, vcsb);
 	if (!bh2) {
-		apfs_msg(sb, KERN_ERR, "unable to read volume superblock");
+		apfs_err(sb, "unable to read volume superblock");
 		goto failed_vol;
 	}
 
 	vcsb_raw = (struct apfs_volume_checkpoint_sb *)bh2->b_data;
 	if (le32_to_cpu(vcsb_raw->v_magic) != APFS_VOL_MAGIC) {
-		apfs_msg(sb, KERN_ERR, "wrong magic in volume superblock");
+		apfs_err(sb, "wrong magic in volume superblock");
 		goto failed_mount;
 	}
 
@@ -471,7 +456,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	cat_blk = le64_to_cpu(vcsb_raw->v_btom);
 	bh3 = sb_bread(sb, cat_blk);
 	if (!bh3) {
-		apfs_msg(sb, KERN_ERR, "unable to read catalog data");
+		apfs_err(sb, "unable to read catalog data");
 		goto failed_cat;
 	}
 	catb_raw = (struct apfs_table_raw *) bh3->b_data;
@@ -482,7 +467,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	brelse(bh3);
 	btom_table = apfs_read_table(sb, btom_blk);
 	if (!btom_table) {
-		apfs_msg(sb, KERN_ERR, "unable to read the b-tree object map");
+		apfs_err(sb, "unable to read the b-tree object map");
 		goto failed_cat;
 	}
 
@@ -495,30 +480,30 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	root_table = apfs_btom_read_table(sb, root_id);
 	if (!root_table) {
 		err = -EINVAL;
-		apfs_msg(sb, KERN_ERR, "unable to read catalog root node");
+		apfs_err(sb, "unable to read catalog root node");
 		goto failed_root;
 	}
 	sbi->s_cat_root = root_table;
 
 	/* Print the last write time to verify the mount was successful */
-	apfs_msg(sb, KERN_INFO, "volume last modified at %llx",
-		 le64_to_cpu(vcsb_raw->v_wtime));
+	apfs_info(sb, "volume last modified at %llx",
+		  le64_to_cpu(vcsb_raw->v_wtime));
 	/* Also the number of files */
-	apfs_msg(sb, KERN_INFO, "volume has %llu files and %llu directories",
-		 le64_to_cpu(vcsb_raw->v_file_count),
-		 le64_to_cpu(vcsb_raw->v_dir_count));
+	apfs_info(sb, "volume has %llu files and %llu directories",
+		  le64_to_cpu(vcsb_raw->v_file_count),
+		  le64_to_cpu(vcsb_raw->v_dir_count));
 
 	sb->s_op = &apfs_sops;
 	sb->s_xattr = apfs_xattr_handlers;
 
 	root = apfs_iget(sb, APFS_ROOT_CNID);
 	if (IS_ERR(root)) {
-		apfs_msg(sb, KERN_ERR, "unable to get root inode");
+		apfs_err(sb, "unable to get root inode");
 		goto failed_mount;
 	}
 	sb->s_root = d_make_root(root);
 	if (!sb->s_root) {
-		apfs_msg(sb, KERN_ERR, "unable to get root dentry");
+		apfs_err(sb, "unable to get root dentry");
 		goto failed_mount;
 	}
 	return 0;

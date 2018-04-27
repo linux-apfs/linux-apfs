@@ -14,6 +14,7 @@
 #include "dir.h"
 #include "inode.h"
 #include "key.h"
+#include "message.h"
 #include "super.h"
 #include "table.h"
 #include "xattr.h"
@@ -206,7 +207,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	u64 secs;
 
 	if (ino < cnid) {
-		apfs_msg(sb, KERN_WARNING, "inode number overflow");
+		apfs_warn(sb, "inode number overflow");
 		return ERR_PTR(-EOVERFLOW);
 	}
 	inode = iget_locked(sb, ino);
@@ -244,7 +245,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		 */
 		set_nlink(inode, le64_to_cpu(raw_inode->i_link_count));
 		if (inode->i_nlink < le64_to_cpu(raw_inode->i_link_count)) {
-			apfs_msg(sb, KERN_WARNING, "hardlink count overflow");
+			apfs_warn(sb, "hardlink count overflow");
 			err = ERR_PTR(-EOVERFLOW);
 			goto failed_read;
 		}

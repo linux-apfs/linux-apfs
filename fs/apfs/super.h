@@ -133,7 +133,4 @@ struct apfs_volume_checkpoint_sb {
 /*2C0*/	char	v_name[48];	/* Volume name */
 } __attribute__ ((__packed__));
 
-extern void apfs_msg(struct super_block *sb, const char *prefix,
-		     const char *fmt, ...);
-
 #endif	/* _APFS_SUPER_H */

@@ -10,6 +10,7 @@
 #include "btree.h"
 #include "dir.h"
 #include "key.h"
+#include "message.h"
 #include "super.h"
 #include "table.h"
 
@@ -331,8 +332,8 @@ struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 	result = apfs_read_table(sb, block);
 	if (!result)
 		goto fail;
-	if (result->t_node.node_id != id) /* TODO: check this only on debug */
-		apfs_msg(sb, KERN_ERR, "corrupt b-tree");
+	if (result->t_node.node_id != id)
+		apfs_debug(sb, "corrupt b-tree");
 
 fail:
 	kfree(key);

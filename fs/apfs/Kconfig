@@ -11,3 +11,10 @@ config APFS_FS
 
 	  This module is out-of-tree, so if you are reading this you probably
 	  want to choose Y or M.
+
+config APFS_DEBUG
+	bool "APFS debugging support"
+	depends on APFS_FS
+	help
+	  Enable the debugging features for apfs. This may hurt performance,
+	  so say N if you are not a developer.

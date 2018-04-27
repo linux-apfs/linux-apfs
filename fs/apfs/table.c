@@ -10,6 +10,7 @@
 #include "apfs.h"
 #include "btree.h"
 #include "key.h"
+#include "message.h"
 #include "super.h"
 #include "table.h"
 
@@ -58,7 +59,7 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 
 	bh = sb_bread(sb, block);
 	if (!bh) {
-		apfs_msg(sb, KERN_ERR, "unable to read table");
+		apfs_err(sb, "unable to read table");
 		return NULL;
 	}
 	raw = (struct apfs_table_raw *) bh->b_data;

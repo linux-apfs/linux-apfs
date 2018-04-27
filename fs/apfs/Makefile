@@ -5,5 +5,5 @@
 
 obj-$(CONFIG_APFS_FS) += apfs.o
 
-apfs-y := btree.o dir.o file.o inode.o key.o namei.o \
-	  super.o symlink.o table.o xattr.o
+apfs-y := btree.o dir.o file.o inode.o key.o message.o \
+	  namei.o super.o symlink.o table.o xattr.o
