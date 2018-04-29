@@ -8,6 +8,7 @@
 #include <linux/slab.h>
 #include "apfs.h"
 #include "inode.h"
+#include "message.h"
 #include "xattr.h"
 
 /**
@@ -22,6 +23,7 @@
 static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 				 struct delayed_call *done)
 {
+	struct super_block *sb = inode->i_sb;
 	char *target, *err;
 	int size;
 
@@ -44,6 +46,8 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 	}
 	if (size == 0 || *(target + size - 1) != 0) {
 		/* Target path must be NULL-terminated */
+		apfs_alert(sb, "bad link target in inode 0x%llx",
+			   (unsigned long long) inode->i_ino);
 		err = ERR_PTR(-EFSCORRUPTED);
 		goto fail;
 	}

@@ -11,6 +11,7 @@
 #include "btree.h"
 #include "dir.h"
 #include "key.h"
+#include "message.h"
 #include "super.h"
 #include "table.h"
 
@@ -100,22 +101,27 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		if (err)
 			break;
 
+		raw = query->table->t_node.bh->b_data;
+		de = (struct apfs_dentry *)(raw + query->off);
+		de_key = (struct apfs_dentry_key *)(raw + query->key_off);
+		namelen = query->key_len - sizeof(*de_key);
+
 		/*
 		 * Check that the found key and data are long enough to fit
 		 * the structures we expect, and that the filename is
 		 * NULL-terminated. Otherwise the filesystem is invalid.
 		 */
 		err = -EFSCORRUPTED;
-		raw = query->table->t_node.bh->b_data;
-		namelen = query->key_len - sizeof(*de_key);
-		if (namelen <= 0) /* Filename must have at least one char */
+		if (namelen < 1 || de_key->name[namelen - 1] != 0) {
+			apfs_alert(sb, "bad dentry key in directory 0x%llx",
+				   cnid);
 			break;
-		de_key = (struct apfs_dentry_key *)(raw + query->key_off);
-		if (de_key->name[namelen - 1] != 0)
+		}
+		if (query->len < sizeof(*de)) {
+			apfs_alert(sb, "bad dentry data in directory 0x%llx",
+				   cnid);
 			break;
-		if (query->len < sizeof(*de))
-			break;
-		de = (struct apfs_dentry *)(raw + query->off);
+		}
 
 		err = 0;
 		if (pos <= 0) {

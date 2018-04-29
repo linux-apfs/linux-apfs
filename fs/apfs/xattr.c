@@ -12,6 +12,7 @@
 #include "key.h"
 #include "super.h"
 #include "table.h"
+#include "message.h"
 #include "xattr.h"
 
 /**
@@ -40,8 +41,11 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	int i;
 
 	if (le16_to_cpu(xattr->header.len) + sizeof(xattr->header) !=
-								sizeof(*xattr))
+							sizeof(*xattr)) {
+		apfs_alert(sb, "bad extent-based xattr record for inode 0x%llx",
+			   (unsigned long long) parent->i_ino);
 		return -EFSCORRUPTED;
+	}
 
 	length = le64_to_cpu(xattr->size);
 	if (length < 0 || length < le64_to_cpu(xattr->size))
@@ -101,6 +105,8 @@ static int apfs_xattr_extents_read(struct inode *parent,
 
 		if (query->len != sizeof(*ext) ||
 		    query->key_len != sizeof(*ext_key)) {
+			apfs_alert(sb, "bad extent for xattr in inode 0x%llx",
+				   (unsigned long long) parent->i_ino);
 			ret = -EFSCORRUPTED;
 			goto done;
 		}
@@ -212,13 +218,11 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	if (ret)
 		goto done;
 
-	if (query->len < sizeof(*header)) {
-		ret = -EFSCORRUPTED;
-		goto done;
-	}
 	raw = query->table->t_node.bh->b_data;
 	header = (struct apfs_xattr_header *)(raw + query->off);
-	if (sizeof(*header) + le16_to_cpu(header->len) != query->len) {
+	if (query->len < sizeof(*header) ||
+	    sizeof(*header) + le16_to_cpu(header->len) != query->len) {
+		apfs_alert(sb, "bad xattr record in inode 0x%llx", cnid);
 		ret = -EFSCORRUPTED;
 		goto done;
 	}
@@ -296,19 +300,20 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		if (ret)
 			break;
 
+		raw = query->table->t_node.bh->b_data;
+		this_key = (struct apfs_xattr_key *)(raw + query->key_off);
+		namelen = query->key_len - sizeof(*this_key);
+
 		/*
-		 * Check that the found key is long enough to fit the structures
+		 * Check that the found key is long enough to fit the structure
 		 * we expect, and that the attribute name is NULL-terminated.
 		 * Otherwise the filesystem is invalid.
 		 */
-		ret = -EFSCORRUPTED;
-		raw = query->table->t_node.bh->b_data;
-		namelen = query->key_len - sizeof(*this_key);
-		if (namelen <= 0) /* xattr name must have at least one char */
+		if (namelen < 1 || this_key->name[namelen - 1] != 0) {
+			apfs_alert(sb, "bad xattr key in inode %llx", cnid);
+			ret = -EFSCORRUPTED;
 			break;
-		this_key = (struct apfs_xattr_key *)(raw + query->key_off);
-		if (this_key->name[namelen - 1] != 0)
-			break;
+		}
 
 		/* TODO: don't list the xattrs with no handler */
 		if (buffer) {

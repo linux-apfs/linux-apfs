@@ -80,6 +80,7 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 
 	if (!apfs_table_is_valid(sb, table)) {
 		kfree(table);
+		apfs_alert(sb, "bad table in block 0x%llx", block);
 		table = NULL;
 		goto release_bh;
 	}
@@ -212,6 +213,7 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 
 /**
  * apfs_table_query - Execute a query on a single table
+ * @sb:		filesystem superblock
  * @query:	the query to execute
  *
  * The search will start at index @query->index, looking for the key that comes
@@ -235,7 +237,7 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
  * TODO: the search algorithm is far from optimal for the ordered case, it
  * would be better to search by bisection.
  */
-int apfs_table_query(struct apfs_query *query)
+int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_table *table = query->table;
 
@@ -268,8 +270,11 @@ int apfs_table_query(struct apfs_query *query)
 			err = -EINVAL;
 			break;
 		}
-		if (err)
+		if (err) {
+			apfs_alert(sb, "bad table key in block 0x%llx",
+				   table->t_node.block_nr);
 			return err;
+		}
 
 		cmp = apfs_keycmp(query->curr, query->key);
 

@@ -52,6 +52,8 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 		goto done;
 
 	if (query->len != sizeof(*ext) || query->key_len != sizeof(*ext_key)) {
+		apfs_alert(sb, "bad extent record for inode 0x%llx",
+			   (unsigned long long) inode->i_ino);
 		ret = -EFSCORRUPTED;
 		goto done;
 	}

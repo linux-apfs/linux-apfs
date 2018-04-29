@@ -125,6 +125,6 @@ extern int apfs_table_locate_key(struct apfs_table *table,
 				 int index, int *off);
 extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
-extern int apfs_table_query(struct apfs_query *query);
+extern int apfs_table_query(struct super_block *sb, struct apfs_query *query);
 
 #endif	/* _APFS_TABLE_H */

@@ -117,10 +117,11 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		 * forever if the filesystem is damaged. 12 should be more
 		 * than enough to map every block.
 		 */
+		apfs_alert(sb, "b-tree is corrupted");
 		return -EFSCORRUPTED;
 	}
 
-	err = apfs_table_query(*query);
+	err = apfs_table_query(sb, *query);
 	if (err == -EAGAIN) {
 		if (!(*query)->parent) /* We are at the root of the tree */
 			return -ENODATA;
@@ -139,8 +140,11 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		return 0;
 	if ((*query)->flags & APFS_QUERY_BTOM) {
 		/* The data on a btom index node is the address of the child */
-		if ((*query)->len != 8)
+		if ((*query)->len != 8) {
+			apfs_alert(sb, "bad object map index block: 0x%llx",
+				   (*query)->table->t_node.block_nr);
 			return -EFSCORRUPTED;
+		}
 		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
 	} else {
 		/*
@@ -148,8 +152,11 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		 * to search next; we must query the btom to find its
 		 * block number.
 		 */
-		if ((*query)->len != 8)
+		if ((*query)->len != 8) {
+			apfs_alert(sb, "bad b-tree index block: 0x%llx",
+				   (*query)->table->t_node.block_nr);
 			return -EFSCORRUPTED;
+		}
 		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
 
 		btom_query = apfs_alloc_query(btom, NULL /* parent */);
@@ -172,6 +179,8 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 			goto fail;
 		raw = btom_query->table->t_node.bh->b_data;
 		if (btom_query->len != sizeof(*data)) {
+			apfs_alert(sb, "bad object map leaf block: 0x%llx",
+				   btom_query->table->t_node.block_nr);
 			err = -EFSCORRUPTED;
 			goto fail;
 		}
@@ -323,8 +332,12 @@ struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 	if (apfs_btree_query(sb, &query))
 		goto fail;
 
-	if (query->len != sizeof(*data)) /* Invalid filesystem */
+	if (query->len != sizeof(*data)) {
+		/* Invalid filesystem */
+		apfs_alert(sb, "bad object map leaf block: 0x%llx",
+			   query->table->t_node.block_nr);
 		goto fail;
+	}
 	raw = query->table->t_node.bh->b_data;
 	data = (struct apfs_btom_data *)(raw + query->off);
 	block = le64_to_cpu(data->block);
