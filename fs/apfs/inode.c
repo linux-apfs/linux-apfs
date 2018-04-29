@@ -209,7 +209,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	u64 secs;
 
 	if (ino < cnid) {
-		apfs_warn(sb, "inode number overflow");
+		apfs_warn(sb, "inode number overflow: 0x%llx", cnid);
 		return ERR_PTR(-EOVERFLOW);
 	}
 	inode = iget_locked(sb, ino);
@@ -247,7 +247,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		 */
 		set_nlink(inode, le64_to_cpu(raw_inode->i_link_count));
 		if (inode->i_nlink < le64_to_cpu(raw_inode->i_link_count)) {
-			apfs_warn(sb, "hardlink count overflow");
+			apfs_warn(sb, "hardlink count overflow in inode 0x%llx",
+				  cnid);
 			err = ERR_PTR(-EOVERFLOW);
 			goto failed_read;
 		}
