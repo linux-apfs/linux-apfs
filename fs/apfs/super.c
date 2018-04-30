@@ -212,6 +212,12 @@ static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 
 	if (sbi->s_vol_nr != 0)
 		seq_printf(seq, ",vol=%u", sbi->s_vol_nr);
+	if (sbi->s_flags & APFS_UID_OVERRIDE)
+		seq_printf(seq, ",uid=%u", from_kuid(&init_user_ns,
+						     sbi->s_uid));
+	if (sbi->s_flags & APFS_GID_OVERRIDE)
+		seq_printf(seq, ",gid=%u", from_kgid(&init_user_ns,
+						     sbi->s_gid));
 
 	return 0;
 }
