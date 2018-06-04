@@ -10,6 +10,7 @@
 #include <linux/ctype.h>
 #include "apfs.h"
 #include "key.h"
+#include "unicode.h"
 
 /**
  * apfs_cat_type - Read the record type of a catalog key
@@ -35,37 +36,98 @@ static inline u64 apfs_cat_cnid(void *key)
 	return le64_to_cpup(key) & (0x00FFFFFFFFFFFFFFULL);
 }
 
+/**
+ * apfs_filename_cmp - Normalize and compare two APFS filenames
+ * @name1, @name2:	names to compare
+ * @cmp:		result of the comparison
+ *
+ * Returns a negative error code in case of failure. On success, returns 0 and
+ * sets @cmp to
+ *		  0 if @name1 and @name2 are equal
+ *		< 0 if @name1 comes before @name2 in the btree
+ *		> 0 if @name1 comes after @name2 in the btree
+ *
+ * TODO: support case sensitive filesystems.
+ */
+static int apfs_filename_cmp(const char *name1, const char *name2, int *cmp)
+{
+	struct apfs_unicursor *cursor1, *cursor2;
+	int ret = -ENOMEM;
+
+	cursor1 = apfs_init_unicursor(name1);
+	cursor2 = apfs_init_unicursor(name2);
+	if (!cursor1 || !cursor2)
+		goto out;
+
+	while (1) {
+		unicode_t uni1, uni2;
+
+		ret = apfs_normalize_next(cursor1, &uni1);
+		if (ret)
+			goto out;
+		ret = apfs_normalize_next(cursor2, &uni2);
+		if (ret)
+			goto out;
+
+		if (uni1 != uni2) {
+			*cmp = uni1 < uni2 ? -1 : 1;
+			break;
+		}
+		if (!uni1) {
+			*cmp = 0;
+			break;
+		}
+	}
+
+out:
+	apfs_free_unicursor(cursor1);
+	apfs_free_unicursor(cursor2);
+	return ret;
+}
 
 /**
  * apfs_keycmp - Compare two keys
- * @k1, @k2:	pointers to the keys to compare
+ * @k1, @k2:	keys to compare
+ * @cmp:	result of the comparison
  *
- * returns   0 if @k1 and @k2 are equal
- *	   < 0 if @k1 comes before @k2 in the btree
- *	   > 0 if @k1 comes after @k2 in the btree
- *
- * TODO: support case sensitive filesystems and unicode.
+ * Returns a negative error code in case of failure. On success, returns 0 and
+ * sets @cmp to
+ *		  0 if @k1 and @k2 are equal
+ *		< 0 if @k1 comes before @k2 in the btree
+ *		> 0 if @k1 comes after @k2 in the btree
  */
-int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
+int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2, int *cmp)
 {
-	if (k1->id != k2->id)
-		return k1->id < k2->id ? -1 : 1;
-	if (k1->type != k2->type)
-		return k1->type < k2->type ? -1 : 1;
-	if (k1->offset != k2->offset)
-		return k1->offset < k2->offset ? -1 : 1;
-	if (k2->name == NULL) /* We ignore the names (if they exist) */
+	if (k1->id != k2->id) {
+		*cmp = (k1->id < k2->id) ? -1 : 1;
 		return 0;
-	if (k1->hash != k2->hash)
-		return k1->hash < k2->hash ? -1 : 1;
+	}
+	if (k1->type != k2->type) {
+		*cmp = k1->type < k2->type ? -1 : 1;
+		return 0;
+	}
+	if (k1->offset != k2->offset) {
+		*cmp = k1->offset < k2->offset ? -1 : 1;
+		return 0;
+	}
+	if (k2->name == NULL) {
+		/* We ignore the names (if they exist) */
+		*cmp = 0;
+		return 0;
+	}
+	if (k1->hash != k2->hash) {
+		*cmp = k1->hash < k2->hash ? -1 : 1;
+		return 0;
+	}
 
 	if (k1->type == APFS_RT_NAMED_ATTR) {
 		/* xattr names seem to be always case sensitive */
-		return strcmp(k1->name, k2->name);
+		*cmp = strcmp(k1->name, k2->name);
+		return 0;
 	}
 
 	/* Only guessing, I've never seen two names with the same hash. TODO */
-	return strcasecmp(k1->name, k2->name);
+	return apfs_filename_cmp(k1->name, k2->name, cmp);
 }
 
 /**
@@ -180,9 +242,9 @@ int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
 int apfs_init_key(int type, u64 id, const char *name, int namelen,
 		  u64 offset, struct apfs_key *key)
 {
-	int charlen;
+	struct apfs_unicursor *cursor;
 	u32 hash;
-	int i;
+	int ret;
 
 	key->type = type;
 	key->id = id;
@@ -193,21 +255,26 @@ int apfs_init_key(int type, u64 id, const char *name, int namelen,
 		return 0;
 	}
 
+	cursor = apfs_init_unicursor(name);
+	if (!cursor)
+		return -ENOMEM;
+
+	/* TODO: support case sensitive filesystems */
 	hash = 0xFFFFFFFF;
-	for (i = 0; i < namelen; i += charlen) {
-		char utf8[4];
+	while (1) {
 		unicode_t utf32;
 
-		/* TODO: unicode decomposition */
-		strncpy(utf8, &name[i], sizeof(utf8));
-		/* TODO: case insensitive unicode and case sensitive ascii */
-		utf8[0] = tolower(utf8[0]);
-		charlen = utf8_to_utf32(utf8, 4, &utf32);
-		if (charlen < 0) /* Invalid unicode */
-			return -EINVAL;
-		hash = crc32c(hash, &utf32, 4);
-	}
+		ret = apfs_normalize_next(cursor, &utf32);
+		if (ret)
+			goto out;
+		if (!utf32)
+			break;
+		hash = crc32c(hash, &utf32, sizeof(utf32));
+	};
 	/* APFS counts the NULL termination for the filename length */
 	key->hash = ((hash & 0x3FFFFF) << 10) | ((namelen + 1) & 0x3FF);
-	return 0;
+
+out:
+	apfs_free_unicursor(cursor);
+	return ret;
 }
