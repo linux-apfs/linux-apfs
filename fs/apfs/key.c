@@ -6,8 +6,6 @@
  */
 
 #include <linux/crc32c.h>
-#include <linux/nls.h>
-#include <linux/ctype.h>
 #include "apfs.h"
 #include "key.h"
 #include "unicode.h"
