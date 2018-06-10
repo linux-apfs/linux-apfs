@@ -13,6 +13,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/nls.h>
+#include <linux/ctype.h>
 #include "unicode.h"
 
 /* The arrays of unicode data are defined at the bottom of the file */
@@ -278,11 +279,19 @@ int apfs_normalize_next(struct apfs_unicursor *cursor, unicode_t *next)
 {
 	const char *utf8str = cursor->utf8next;
 	int buflen = 1; /* An extra char for the NULL termination */
+	char utf8;
 
 	if (cursor->buf && *(cursor->buf + cursor->buf_off))
 		goto out;
-	cursor->buf_off = 0;
 
+	if (likely(isascii(*utf8str))) {
+		utf8 = tolower(*utf8str);
+		utf8_to_utf32(&utf8, 1, next);
+		cursor->utf8next++;
+		return 0;
+	}
+
+	cursor->buf_off = 0;
 	while (*cursor->utf8next != 0) {
 		int charlen;
 		unicode_t utf32;
