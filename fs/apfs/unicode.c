@@ -279,14 +279,12 @@ int apfs_normalize_next(struct apfs_unicursor *cursor, unicode_t *next)
 {
 	const char *utf8str = cursor->utf8next;
 	int buflen = 1; /* An extra char for the NULL termination */
-	char utf8;
 
 	if (cursor->buf && *(cursor->buf + cursor->buf_off))
 		goto out;
 
 	if (likely(isascii(*utf8str))) {
-		utf8 = tolower(*utf8str);
-		utf8_to_utf32(&utf8, 1, next);
+		*next = tolower(*utf8str);
 		cursor->utf8next++;
 		return 0;
 	}
