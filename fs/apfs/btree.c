@@ -15,6 +15,59 @@
 #include "table.h"
 
 /**
+ * apfs_locate_block - Find the block number of a b-tree node from its id
+ * @sb:		filesystem superblock
+ * @id:		id of the node
+ * @block:	on return, the found block number
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_locate_block(struct super_block *sb, u64 id, u64 *block)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_query *query;
+	struct apfs_key *key;
+	struct apfs_btom_data *data;
+	char *raw;
+	int ret = 0;
+
+	query = apfs_alloc_query(sbi->s_btom_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
+	if (!key) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+
+	apfs_init_key(0 /* type */, id, NULL /* name */, 0 /* namelen */,
+		      0 /* offset */, key);
+	query->key = key;
+	query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret)
+		goto fail;
+
+	if (query->len != sizeof(*data)) {
+		apfs_alert(sb, "bad object map leaf block: 0x%llx",
+			   query->table->t_node.block_nr);
+		ret = -EFSCORRUPTED;
+		goto fail;
+	}
+
+	raw = query->table->t_node.bh->b_data;
+	data = (struct apfs_btom_data *)(raw + query->off);
+	*block = le64_to_cpu(data->block);
+
+fail:
+	kfree(key);
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
  * apfs_alloc_query - Allocates a query structure
  * @table:	table to be searched
  * @parent:	query for the parent table
@@ -103,12 +156,9 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	struct apfs_table *root = sbi->s_cat_root;
 	struct apfs_table *btom = sbi->s_btom_root;
 	struct apfs_table *table;
-	struct apfs_query *btom_query;
-	struct apfs_key *btom_key;
 	struct apfs_query *parent;
-	struct apfs_btom_data *data;
 	char *raw = (*query)->table->t_node.bh->b_data;
-	u64 child = 0;
+	u64 child_id, child_blk;
 	int err;
 
 	if ((*query)->depth >= 12) {
@@ -138,62 +188,33 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		return err;
 	if (apfs_table_is_leaf((*query)->table)) /* All done */
 		return 0;
+
+	/* The data on an index node is the id of the child */
+	if ((*query)->len != 8) {
+		apfs_alert(sb, "bad index block: 0x%llx",
+			   (*query)->table->t_node.block_nr);
+		return -EFSCORRUPTED;
+	}
+	child_id = le64_to_cpup((__le64 *)(raw + (*query)->off));
+
+	/*
+	 * The btom maps a node id into a block number. The nodes
+	 * of the btom itself do not need this translation.
+	 */
 	if ((*query)->flags & APFS_QUERY_BTOM) {
-		/* The data on a btom index node is the address of the child */
-		if ((*query)->len != 8) {
-			apfs_alert(sb, "bad object map index block: 0x%llx",
-				   (*query)->table->t_node.block_nr);
-			return -EFSCORRUPTED;
-		}
-		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
+		child_blk = child_id;
 	} else {
-		/*
-		 * The data on an index node is the id of the table
-		 * to search next; we must query the btom to find its
-		 * block number.
-		 */
-		if ((*query)->len != 8) {
-			apfs_alert(sb, "bad b-tree index block: 0x%llx",
-				   (*query)->table->t_node.block_nr);
-			return -EFSCORRUPTED;
-		}
-		child = le64_to_cpup((__le64 *)(raw + (*query)->off));
-
-		btom_query = apfs_alloc_query(btom, NULL /* parent */);
-		if (!btom_query)
-			return -ENOMEM;
-
-		btom_key = kmalloc(sizeof(*btom_key), GFP_KERNEL);
-		if (!btom_key) {
-			err = -ENOMEM;
-			goto fail;
-		}
-		apfs_init_key(0 /* type */, child, NULL /* name */,
-			      0 /* namelen */, 0 /* offset */, btom_key);
-		btom_query->key = btom_key;
-		btom_query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
-
-		err = apfs_btree_query(sb, &btom_query);
-		kfree(btom_key);
+		err = apfs_locate_block(sb, child_id, &child_blk);
 		if (err)
-			goto fail;
-		raw = btom_query->table->t_node.bh->b_data;
-		if (btom_query->len != sizeof(*data)) {
-			apfs_alert(sb, "bad object map leaf block: 0x%llx",
-				   btom_query->table->t_node.block_nr);
-			err = -EFSCORRUPTED;
-			goto fail;
-		}
-		data = (struct apfs_btom_data *)(raw + btom_query->off);
-		child = le64_to_cpu(data->block);
-
-		apfs_free_query(sb, btom_query);
+			return err;
 	}
 
 	/* Now go a level deeper and search the child */
-	table = apfs_read_table(sb, child);
+	table = apfs_read_table(sb, child_blk);
 	if (!table)
 		return -ENOMEM;
+	if (table->t_node.node_id != child_id)
+		apfs_debug(sb, "corrupt b-tree");
 
 	if ((*query)->flags & APFS_QUERY_MULTIPLE) {
 		/*
@@ -211,10 +232,6 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	}
 
 	return apfs_btree_query(sb, query);
-
-fail:
-	apfs_free_query(sb, btom_query);
-	return err;
 }
 
 /**
@@ -309,47 +326,18 @@ fail:
  */
 struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *result = NULL;
-	struct apfs_query *query;
-	struct apfs_btom_data *data;
-	struct apfs_key *key;
-	char *raw;
+	struct apfs_table *result;
 	u64 block;
 
-	query = apfs_alloc_query(sbi->s_btom_root, NULL /* parent */);
-	if (!query)
+	if (apfs_locate_block(sb, id, &block))
 		return NULL;
-
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		goto fail;
-	apfs_init_key(0 /* type */, id, NULL /* name */, 0 /* namelen */,
-		      0 /* offset */, key);
-	query->key = key;
-	query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
-
-	if (apfs_btree_query(sb, &query))
-		goto fail;
-
-	if (query->len != sizeof(*data)) {
-		/* Invalid filesystem */
-		apfs_alert(sb, "bad object map leaf block: 0x%llx",
-			   query->table->t_node.block_nr);
-		goto fail;
-	}
-	raw = query->table->t_node.bh->b_data;
-	data = (struct apfs_btom_data *)(raw + query->off);
-	block = le64_to_cpu(data->block);
 
 	result = apfs_read_table(sb, block);
 	if (!result)
-		goto fail;
+		return NULL;
+
 	if (result->t_node.node_id != id)
 		apfs_debug(sb, "corrupt b-tree");
 
-fail:
-	kfree(key);
-	apfs_free_query(sb, query);
 	return result;
 }
