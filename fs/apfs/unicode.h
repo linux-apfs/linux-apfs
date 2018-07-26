@@ -15,15 +15,14 @@
  * (and case-folded) UTF-32 character at a time from a UTF-8 string.
  */
 struct apfs_unicursor {
-	const char *utf8next;	/* Next UTF-8 char to normalize */
-
-	unicode_t *buf;	/* Buffer to save the work until the next starter */
-	int buf_len;	/* Length of the buffer */
-	int buf_off;	/* Offset in buf of the next normalized char */
+	const char *utf8curr;	/* Start of UTF-8 to decompose and reorder */
+	int length;		/* Length of normalization until next starter */
+	int last_pos;           /* Offset in substring of last char returned */
+	u8 last_ccc;		/* CCC of the last character returned */
 };
 
-extern struct apfs_unicursor *apfs_init_unicursor(const char *utf8str);
-extern void apfs_free_unicursor(struct apfs_unicursor *cursor);
-extern int apfs_normalize_next(struct apfs_unicursor *cursor, unicode_t *next);
+extern void apfs_init_unicursor(struct apfs_unicursor *cursor,
+				 const char *utf8str);
+extern unicode_t apfs_normalize_next(struct apfs_unicursor *cursor);
 
 #endif	/* _APFS_UNICODE_H */

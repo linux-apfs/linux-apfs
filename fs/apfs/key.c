@@ -37,95 +37,61 @@ static inline u64 apfs_cat_cnid(void *key)
 /**
  * apfs_filename_cmp - Normalize and compare two APFS filenames
  * @name1, @name2:	names to compare
- * @cmp:		result of the comparison
  *
- * Returns a negative error code in case of failure. On success, returns 0 and
- * sets @cmp to
- *		  0 if @name1 and @name2 are equal
- *		< 0 if @name1 comes before @name2 in the btree
- *		> 0 if @name1 comes after @name2 in the btree
+ * returns   0 if @name1 and @name2 are equal
+ *	   < 0 if @name1 comes before @name2 in the btree
+ *	   > 0 if @name1 comes after @name2 in the btree
  *
  * TODO: support case sensitive filesystems.
  */
-static int apfs_filename_cmp(const char *name1, const char *name2, int *cmp)
+static int apfs_filename_cmp(const char *name1, const char *name2)
 {
-	struct apfs_unicursor *cursor1, *cursor2;
-	int ret = -ENOMEM;
+	struct apfs_unicursor cursor1, cursor2;
 
-	cursor1 = apfs_init_unicursor(name1);
-	cursor2 = apfs_init_unicursor(name2);
-	if (!cursor1 || !cursor2)
-		goto out;
+	apfs_init_unicursor(&cursor1, name1);
+	apfs_init_unicursor(&cursor2, name2);
 
 	while (1) {
 		unicode_t uni1, uni2;
 
-		ret = apfs_normalize_next(cursor1, &uni1);
-		if (ret)
-			goto out;
-		ret = apfs_normalize_next(cursor2, &uni2);
-		if (ret)
-			goto out;
+		uni1 = apfs_normalize_next(&cursor1);
+		uni2 = apfs_normalize_next(&cursor2);
 
-		if (uni1 != uni2) {
-			*cmp = uni1 < uni2 ? -1 : 1;
-			break;
-		}
-		if (!uni1) {
-			*cmp = 0;
-			break;
-		}
+		if (uni1 != uni2)
+			return uni1 < uni2 ? -1 : 1;
+		if (!uni1)
+			return 0;
 	}
-
-out:
-	apfs_free_unicursor(cursor1);
-	apfs_free_unicursor(cursor2);
-	return ret;
 }
 
 /**
  * apfs_keycmp - Compare two keys
  * @k1, @k2:	keys to compare
- * @cmp:	result of the comparison
  *
- * Returns a negative error code in case of failure. On success, returns 0 and
- * sets @cmp to
- *		  0 if @k1 and @k2 are equal
- *		< 0 if @k1 comes before @k2 in the btree
- *		> 0 if @k1 comes after @k2 in the btree
+ * returns   0 if @k1 and @k2 are equal
+ *	   < 0 if @k1 comes before @k2 in the btree
+ *	   > 0 if @k1 comes after @k2 in the btree
  */
-int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2, int *cmp)
+int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
 {
-	if (k1->id != k2->id) {
-		*cmp = (k1->id < k2->id) ? -1 : 1;
+	if (k1->id != k2->id)
+		return k1->id < k2->id ? -1 : 1;
+	if (k1->type != k2->type)
+		return k1->type < k2->type ? -1 : 1;
+	if (k1->offset != k2->offset)
+		return k1->offset < k2->offset ? -1 : 1;
+	if (k2->name == NULL) /* We ignore the names (if they exist) */
 		return 0;
-	}
-	if (k1->type != k2->type) {
-		*cmp = k1->type < k2->type ? -1 : 1;
-		return 0;
-	}
-	if (k1->offset != k2->offset) {
-		*cmp = k1->offset < k2->offset ? -1 : 1;
-		return 0;
-	}
-	if (k2->name == NULL) {
-		/* We ignore the names (if they exist) */
-		*cmp = 0;
-		return 0;
-	}
-	if (k1->hash != k2->hash) {
-		*cmp = k1->hash < k2->hash ? -1 : 1;
-		return 0;
-	}
+	if (k1->hash != k2->hash)
+		return k1->hash < k2->hash ? -1 : 1;
 
 	if (k1->type == APFS_RT_NAMED_ATTR) {
 		/* xattr names seem to be always case sensitive */
-		*cmp = strcmp(k1->name, k2->name);
-		return 0;
+		return strcmp(k1->name, k2->name);
 	}
 
 	/* Only guessing, I've never seen two names with the same hash. TODO */
-	return apfs_filename_cmp(k1->name, k2->name, cmp);
+	return apfs_filename_cmp(k1->name, k2->name);
 }
 
 /**
@@ -233,16 +199,13 @@ int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
  * @offset:	for extent records, offset within the file; otherwise 0
  * @key:	apfs_key structure to initialize
  *
- * On success, @key will be ready to query for the record and 0 will be
- * returned. Otherwise, returns a negative error code. Note that the function
- * cannot fail if name == NULL.
+ * On success, @key will be ready to query for the record.
  */
-int apfs_init_key(int type, u64 id, const char *name, int namelen,
-		  u64 offset, struct apfs_key *key)
+void apfs_init_key(int type, u64 id, const char *name, int namelen,
+		   u64 offset, struct apfs_key *key)
 {
-	struct apfs_unicursor *cursor;
+	struct apfs_unicursor cursor;
 	u32 hash;
-	int ret;
 
 	key->type = type;
 	key->id = id;
@@ -250,29 +213,23 @@ int apfs_init_key(int type, u64 id, const char *name, int namelen,
 	key->offset = offset;
 	if (name == NULL || type == APFS_RT_NAMED_ATTR) {
 		key->hash = 0;
-		return 0;
+		return;
 	}
 
-	cursor = apfs_init_unicursor(name);
-	if (!cursor)
-		return -ENOMEM;
-
 	/* TODO: support case sensitive filesystems */
+	apfs_init_unicursor(&cursor, name);
 	hash = 0xFFFFFFFF;
+
 	while (1) {
 		unicode_t utf32;
 
-		ret = apfs_normalize_next(cursor, &utf32);
-		if (ret)
-			goto out;
+		utf32 = apfs_normalize_next(&cursor);
 		if (!utf32)
 			break;
+
 		hash = crc32c(hash, &utf32, sizeof(utf32));
-	};
+	}
+
 	/* APFS counts the NULL termination for the filename length */
 	key->hash = ((hash & 0x3FFFFF) << 10) | ((namelen + 1) & 0x3FF);
-
-out:
-	apfs_free_unicursor(cursor);
-	return ret;
 }

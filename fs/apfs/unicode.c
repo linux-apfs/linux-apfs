@@ -74,6 +74,19 @@ static int apfs_trie_find(void *trie, unicode_t key, void *result, bool is_ccc)
 	return node & TRIE_SIZE_MASK;
 }
 
+/**
+ * apfs_init_unicursor - Initialize an apfs_unicursor structure
+ * @cursor:	cursor to initialize
+ * @utf8str:	string to normalize
+ */
+void apfs_init_unicursor(struct apfs_unicursor *cursor, const char *utf8str)
+{
+	cursor->utf8curr = utf8str;
+	cursor->length = -1;
+	cursor->last_pos = -1;
+	cursor->last_ccc = 0;
+}
+
 #define HANGUL_S_BASE	0xac00
 #define HANGUL_L_BASE	0x1100
 #define HANGUL_V_BASE	0x1161
@@ -85,13 +98,8 @@ static int apfs_trie_find(void *trie, unicode_t key, void *result, bool is_ccc)
 #define HANGUL_S_COUNT	(HANGUL_L_COUNT * HANGUL_N_COUNT)
 
 /**
- * apfs_try_decompose_hangul - Try to decompose a unicode character as Hangul
- * @utf32char:	character to decompose
- * @buf:	buffer to store the result. Must be large enough!
- *
- * Returns 0 if @utf32char is not Hangul, otherwise returns the length of the
- * decomposition. Can be called with @buf == NULL to compute the size of the
- * buffer required.
+ * apfs_is_precomposed_hangul - Check if a character is a Hangul syllable
+ * @utf32char:	character to check
  *
  * This function was adapted from sample code in section 3.12 of the
  * Unicode Standard, version 9.0.
@@ -99,228 +107,220 @@ static int apfs_trie_find(void *trie, unicode_t key, void *result, bool is_ccc)
  * Copyright (C) 1991-2018 Unicode, Inc.  All rights reserved.  Distributed
  * under the Terms of Use in http://www.unicode.org/copyright.html.
  */
-static int apfs_try_decompose_hangul(unicode_t utf32char, unicode_t *buf)
+static bool apfs_is_precomposed_hangul(unicode_t utf32char)
 {
-	int index, len;
+	int index;
+
+	index = utf32char - HANGUL_S_BASE;
+	return (index >= 0 && index < HANGUL_S_COUNT);
+}
+
+/* Signals the end of the normalization for a single character */
+#define NORM_END	(unicode_t)(-1)
+
+/**
+ * apfs_decompose_hangul - Decompose a Hangul syllable
+ * @utf32char:	Hangul syllable to decompose
+ * @off:	offset of the wanted character from the decomposition
+ *
+ * Returns the single character at offset @off in the decomposition of
+ * @utf32char, or NORM_END if this offset is past the end.
+ *
+ * This function was adapted from sample code in section 3.12 of the
+ * Unicode Standard, version 9.0.
+ *
+ * Copyright (C) 1991-2018 Unicode, Inc.  All rights reserved.  Distributed
+ * under the Terms of Use in http://www.unicode.org/copyright.html.
+ */
+static unicode_t apfs_decompose_hangul(unicode_t utf32char, int off)
+{
+	int index;
 	int l, v, t;
 
 	index = utf32char - HANGUL_S_BASE;
-	if (index < 0 || index >= HANGUL_S_COUNT)
-		return 0;
 
 	l = HANGUL_L_BASE + index / HANGUL_N_COUNT;
+	if (off == 0)
+		return l;
+
 	v = HANGUL_V_BASE + (index % HANGUL_N_COUNT) / HANGUL_T_COUNT;
+	if (off == 1)
+		return v;
+
 	t = HANGUL_T_BASE + index % HANGUL_T_COUNT;
+	if (off == 2 && t != HANGUL_T_BASE)
+		return t;
 
-	len = (t == HANGUL_T_BASE) ? 2 : 3;
-	if (buf) {
-		buf[0] = l;
-		buf[1] = v;
-		if (len == 3)
-			buf[2] = t;
-	}
-
-	return len;
-}
-
-/**
- * apfs_init_unicursor - Allocate and initialize an apfs_unicursor structure
- * @utf8str:	the string to normalize
- *
- * Returns a unicode cursor that can be passed to apfs_normalize_next(); or
- * NULL in case of failure. Remember to call apfs_free_unicursor() afterwards.
- */
-struct apfs_unicursor *apfs_init_unicursor(const char *utf8str)
-{
-	struct apfs_unicursor *cursor;
-
-	cursor = kmalloc(sizeof(*cursor), GFP_KERNEL);
-	if (!cursor)
-		return NULL;
-
-	cursor->utf8next = utf8str;
-	cursor->buf = NULL;
-	cursor->buf_len = 0;
-	return cursor;
-}
-
-/**
- * apfs_free_unicursor - Free an apfs_unicursor structure and its buffer
- * @cursor:	cursor to free. Can be NULL
- */
-void apfs_free_unicursor(struct apfs_unicursor *cursor)
-{
-	if (!cursor)
-		return;
-	kfree(cursor->buf);
-	kfree(cursor);
+	return NORM_END;
 }
 
 /**
  * apfs_normalize_char - Normalize a unicode character
  * @utf32char:	character to normalize
- * @buf:	buffer to store the result. Must be large enough!
+ * @off:	offset of the wanted character from the normalization
  *
- * Can be called with @buf == NULL to compute the size of the buffer
- * required. Returns the length of the normalization.
+ * Returns the single character at offset @off in the normalization of
+ * @utf32char, or NORM_END if this offset is past the end.
  */
-static int apfs_normalize_char(unicode_t utf32char, unicode_t *buf)
+static unicode_t apfs_normalize_char(unicode_t utf32char, int off)
 {
-	int nfd_len, norm_len;
+	int nfd_len;
 	unicode_t *nfd, *cf;
-	u16 off;
+	u16 pos;
 	int ret;
 
-	norm_len = apfs_try_decompose_hangul(utf32char, buf);
-	if (norm_len) /* Capitalization is not a concern for Hangul */
-		return norm_len;
+	if (apfs_is_precomposed_hangul(utf32char)) /* Hangul has no case */
+		return apfs_decompose_hangul(utf32char, off);
 
 	ret = apfs_trie_find(apfs_nfd_trie, utf32char,
-			     &off, false /* is_ccc */);
+			     &pos, false /* is_ccc */);
 	if (!ret) {
 		/* The decomposition is just the same character */
 		nfd_len = 1;
 		nfd = &utf32char;
 	} else {
 		nfd_len = ret;
-		nfd = &apfs_nfd[off];
+		nfd = &apfs_nfd[pos];
 	}
 
 	for (; nfd_len > 0; nfd++, nfd_len--) {
 		int cf_len;
 
 		ret = apfs_trie_find(apfs_cf_trie, *nfd,
-				     &off, false /* is_ccc */);
+				     &pos, false /* is_ccc */);
 		if (!ret) {
 			/* The case folding is just the same character */
 			cf_len = 1;
 			cf = nfd;
 		} else {
 			cf_len = ret;
-			cf = &apfs_cf[off];
+			cf = &apfs_cf[pos];
 		}
 
-		if (buf)
-			memcpy(buf + norm_len, cf, cf_len * sizeof(*cf));
-
-		norm_len += cf_len;
+		if (off < cf_len)
+			return cf[off];
+		off -= cf_len;
 	}
 
-	return norm_len;
+	return NORM_END;
 }
 
-/* apfs_normalize_str() temporarily keeps the ccc in the top byte of a char */
-#define TMP_CCC_SHIFT	24
-#define TMP_CCC_MASK	(0xFFU << TMP_CCC_SHIFT)
-#define TMP_CHAR_MASK	((1 << TMP_CCC_SHIFT) - 1)
+/**
+ * apfs_get_normalization_length - Count the characters until the next starter
+ * @utf8str:	string to normalize, may begin with several starters
+ *
+ * Returns the number of unicode characters in the normalization of the
+ * substring that begins at @utf8str and ends at the first nonconsecutive
+ * starter. Or 0 if the substring has invalid UTF-8.
+ */
+static int apfs_get_normalization_length(const char *utf8str)
+{
+	int utf8len, pos, norm_len = 0;
+	bool starters_over = false;
+	unicode_t utf32char;
+
+	while (1) {
+		if (!*utf8str)
+			return norm_len;
+		utf8len = utf8_to_utf32(utf8str, 4, &utf32char);
+		if (utf8len < 0) /* Invalid unicode; don't normalize anything */
+			return 0;
+
+		for (pos = 0;; pos++, norm_len++) {
+			unicode_t utf32norm;
+			u8 ccc;
+
+			utf32norm = apfs_normalize_char(utf32char, pos);
+			if (utf32norm == NORM_END)
+				break;
+
+			apfs_trie_find(apfs_ccc_trie, utf32norm, &ccc,
+				       true /* is_ccc */);
+
+			if (ccc != 0)
+				starters_over = true;
+			else if (starters_over) /* Reached the next starter */
+				return norm_len;
+		}
+		utf8str += utf8len;
+	}
+}
 
 /**
- * apfs_normalize_str - Normalize a UTF-8 string and convert it to UTF-32
- * @utf8str:	string to normalize. Must be valid, and have only one starter
- * @utf8end:	first char after the end of the string
- * @buf:	buffer to store the result. Must be large enough!
+ * apfs_normalize_next - Return the next normalized character from a string
+ * @cursor:	unicode cursor for the string
  *
- * This function is meant to normalize the substring between two starter
- * characters, which is the scope where reordering may be needed.
+ * Sets @cursor->length to the length of the normalized substring between
+ * @cursor->utf8curr and the first nonconsecutive starter. Returns a single
+ * normalized character, setting @cursor->last_ccc and @cursor->last_pos to
+ * its CCC and position in the substring. When the end of the substring is
+ * reached, updates @cursor->utf8curr to point to the beginning of the next
+ * one.
+ *
+ * Returns 0 if the substring has invalid UTF-8.
  */
-static void apfs_normalize_str(const char *utf8str, const char *utf8end,
-			       unicode_t *buf)
+unicode_t apfs_normalize_next(struct apfs_unicursor *cursor)
 {
-	bool ordered;
-	int off = 0;
-	int i;
+	const char *utf8str = cursor->utf8curr;
+	int str_pos, min_pos = -1;
+	unicode_t utf32min = 0;
+	u8 min_ccc;
 
-	while (utf8str < utf8end) {
-		unicode_t utf32;
-
-		utf8str += utf8_to_utf32(utf8str, 4, &utf32);
-		off += apfs_normalize_char(utf32, buf + off);
+new_starter:
+	if (likely(isascii(*utf8str))) {
+		cursor->utf8curr = utf8str + 1;
+		return tolower(*utf8str);
 	}
 
-	/* Remember the ccc's for now, to prevent repetition of trie searches */
-	for (i = 0; i < off; ++i) {
-		u8 ccc;
-
-		apfs_trie_find(apfs_ccc_trie, buf[i], &ccc, true /* is_ccc */);
-		buf[i] = buf[i] + (ccc << TMP_CCC_SHIFT);
+	if (cursor->length < 0) {
+		cursor->length = apfs_get_normalization_length(utf8str);
+		if (cursor->length == 0)
+			return 0;
 	}
 
-	/* Now run the Canonical Ordering Algorithm (bubble sort by ccc) */
-	do {
-		ordered = true;
-		for (i = 0; i < off - 1; ++i) {
-			if ((buf[i] & TMP_CCC_MASK) >
-			    (buf[i + 1] & TMP_CCC_MASK)) {
-				swap(buf[i], buf[i + 1]);
-				ordered = false;
+	str_pos = 0;
+	min_ccc = 0xFF;	/* Above all possible ccc's */
+
+	while (1) {
+		unicode_t utf32char;
+		int utf8len, pos;
+
+		utf8len = utf8_to_utf32(utf8str, 4, &utf32char);
+		for (pos = 0;; pos++, str_pos++) {
+			unicode_t utf32norm;
+			u8 ccc;
+
+			utf32norm = apfs_normalize_char(utf32char, pos);
+			if (utf32norm == NORM_END)
+				break;
+
+			apfs_trie_find(apfs_ccc_trie, utf32norm, &ccc,
+				       true /* is_ccc */);
+
+			if (ccc >= min_ccc || ccc < cursor->last_ccc)
+				continue;
+			if (ccc > cursor->last_ccc ||
+			    str_pos > cursor->last_pos) {
+				utf32min = utf32norm;
+				min_ccc = ccc;
+				min_pos = str_pos;
 			}
 		}
-	} while (!ordered);
 
-	/* The ccc values no longer matter, forget them */
-	for (i = 0; i < off; ++i)
-		buf[i] = buf[i] & TMP_CHAR_MASK;
-	buf[off] = 0;	/* NULL-terminate the buffer */
-}
-
-/**
- * apfs_normalize_next - Get the next normalized character from a cursor
- * @cursor:	the unicode cursor for the string
- * @next:	on return, the next normalized character
- *
- * This function places one UTF-32 character on @next each time it's called,
- * after doing any needed normalization and case folding work. Reordering is
- * sometimes necessary, so all characters until the next starter will be
- * normalized at once; this is not visible to the caller.
- *
- * Returns 0, or a negative error code in case of failure.
- */
-int apfs_normalize_next(struct apfs_unicursor *cursor, unicode_t *next)
-{
-	const char *utf8str = cursor->utf8next;
-	int buflen = 1; /* An extra char for the NULL termination */
-
-	if (cursor->buf && *(cursor->buf + cursor->buf_off))
-		goto out;
-
-	if (likely(isascii(*utf8str))) {
-		*next = tolower(*utf8str);
-		cursor->utf8next++;
-		return 0;
+		utf8str += utf8len;
+		if (str_pos == cursor->length) {
+			/* Reached the following starter */
+			if (min_ccc != 0xFF) {
+				/* Not done with this substring yet */
+				cursor->last_ccc = min_ccc;
+				cursor->last_pos = min_pos;
+				return utf32min;
+			}
+			/* Continue from the next starter */
+			apfs_init_unicursor(cursor, utf8str);
+			goto new_starter;
+		}
 	}
-
-	cursor->buf_off = 0;
-	while (*cursor->utf8next != 0) {
-		int charlen;
-		unicode_t utf32;
-		u8 ccc;
-
-		charlen = utf8_to_utf32(cursor->utf8next, 4, &utf32);
-		if (charlen < 0) /* Invalid unicode */
-			return -EINVAL;
-
-		apfs_trie_find(apfs_ccc_trie, utf32, &ccc, true /* is_ccc */);
-		if (buflen > 1 && ccc == 0) /* Never reorder starter chars */
-			break;
-
-		cursor->utf8next += charlen;
-		buflen += apfs_normalize_char(utf32, NULL);
-	}
-
-	if (buflen > cursor->buf_len) {
-		/* We need a bigger buffer for this sequence of chars */
-		kfree(cursor->buf);
-		cursor->buf = kmalloc_array(buflen, sizeof(unicode_t),
-					    GFP_KERNEL);
-		if (!cursor->buf)
-			return -ENOMEM;
-		cursor->buf_len = buflen;
-	}
-	apfs_normalize_str(utf8str, cursor->utf8next, cursor->buf);
-
-out:
-	*next = *(cursor->buf + cursor->buf_off++);
-	return 0;
 }
 
 /*

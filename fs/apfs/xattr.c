@@ -204,10 +204,8 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	ret = apfs_init_key(APFS_RT_NAMED_ATTR, cnid, name, 0 /* namelen */,
-			    0 /* offset */, key);
-	if (ret)
-		goto fail;
+	apfs_init_key(APFS_RT_NAMED_ATTR, cnid, name, 0 /* namelen */,
+		      0 /* offset */, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {

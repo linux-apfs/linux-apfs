@@ -32,13 +32,12 @@ u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return 0;
+
 	/* We are looking for a key record */
-	if (apfs_init_key(APFS_RT_DENTRY, cnid, child->name, child->len,
-			  0 /* offset */, key))
-		goto fail;
+	apfs_init_key(APFS_RT_DENTRY, cnid, child->name,
+		      child->len, 0 /* offset */, key);
 	result = apfs_cat_resolve(dir->i_sb, key);
 
-fail:
 	kfree(key);
 	return result;
 }
