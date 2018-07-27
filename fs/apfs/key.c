@@ -44,7 +44,7 @@ static inline u64 apfs_cat_cnid(void *key)
  *
  * TODO: support case sensitive filesystems.
  */
-static int apfs_filename_cmp(const char *name1, const char *name2)
+int apfs_filename_cmp(const char *name1, const char *name2)
 {
 	struct apfs_unicursor cursor1, cursor2;
 

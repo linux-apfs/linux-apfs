@@ -88,6 +88,7 @@ struct apfs_key {
 	unsigned int		hash;		/* Hash of the name */
 };
 
+extern int apfs_filename_cmp(const char *name1, const char *name2);
 extern int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2);
 extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_btom_key(void *raw, int size, struct apfs_key *key);

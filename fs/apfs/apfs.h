@@ -65,6 +65,7 @@ extern const struct inode_operations apfs_file_inode_operations;
 /* namei.c */
 extern const struct inode_operations apfs_dir_inode_operations;
 extern const struct inode_operations apfs_special_inode_operations;
+extern const struct dentry_operations apfs_dentry_operations;
 
 /* symlink.c */
 extern const struct inode_operations apfs_symlink_inode_operations;

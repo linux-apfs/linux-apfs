@@ -9,6 +9,7 @@
 #include "dir.h"
 #include "inode.h"
 #include "key.h"
+#include "unicode.h"
 #include "xattr.h"
 
 static struct dentry *apfs_lookup(struct inode *dir, struct dentry *dentry,
@@ -35,4 +36,43 @@ const struct inode_operations apfs_dir_inode_operations = {
 const struct inode_operations apfs_special_inode_operations = {
 	.getattr	= apfs_getattr,
 	.listxattr      = apfs_listxattr,
+};
+
+static int apfs_dentry_hash(const struct dentry *dir, struct qstr *child)
+{
+	struct apfs_unicursor cursor;
+	unsigned long hash;
+
+	apfs_init_unicursor(&cursor, child->name);
+	hash = init_name_hash(dir);
+
+	while (1) {
+		int i;
+		unicode_t utf32;
+
+		utf32 = apfs_normalize_next(&cursor);
+		if (!utf32)
+			break;
+
+		/* Hash the unicode character one byte at a time */
+		for (i = 0; i < 4; ++i) {
+			hash = partial_name_hash((u8)utf32, hash);
+			utf32 = utf32 >> 8;
+		}
+	}
+	child->hash = end_name_hash(hash);
+
+	/* TODO: return error instead of truncating invalid UTF-8? */
+	return 0;
+}
+
+static int apfs_dentry_compare(const struct dentry *dentry, unsigned int len,
+			       const char *str, const struct qstr *name)
+{
+	return apfs_filename_cmp(name->name, str);
+}
+
+const struct dentry_operations apfs_dentry_operations = {
+	.d_hash		= apfs_dentry_hash,
+	.d_compare	= apfs_dentry_compare,
 };

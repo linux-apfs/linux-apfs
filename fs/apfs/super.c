@@ -500,6 +500,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		  le64_to_cpu(vcsb_raw->v_dir_count));
 
 	sb->s_op = &apfs_sops;
+	sb->s_d_op = &apfs_dentry_operations;
 	sb->s_xattr = apfs_xattr_handlers;
 
 	root = apfs_iget(sb, APFS_ROOT_CNID);
