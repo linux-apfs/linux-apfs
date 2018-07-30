@@ -244,21 +244,22 @@ fail:
 	return ret;
 }
 
-static int apfs_xattr_apple_get(const struct xattr_handler *handler,
+static int apfs_xattr_osx_get(const struct xattr_handler *handler,
 				struct dentry *unused, struct inode *inode,
 				const char *name, void *buffer, size_t size)
 {
-	name = xattr_full_name(handler, name);
+	/* Ignore the fake 'osx' prefix */
 	return apfs_xattr_get(inode, name, buffer, size);
 }
 
-static const struct xattr_handler apfs_xattr_apple_handler = {
-	.prefix	= "com.apple.",
-	.get	= apfs_xattr_apple_get,
+static const struct xattr_handler apfs_xattr_osx_handler = {
+	.prefix	= XATTR_MAC_OSX_PREFIX,
+	.get	= apfs_xattr_osx_get,
 };
 
+/* On-disk xattrs have no namespace; use a fake 'osx' prefix in the kernel */
 const struct xattr_handler *apfs_xattr_handlers[] = {
-	&apfs_xattr_apple_handler,
+	&apfs_xattr_osx_handler,
 	NULL
 };
 
@@ -316,16 +317,19 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 			break;
 		}
 
-		/* TODO: don't list the xattrs with no handler */
 		if (buffer) {
-			if (namelen > free) {
+			/* Prepend the fake 'osx' prefix before listing */
+			if (namelen + XATTR_MAC_OSX_PREFIX_LEN > free) {
 				ret = -ERANGE;
 				break;
 			}
+			memcpy(buffer, XATTR_MAC_OSX_PREFIX,
+			       XATTR_MAC_OSX_PREFIX_LEN);
+			buffer += XATTR_MAC_OSX_PREFIX_LEN;
 			memcpy(buffer, this_key->name, namelen);
 			buffer += namelen;
 		}
-		free -= namelen;
+		free -= namelen + XATTR_MAC_OSX_PREFIX_LEN;
 	}
 	apfs_free_query(sb, query);
 
