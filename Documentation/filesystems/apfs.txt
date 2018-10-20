@@ -2,7 +2,7 @@ NOTE: I don't own any Apple device, and all work on this module was done with a
 single filesystem image I managed to get my hands on. If you think you found a
 bug, or if you want support for any particular feature, please reach me at
 
-  ernesto.mnd.fernandez@gmail.com
+  linux-apfs@googlegroups.com
 
 and try to provide me with an appropriate filesystem image for testing. Any and
 all images will be appreciated. This goes without saying, but make sure there

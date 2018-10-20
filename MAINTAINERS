@@ -919,6 +919,7 @@ F:	drivers/iio/adc/stx104.c
 
 APFS FILE SYSTEM
 M:	Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
+L:	linux-apfs@googlegroups.com
 S:	Maintained
 F:	Documentation/filesystems/apfs.txt
 F:	fs/apfs/
