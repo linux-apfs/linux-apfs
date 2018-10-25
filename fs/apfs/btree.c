@@ -6,6 +6,7 @@
  */
 
 #include <linux/buffer_head.h>
+#include <linux/slab.h>
 #include "apfs.h"
 #include "btree.h"
 #include "dir.h"
