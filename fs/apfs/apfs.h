@@ -32,6 +32,8 @@ struct apfs_node {
 	struct buffer_head *bh;
 };
 
+#define APFS_MAX_CKSUM_SIZE 8
+
 /*
  * This structure apparently heads every metadata block
  */
