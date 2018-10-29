@@ -386,6 +386,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		msb_raw = (struct apfs_super_block *)bh->b_data;
 	}
 
+	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_magic = le32_to_cpu(msb_raw->s_magic);
 	if (sb->s_magic != APFS_SUPER_MAGIC) {
 		apfs_err(sb, "not an apfs filesystem");
