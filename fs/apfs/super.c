@@ -64,9 +64,9 @@ static u64 apfs_fletcher64(void *addr, size_t len)
 	return (c2 << 32) | c1;
 }
 
-int apfs_obj_verify_csum(struct super_block *sb, struct apfs_node_header *obj)
+int apfs_obj_verify_csum(struct super_block *sb, struct apfs_obj_phys *obj)
 {
-	return  (le64_to_cpu(obj->n_checksum) ==
+	return  (le64_to_cpu(obj->o_cksum) ==
 		 apfs_fletcher64((char *) obj + APFS_MAX_CKSUM_SIZE,
 				 sb->s_blocksize - APFS_MAX_CKSUM_SIZE));
 }
@@ -406,7 +406,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_msb_raw = msb_raw;
 	sbi->s_mnode.sb = sb;
 	sbi->s_mnode.block_nr = APFS_SB_BLOCK;
-	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->s_header.n_block_id);
+	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->s_header.o_oid);
 	sbi->s_mnode.bh = bh;
 
 	/* For now we only support nodesize < PAGE_SIZE */
@@ -495,7 +495,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_vcsb_raw = vcsb_raw;
 	sbi->s_vnode.sb = sb;
 	sbi->s_vnode.block_nr = vcsb;
-	sbi->s_vnode.node_id = vcsb_raw->v_header.n_block_id;
+	sbi->s_vnode.node_id = vcsb_raw->v_header.o_oid;
 	sbi->s_vnode.bh = bh2;
 
 	/* Get the block holding the catalog data */

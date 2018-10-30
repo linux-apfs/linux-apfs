@@ -52,7 +52,7 @@ static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)
  * Structure of the checkpoint and main superblocks
  */
 struct apfs_super_block {
-/*00*/	struct apfs_node_header	s_header;
+/*00*/	struct apfs_obj_phys s_header;
 
 /*20*/	__le32	s_magic;		/* NXSB */
 	__le32	s_blksize;
@@ -96,7 +96,7 @@ struct apfs_super_block {
  * Structure of each volume checkpoint superblock
  */
 struct apfs_volume_checkpoint_sb {
-/*00*/	struct apfs_node_header v_header;
+/*00*/	struct apfs_obj_phys v_header;
 
 /*20*/	__le32	v_magic;	/* APSB */
 	__le32	v_number;	/* Volume number */

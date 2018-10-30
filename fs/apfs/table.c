@@ -75,7 +75,7 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 
 	table->t_node.sb = sb;
 	table->t_node.block_nr = block;
-	table->t_node.node_id = le64_to_cpu(raw->t_header.n_block_id);
+	table->t_node.node_id = le64_to_cpu(raw->t_header.o_oid);
 	table->t_node.bh = bh;
 
 	if (!apfs_table_is_valid(sb, table)) {

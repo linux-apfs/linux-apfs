@@ -66,7 +66,7 @@ static inline bool apfs_table_is_btom(struct apfs_table *table)
  *
  */
 struct apfs_table_raw {
-/*00*/	struct apfs_node_header t_header;
+/*00*/	struct apfs_obj_phys t_header;
 
 /*20*/	__le16 t_type;		/* Table type, can be 0 to 7 */
 	__le16 t_level;		/* Level in a b-tree. Level 0 is a leaf node */
