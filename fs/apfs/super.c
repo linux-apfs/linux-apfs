@@ -136,27 +136,27 @@ static void destroy_inodecache(void)
 static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_super_block *msb_raw = sbi->s_msb_raw;
+	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_table *vtable;
-	struct apfs_table_raw *vrb_raw;
+	struct apfs_table_raw *msb_omap_raw;
 	struct apfs_volume_checkpoint_sb *vcsb_raw;
 	struct buffer_head *bh;
-	u64 vrb, vb, vcsb;
+	u64 msb_omap, vb, vcsb;
 	int i;
 	int err = 0;
 
-	/* Get the Volume Root Block */
-	vrb = le32_to_cpu(msb_raw->s_volume_index);
-	bh = sb_bread(sb, vrb);
+	/* Get the container's object map */
+	msb_omap = le32_to_cpu(msb_raw->nx_omap_oid);
+	bh = sb_bread(sb, msb_omap);
 	if (!bh) {
-		apfs_err(sb, "unable to read volume root block");
+		apfs_err(sb, "unable to read container object map");
 		return -EIO;
 	}
-	vrb_raw = (struct apfs_table_raw *)bh->b_data;
+	msb_omap_raw = (struct apfs_table_raw *)bh->b_data;
 
 	/* Get the Volume Block */
-	vb = le64_to_cpu(vrb_raw->t_single_rec);
-	vrb_raw = NULL;
+	vb = le64_to_cpu(msb_omap_raw->t_single_rec);
+	msb_omap_raw = NULL;
 	brelse(bh);
 	bh = NULL;
 	vtable = apfs_read_table(sb, vb);
@@ -203,7 +203,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_super_block *msb_raw = sbi->s_msb_raw;
+	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_volume_checkpoint_sb *vol = sbi->s_vcsb_raw;
 	u64 used_blocks, fsid;
 	int err;
@@ -213,7 +213,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bsize = sb->s_blocksize;
 
 	/* Volumes share the whole disk space */
-	buf->f_blocks = le64_to_cpu(msb_raw->s_blks_count);
+	buf->f_blocks = le64_to_cpu(msb_raw->nx_block_count);
 	err = apfs_count_used_blocks(sb, &used_blocks);
 	if (err)
 		return err;
@@ -339,8 +339,8 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct buffer_head *bh, *bh2, *bh3;
 	struct apfs_sb_info *sbi;
-	struct apfs_super_block *msb_raw;
-	struct apfs_table_raw *vrb_raw, *catb_raw;
+	struct apfs_nx_superblock *msb_raw;
+	struct apfs_table_raw *msb_omap_raw, *catb_raw;
 	struct apfs_volume_checkpoint_sb *vcsb_raw;
 	struct apfs_table *vtable;
 	struct apfs_query *query;
@@ -348,7 +348,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct apfs_table *btom_table = NULL, *root_table = NULL;
 	struct inode *root;
 	u64 vol_id, root_id;
-	u64 vrb, vb, vcsb = 0;
+	u64 msb_omap, vb, vcsb = 0;
 	u64 cat_blk, btom_blk;
 	int blocksize;
 	int err = -EINVAL;
@@ -360,17 +360,17 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	 * For now assume a small blocksize, we only need it so that we can
 	 * read the actual blocksize from disk.
 	 */
-	if (!sb_set_blocksize(sb, APFS_DEFAULT_BLOCKSIZE)) {
+	if (!sb_set_blocksize(sb, APFS_NX_DEFAULT_BLOCK_SIZE)) {
 		apfs_err(sb, "unable to set blocksize");
 		return err;
 	}
-	bh = sb_bread(sb, APFS_SB_BLOCK);
+	bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
 	if (!bh) {
 		apfs_err(sb, "unable to read superblock");
 		return err;
 	}
-	msb_raw = (struct apfs_super_block *)bh->b_data;
-	blocksize = le32_to_cpu(msb_raw->s_blksize);
+	msb_raw = (struct apfs_nx_superblock *)bh->b_data;
+	blocksize = le32_to_cpu(msb_raw->nx_block_size);
 	if (sb->s_blocksize != blocksize) {
 		brelse(bh);
 
@@ -378,22 +378,22 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 			apfs_err(sb, "bad blocksize %d", blocksize);
 			return err;
 		}
-		bh = sb_bread(sb, APFS_SB_BLOCK);
+		bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
 		if (!bh) {
 			apfs_err(sb, "unable to read superblock 2nd time");
 			return err;
 		}
-		msb_raw = (struct apfs_super_block *)bh->b_data;
+		msb_raw = (struct apfs_nx_superblock *)bh->b_data;
 	}
 
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
-	sb->s_magic = le32_to_cpu(msb_raw->s_magic);
-	if (sb->s_magic != APFS_SUPER_MAGIC) {
+	sb->s_magic = le32_to_cpu(msb_raw->nx_magic);
+	if (sb->s_magic != APFS_NX_MAGIC) {
 		apfs_err(sb, "not an apfs filesystem");
 		goto failed_super;
 	}
 
-	if (!apfs_obj_verify_csum(sb, &msb_raw->s_header)) {
+	if (!apfs_obj_verify_csum(sb, &msb_raw->nx_o)) {
 		apfs_err(sb, "inconsistent container superblock");
 		goto failed_super;
 	}
@@ -405,8 +405,8 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_fs_info = sbi;
 	sbi->s_msb_raw = msb_raw;
 	sbi->s_mnode.sb = sb;
-	sbi->s_mnode.block_nr = APFS_SB_BLOCK;
-	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->s_header.o_oid);
+	sbi->s_mnode.block_nr = APFS_NX_BLOCK_NUM;
+	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->nx_o.o_oid);
 	sbi->s_mnode.bh = bh;
 
 	/* For now we only support nodesize < PAGE_SIZE */
@@ -425,24 +425,24 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		apfs_err(sb, "volume number out of range");
 		goto failed_vol;
 	}
-	vol_id = le64_to_cpu(msb_raw->volume_ids[sbi->s_vol_nr]);
+	vol_id = le64_to_cpu(msb_raw->nx_fs_oid[sbi->s_vol_nr]);
 	if (vol_id == 0) {
 		apfs_err(sb, "requested volume does not exist");
 		goto failed_vol;
 	}
 
-	/* Get the Volume Root Block */
-	vrb = le32_to_cpu(msb_raw->s_volume_index);
-	bh2 = sb_bread(sb, vrb);
+	/* Get the container's object map */
+	msb_omap = le64_to_cpu(msb_raw->nx_omap_oid);
+	bh2 = sb_bread(sb, msb_omap);
 	if (!bh2) {
-		apfs_err(sb, "unable to read volume root block");
+		apfs_err(sb, "unable to read container object map");
 		goto failed_vol;
 	}
-	vrb_raw = (struct apfs_table_raw *)bh2->b_data;
+	msb_omap_raw = (struct apfs_table_raw *)bh2->b_data;
 
 	/* Get the Volume Block */
-	vb = le64_to_cpu(vrb_raw->t_single_rec);
-	vrb_raw = NULL;
+	vb = le64_to_cpu(msb_omap_raw->t_single_rec);
+	msb_omap_raw = NULL;
 	brelse(bh2);
 	vtable = apfs_read_table(sb, vb);
 	if (!vtable) {

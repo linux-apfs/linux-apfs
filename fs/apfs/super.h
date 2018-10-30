@@ -12,7 +12,114 @@
 #include <linux/types.h>
 #include "apfs.h"
 
-#define APFS_SB_BLOCK	0
+/*
+ * Structure used to store a range of physical blocks
+ */
+struct apfs_prange {
+	__le64 pr_start_paddr;
+	__le64 pr_block_count;
+} __packed;
+
+/* Main container */
+
+/* Container constants */
+#define APFS_NX_MAGIC				APFS_SUPER_MAGIC
+#define APFS_NX_BLOCK_NUM			0
+#define APFS_NX_MAX_FILE_SYSTEMS		100
+
+#define APFS_NX_EPH_INFO_COUNT			4
+#define APFS_NX_EPH_MIN_BLOCK_COUNT		8
+#define APFS_NX_MAX_FILE_SYSTEM_EPH_STRUCTS	4
+#define APFS_NX_TX_MIN_CHECKPOINT_COUNT		4
+#define APFS_NX_EPH_INFO_VERSION_1		1
+
+/* Container flags */
+#define APFS_NX_RESERVED_1			0x00000001LL
+#define APFS_NX_RESERVED_2			0x00000002LL
+#define APFS_NX_CRYPTO_SW			0x00000004LL
+
+/* Optional container feature flags */
+#define APFS_NX_FEATURE_DEFRAG			0x0000000000000001ULL
+#define APFS_NX_FEATURE_LCFD			0x0000000000000002ULL
+#define APFS_NX_SUPPORTED_FEATURES_MASK		(APFS_NX_FEATURE_DEFRAG | \
+						APFS_NX_FEATURE_LCFD)
+
+/* Read-only compatible container feature flags */
+#define APFS_NX_SUPPORTED_ROCOMPAT_MASK		(0x0ULL)
+
+/* Incompatible container feature flags */
+#define APFS_NX_INCOMPAT_VERSION1		0x0000000000000001ULL
+#define APFS_NX_INCOMPAT_VERSION2		0x0000000000000002ULL
+#define APFS_NX_INCOMPAT_FUSION			0x0000000000000100ULL
+#define APFS_NX_SUPPORTED_INCOMPAT_MASK		(APFS_NX_INCOMPAT_VERSION2 \
+						| APFS_NX_INCOMPAT_FUSION)
+
+/* Block and container sizes */
+#define APFS_NX_MINIMUM_BLOCK_SIZE		4096
+#define APFS_NX_DEFAULT_BLOCK_SIZE		4096
+#define APFS_NX_MAXIMUM_BLOCK_SIZE		65536
+#define APFS_NX_MINIMUM_CONTAINER_SIZE		1048576
+
+/* Indexes into a container superblock's array of counters */
+enum {
+	APFS_NX_CNTR_OBJ_CKSUM_SET	= 0,
+	APFS_NX_CNTR_OBJ_CKSUM_FAIL	= 1,
+
+	APFS_NX_NUM_COUNTERS		= 32
+};
+
+/*
+ * On-disk representation of the container superblock
+ */
+struct apfs_nx_superblock {
+/*00*/	struct apfs_obj_phys nx_o;
+/*20*/	__le32 nx_magic;
+	__le32 nx_block_size;
+	__le64 nx_block_count;
+
+/*30*/	__le64 nx_features;
+	__le64 nx_readonly_compatible_features;
+	__le64 nx_incompatible_features;
+
+/*48*/	char nx_uuid[16];
+
+/*58*/	__le64 nx_next_oid;
+	__le64 nx_next_xid;
+
+/*68*/	__le32 nx_xp_desc_blocks;
+	__le32 nx_xp_data_blocks;
+/*70*/	__le64 nx_xp_desc_base;
+	__le64 nx_xp_data_base;
+	__le32 nx_xp_desc_next;
+	__le32 nx_xp_data_next;
+/*88*/	__le32 nx_xp_desc_index;
+	__le32 nx_xp_desc_len;
+	__le32 nx_xp_data_index;
+	__le32 nx_xp_data_len;
+
+/*98*/	__le64 nx_spaceman_oid;
+	__le64 nx_omap_oid;
+	__le64 nx_reaper_oid;
+
+/*B0*/	__le32 nx_test_type;
+
+	__le32 nx_max_file_systems;
+/*B8*/	__le64 nx_fs_oid[APFS_NX_MAX_FILE_SYSTEMS];
+/*3D8*/	__le64 nx_counters[APFS_NX_NUM_COUNTERS];
+/*4D8*/	struct apfs_prange nx_blocked_out_prange;
+	__le64 nx_evict_mapping_tree_oid;
+/*4F0*/	__le64 nx_flags;
+	__le64 nx_efi_jumpstart;
+/*500*/	char nx_fusion_uuid[16];
+	struct apfs_prange nx_keylocker;
+/*520*/	__le64 nx_ephemeral_info[APFS_NX_EPH_INFO_COUNT];
+
+/*540*/	__le64 nx_test_oid;
+
+	__le64 nx_fusion_mt_oid;
+/*550*/	__le64 nx_fusion_wbc_oid;
+	struct apfs_prange nx_fusion_wbc;
+} __packed;
 
 /* Mount option flags */
 #define APFS_UID_OVERRIDE	1
@@ -23,7 +130,7 @@
  * checkpoint superblock.
  */
 struct apfs_sb_info {
-	struct apfs_super_block *s_msb_raw;		/* On-disk main sb */
+	struct apfs_nx_superblock *s_msb_raw;		/* On-disk main sb */
 	struct apfs_volume_checkpoint_sb *s_vcsb_raw;	/* On-disk volume sb */
 
 	struct apfs_table *s_cat_root;	/* Root of the catalog tree */
@@ -47,41 +154,6 @@ static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)
 {
 	return sb->s_fs_info;
 }
-
-/*
- * Structure of the checkpoint and main superblocks
- */
-struct apfs_super_block {
-/*00*/	struct apfs_obj_phys s_header;
-
-/*20*/	__le32	s_magic;		/* NXSB */
-	__le32	s_blksize;
-/*28*/	__le64	s_blks_count;		/* Number of blocks in the container */
-	char	unknown_2[24];
-/*48*/	char	s_uuid[16];		/* uuid of the container */
-	char	unknown_3[8];
-/*60*/	__le64	s_next_checkpoint_id;
-	char	unknown_4[8];
-
-	/*
-	 * The checkpoint superblock descriptor for the previous state is
-	 * found in block s_base_blk + s_prev_csbd. The descriptor for
-	 * this state is in block s_base_blk + s_curr_csbd. The oldest
-	 * descriptor is in s_base_blk + s_oldest_csbd.
-	 */
-/*70*/	__le32	s_base_blk;
-	char	unknown_5[12];
-/*80*/	__le32	s_prev_csbd;		/* Or is it the next csbd? */
-	char	unknown_6[4];
-	__le32	s_curr_csbd;
-	__le32	s_oldest_csbd;
-
-	char	unknown_7[16];
-/*A0*/	__le32	s_volume_index;		/* Volume Root Block */
-	char	unknown_8[16];
-	__le32	s_max_volumes;		/* Maximum number of volumes */
-/*B8*/	__le64	volume_ids[0];		/* Array of volume ids starts here */
-} __attribute__ ((__packed__));
 
 /* Case sensitivity of the volume */
 #define APFS_CASE_SENSITIVE		010

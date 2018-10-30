@@ -13,8 +13,6 @@
 
 #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
 
-#define APFS_DEFAULT_BLOCKSIZE	4096
-
 /* APFS Objects */
 
 /* Object identifiers constants */
