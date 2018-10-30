@@ -263,9 +263,6 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 		case APFS_QUERY_OMAP:
 			err = apfs_read_omap_key(this_key, len, query->curr);
 			break;
-		case APFS_QUERY_VOL:
-			err = apfs_read_vol_key(this_key, len, query->curr);
-			break;
 		default:
 			/* Not implemented yet */
 			err = -EINVAL;

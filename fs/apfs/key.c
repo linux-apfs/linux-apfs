@@ -171,27 +171,6 @@ int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
 }
 
 /**
- * apfs_read_vol_key - Parse an on-disk volume table key
- * @raw:	pointer to the raw key
- * @size:	size of the raw key
- * @key:	apfs_key structure to store the result
- *
- * Returns 0 on success, or a negative error code otherwise.
- */
-int apfs_read_vol_key(void *raw, int size, struct apfs_key *key)
-{
-	if (size < 8)
-		return -EFSCORRUPTED;
-
-	key->type = 0;
-	key->name = NULL;
-	key->hash = 0;
-	key->offset = 0;
-	key->id = le64_to_cpup(raw);
-	return 0;
-}
-
-/**
  * apfs_init_key - Initialize an in-memory key
  * @type:	type of the record
  * @id:		id for the record

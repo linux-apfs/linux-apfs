@@ -464,7 +464,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	apfs_init_key(0 /* type */, vol_id, NULL /* name */, 0 /* namelen */,
 		      0 /* offset */, key);
 	query->key = key;
-	query->flags |= APFS_QUERY_VOL | APFS_QUERY_EXACT;
+	query->flags |= APFS_QUERY_OMAP | APFS_QUERY_EXACT;
 	err = apfs_table_query(sb, query);
 	if (!err && query->len >= sizeof(struct apfs_omap_val)) {
 		struct apfs_omap_val *omap_value = (struct apfs_omap_val *)

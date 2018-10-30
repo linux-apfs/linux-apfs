@@ -106,7 +106,6 @@ extern int apfs_filename_cmp(const char *name1, const char *name2);
 extern int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2);
 extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_omap_key(void *raw, int size, struct apfs_key *key);
-extern int apfs_read_vol_key(void *raw, int size, struct apfs_key *key);
 extern void apfs_init_key(int type, u64 id, const char *name, int namelen,
 			  u64 offset, struct apfs_key *key);
 
