@@ -139,9 +139,9 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_table *vtable;
 	struct apfs_table_raw *msb_omap_raw;
-	struct apfs_volume_checkpoint_sb *vcsb_raw;
+	struct apfs_superblock *vsb_raw;
 	struct buffer_head *bh;
-	u64 msb_omap, vb, vcsb;
+	u64 msb_omap, vb, vsb;
 	int i;
 	int err = 0;
 
@@ -180,17 +180,17 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 
 		/* The block number is in the second 64 bits of data */
 		block = (__le64 *)(vtable->t_node.bh->b_data + off + 8);
-		vcsb = le64_to_cpu(*block);
+		vsb = le64_to_cpu(*block);
 
-		bh = sb_bread(sb, vcsb);
+		bh = sb_bread(sb, vsb);
 		if (!bh) {
 			err = -EIO;
 			apfs_err(sb, "unable to read volume superblock");
 			goto cleanup;
 		}
 
-		vcsb_raw = (struct apfs_volume_checkpoint_sb *)bh->b_data;
-		*count += le64_to_cpu(vcsb_raw->v_used_blks);
+		vsb_raw = (struct apfs_superblock *)bh->b_data;
+		*count += le64_to_cpu(vsb_raw->apfs_fs_alloc_count);
 		brelse(bh);
 	}
 
@@ -204,7 +204,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct super_block *sb = dentry->d_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
-	struct apfs_volume_checkpoint_sb *vol = sbi->s_vcsb_raw;
+	struct apfs_superblock *vol = sbi->s_vsb_raw;
 	u64 used_blocks, fsid;
 	int err;
 
@@ -221,8 +221,8 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bavail = buf->f_bfree; /* I don't know any better */
 
 	/* The file count is only for the mounted volume */
-	buf->f_files = le64_to_cpu(vol->v_file_count) +
-		       le64_to_cpu(vol->v_dir_count);
+	buf->f_files = le64_to_cpu(vol->apfs_num_files) +
+		       le64_to_cpu(vol->apfs_num_directories);
 
 	/*
 	 * buf->f_ffree is left undefined for now. Maybe it should report the
@@ -232,8 +232,8 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_namelen = 255; /* Again, I don't know any better */
 
 	/* There are no clear rules for the fsid, so we follow ext2 here */
-	fsid = le64_to_cpup((void *)vol->v_uuid) ^
-	       le64_to_cpup((void *)vol->v_uuid + sizeof(u64));
+	fsid = le64_to_cpup((void *)vol->apfs_vol_uuid) ^
+	       le64_to_cpup((void *)vol->apfs_vol_uuid + sizeof(u64));
 	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
 	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
 
@@ -341,14 +341,14 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct apfs_sb_info *sbi;
 	struct apfs_nx_superblock *msb_raw;
 	struct apfs_table_raw *msb_omap_raw, *catb_raw;
-	struct apfs_volume_checkpoint_sb *vcsb_raw;
+	struct apfs_superblock *vsb_raw;
 	struct apfs_table *vtable;
 	struct apfs_query *query;
 	struct apfs_key *key;
 	struct apfs_table *btom_table = NULL, *root_table = NULL;
 	struct inode *root;
 	u64 vol_id, root_id;
-	u64 msb_omap, vb, vcsb = 0;
+	u64 msb_omap, vb, vsb = 0;
 	u64 cat_blk, btom_blk;
 	int blocksize;
 	int err = -EINVAL;
@@ -450,7 +450,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_vol;
 	}
 
-	/* Get the Volume Checkpoint Superblock with id == vol_id */
+	/* Get the Volume Superblock with id == vol_id */
 	query = apfs_alloc_query(vtable, NULL /* parent */);
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!query || !key) {
@@ -468,38 +468,38 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	err = apfs_table_query(sb, query);
 	if (!err && query->len >= 16) {
 		/* The block number is in the second 64 bits of data */
-		vcsb = le64_to_cpup((__le64 *)
+		vsb = le64_to_cpup((__le64 *)
 				(vtable->t_node.bh->b_data + query->off + 8));
 	}
 	kfree(key);
 	kfree(query);
 	apfs_release_table(vtable);
-	if (vcsb == 0) {
+	if (vsb == 0) {
 		apfs_err(sb, "volume not found, likely corruption");
 		goto failed_vol;
 	}
 
 	err = -EINVAL;
-	bh2 = sb_bread(sb, vcsb);
+	bh2 = sb_bread(sb, vsb);
 	if (!bh2) {
 		apfs_err(sb, "unable to read volume superblock");
 		goto failed_vol;
 	}
 
-	vcsb_raw = (struct apfs_volume_checkpoint_sb *)bh2->b_data;
-	if (le32_to_cpu(vcsb_raw->v_magic) != APFS_VOL_MAGIC) {
+	vsb_raw = (struct apfs_superblock *)bh2->b_data;
+	if (le32_to_cpu(vsb_raw->apfs_magic) != APFS_MAGIC) {
 		apfs_err(sb, "wrong magic in volume superblock");
 		goto failed_mount;
 	}
 
-	sbi->s_vcsb_raw = vcsb_raw;
+	sbi->s_vsb_raw = vsb_raw;
 	sbi->s_vnode.sb = sb;
-	sbi->s_vnode.block_nr = vcsb;
-	sbi->s_vnode.node_id = vcsb_raw->v_header.o_oid;
+	sbi->s_vnode.block_nr = vsb;
+	sbi->s_vnode.node_id = le64_to_cpu(vsb_raw->apfs_o.o_oid);
 	sbi->s_vnode.bh = bh2;
 
 	/* Get the block holding the catalog data */
-	cat_blk = le64_to_cpu(vcsb_raw->v_btom);
+	cat_blk = le64_to_cpu(vsb_raw->apfs_omap_oid);
 	bh3 = sb_bread(sb, cat_blk);
 	if (!bh3) {
 		apfs_err(sb, "unable to read catalog data");
@@ -522,7 +522,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Get the root node from the b-tree object map */
 	/* TODO: if files are few, could the btom and root node be the same? */
-	root_id = le64_to_cpu(vcsb_raw->v_root);
+	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
 	root_table = apfs_btom_read_table(sb, root_id);
 	if (!root_table) {
 		err = -EINVAL;
@@ -533,11 +533,11 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* Print the last write time to verify the mount was successful */
 	apfs_info(sb, "volume last modified at %llx",
-		  le64_to_cpu(vcsb_raw->v_wtime));
+		  le64_to_cpu(vsb_raw->apfs_last_mod_time));
 	/* Also the number of files */
 	apfs_info(sb, "volume has %llu files and %llu directories",
-		  le64_to_cpu(vcsb_raw->v_file_count),
-		  le64_to_cpu(vcsb_raw->v_dir_count));
+		  le64_to_cpu(vsb_raw->apfs_num_files),
+		  le64_to_cpu(vsb_raw->apfs_num_directories));
 
 	sb->s_op = &apfs_sops;
 	sb->s_d_op = &apfs_dentry_operations;

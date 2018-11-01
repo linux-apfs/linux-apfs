@@ -121,6 +121,141 @@ struct apfs_nx_superblock {
 	struct apfs_prange nx_fusion_wbc;
 } __packed;
 
+/* Volume */
+
+/* Volume constants */
+#define APFS_MAGIC				0x42535041
+
+#define APFS_MAX_HIST				8
+#define APFS_VOLNAME_LEN			256
+
+/* Volume flags */
+#define APFS_FS_UNENCRYPTED			0x00000001LL
+#define APFS_FS_EFFACEABLE			0x00000002LL
+#define APFS_FS_RESERVED_4			0x00000004LL
+#define APFS_FS_ONEKEY				0x00000008LL
+#define APFS_FS_SPILLEDOVER			0x00000010LL
+#define APFS_FS_RUN_SPILLOVER_CLEANER		0x00000020LL
+#define APFS_FS_FLAGS_VALID_MASK		(APFS_FS_UNENCRYPTED \
+						| APFS_FS_EFFACEABLE \
+						| APFS_FS_RESERVED_4 \
+						| APFS_FS_ONEKEY \
+						| APFS_FS_SPILLEDOVER \
+						| APFS_FS_RUN_SPILLOVER_CLEANER)
+
+#define APFS_FS_CRYPTOFLAGS			(APFS_FS_UNENCRYPTED \
+						| APFS_FS_EFFACEABLE \
+						| APFS_FS_ONEKEY)
+
+/* Optional volume feature flags */
+#define APFS_FEATURE_DEFRAG_PRERELEASE		0x00000001LL
+#define APFS_FEATURE_HARDLINK_MAP_RECORDS	0x00000002LL
+#define APFS_FEATURE_DEFRAG			0x00000004LL
+
+#define APFS_SUPPORTED_FEATURES_MASK	(APFS_FEATURE_DEFRAG \
+					| APFS_FEATURE_DEFRAG_PRERELEASE \
+					| APFS_FEATURE_HARDLINK_MAP_RECORDS)
+
+/* Read-only compatible volume feature flags */
+#define APFS_SUPPORTED_ROCOMPAT_MASK		(0x0ULL)
+
+/* Incompatible volume feature flags */
+#define APFS_INCOMPAT_CASE_INSENSITIVE		0x00000001LL
+#define APFS_INCOMPAT_DATALESS_SNAPS		0x00000002LL
+#define APFS_INCOMPAT_ENC_ROLLED		0x00000004LL
+#define APFS_INCOMPAT_NORMALIZATION_INSENSITIVE	0x00000008LL
+
+#define APFS_SUPPORTED_INCOMPAT_MASK  (APFS_INCOMPAT_CASE_INSENSITIVE \
+				      | APFS_INCOMPAT_DATALESS_SNAPS \
+				      | APFS_INCOMPAT_ENC_ROLLED \
+				      | APFS_INCOMPAT_NORMALIZATION_INSENSITIVE)
+
+#define APFS_MODIFIED_NAMELEN	      32
+
+/*
+ * Structure containing information about a program that modified the volume
+ */
+struct apfs_modified_by {
+	char id[APFS_MODIFIED_NAMELEN];
+	__le64 timestamp;
+	__le64 last_xid;
+} __packed;
+
+/*
+ * Structure used to store the encryption state
+ */
+struct apfs_wrapped_meta_crypto_state {
+	__le16 major_version;
+	__le16 minor_version;
+	__le32 cpflags;
+	__le32 persistent_class;
+	__le32 key_os_version;
+	__le16 key_revision;
+	__le16 unused;
+} __packed;
+
+/*
+ * On-disk representation of a volume superblock
+ */
+struct apfs_superblock {
+/*00*/	struct apfs_obj_phys apfs_o;
+
+/*20*/	__le32 apfs_magic;
+	__le32 apfs_fs_index;
+
+/*28*/	__le64 apfs_features;
+	__le64 apfs_readonly_compatible_features;
+	__le64 apfs_incompatible_features;
+
+/*40*/	__le64 apfs_unmount_time;
+
+	__le64 apfs_fs_reserve_block_count;
+	__le64 apfs_fs_quota_block_count;
+	__le64 apfs_fs_alloc_count;
+
+/*60*/	struct apfs_wrapped_meta_crypto_state apfs_meta_crypto;
+
+/*74*/	__le32 apfs_root_tree_type;
+	__le32 apfs_extentref_tree_type;
+	__le32 apfs_snap_meta_tree_type;
+
+/*80*/	__le64 apfs_omap_oid;
+	__le64 apfs_root_tree_oid;
+	__le64 apfs_extentref_tree_oid;
+	__le64 apfs_snap_meta_tree_oid;
+
+/*A0*/	__le64 apfs_revert_to_xid;
+	__le64 apfs_revert_to_sblock_oid;
+
+/*B0*/	__le64 apfs_next_obj_id;
+
+/*B8*/	__le64 apfs_num_files;
+	__le64 apfs_num_directories;
+	__le64 apfs_num_symlinks;
+	__le64 apfs_num_other_fsobjects;
+	__le64 apfs_num_snapshots;
+
+/*E0*/	__le64 apfs_total_blocks_alloced;
+	__le64 apfs_total_blocks_freed;
+
+/*F0*/	char apfs_vol_uuid[16];
+/*100*/	__le64 apfs_last_mod_time;
+
+	__le64 apfs_fs_flags;
+
+/*110*/	struct apfs_modified_by apfs_formatted_by;
+/*140*/	struct apfs_modified_by apfs_modified_by[APFS_MAX_HIST];
+
+/*2C0*/	u8 apfs_volname[APFS_VOLNAME_LEN];
+/*3C0*/	__le32 apfs_next_doc_id;
+
+	__le16 apfs_role;
+	__le16 reserved;
+
+/*3C8*/	__le64 apfs_root_to_xid;
+	__le64 apfs_er_state_oid;
+} __packed;
+
 /* Mount option flags */
 #define APFS_UID_OVERRIDE	1
 #define APFS_GID_OVERRIDE	2
@@ -131,7 +266,7 @@ struct apfs_nx_superblock {
  */
 struct apfs_sb_info {
 	struct apfs_nx_superblock *s_msb_raw;		/* On-disk main sb */
-	struct apfs_volume_checkpoint_sb *s_vcsb_raw;	/* On-disk volume sb */
+	struct apfs_superblock *s_vsb_raw;		/* On-disk volume sb */
 
 	struct apfs_table *s_cat_root;	/* Root of the catalog tree */
 	struct apfs_table *s_btom_root;	/* Root of the b-tree object map */
@@ -154,55 +289,5 @@ static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)
 {
 	return sb->s_fs_info;
 }
-
-/* Case sensitivity of the volume */
-#define APFS_CASE_SENSITIVE		010
-#define APFS_CASE_INSENSITIVE		001
-
-/* The last volume has no size set and can use the rest of the blocks */
-#define APFS_SIZE_UNLIMITED		0x0000
-
-#define APFS_VOL_MAGIC	0x42535041
-
-/*
- * Structure of each volume checkpoint superblock
- */
-struct apfs_volume_checkpoint_sb {
-/*00*/	struct apfs_obj_phys v_header;
-
-/*20*/	__le32	v_magic;	/* APSB */
-	__le32	v_number;	/* Volume number */
-	char	unknown_1[16];
-/*38*/	__le32	v_case_sens;	/* Case sensitivity of the volume */
-	char	unknown_2[12];
-/*48*/	__le64	v_blks_count;	/* Volume size in blocks */
-	char	unknown_3[8];
-/*58*/	__le64	v_used_blks;	/* Number of volume blocks in use */
-	char	unknown_4[32];
-/*80*/	__le64	v_btom;		/* First blk of b-tree object map for catalog */
-	__le64	v_root;		/* Node ID of root node */
-/*90*/	__le64	v_ext_btree;	/* Block number of extents b-tree */
-	__le64	v_snapshots;	/* Block number to list of snapshots */
-	char	unknown_5[16];
-/*B0*/	__le64	v_next_cnid;
-	__le64	v_file_count;	/* Number of files in the volume */
-/*C0*/	__le64	v_dir_count;	/* Number of directories in the volume */
-	char	unknown_6[40];
-/*F0*/	char	v_uuid[16];	/* uuid of the volume */
-/*100*/	__le64	v_wtime;	/* Last modification to the volume */
-	char	unknown_7[8];
-/*110*/	char	v_version[32];	/* Creator and APFS version */
-/*130*/	__le64	v_crtime;	/* Volume creation time */
-	char	unknown_8[8];
-
-	/* List of volume checkpoints, each of them 0x30 bytes long */
-/*140*/	struct {
-		char	vc_creator[32];	/* Creator */
-		__le64	vc_crtime;	/* Checkpoint creation time */
-		__le64	vc_id;
-	} v_checkpoints[8];
-
-/*2C0*/	char	v_name[48];	/* Volume name */
-} __attribute__ ((__packed__));
 
 #endif	/* _APFS_SUPER_H */
