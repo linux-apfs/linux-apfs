@@ -14,6 +14,31 @@
 #include "btree.h"
 
 /*
+ * On-disk representation of an object map
+ */
+struct apfs_omap_phys {
+/*00*/	struct apfs_obj_phys om_o;
+/*20*/	__le32 om_flags;
+	__le32 om_snap_count;
+	__le32 om_tree_type;
+	__le32 om_snapshot_tree_type;
+/*30*/	__le64 om_tree_oid;
+	__le64 om_snapshot_tree_oid;
+/*40*/	__le64 om_most_recent_snap;
+	__le64 om_pending_revert_min;
+	__le64 om_pending_revert_max;
+} __packed;
+
+/*
+ * Structure of a value in an object map B-tree
+ */
+struct apfs_omap_val {
+	__le32 ov_flags;
+	__le32 ov_size;
+	__le64 ov_paddr;
+} __packed;
+
+/*
  * In-memory representation of an APFS table
  */
 struct apfs_table {
@@ -40,12 +65,12 @@ static inline bool apfs_table_is_leaf(struct apfs_table *table)
 }
 
 /**
- * apfs_table_is_btom - Check if a b-tree table belongs to the btom
+ * apfs_table_is_omap - Check if a b-tree table belongs to the omap
  * @table: the table to check
  *
  * This function is no longer used, but I'm keeping it as documentation for now.
  */
-static inline bool apfs_table_is_btom(struct apfs_table *table)
+static inline bool apfs_table_is_omap(struct apfs_table *table)
 {
 	return (table->t_type & 4) != 0;
 }

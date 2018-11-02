@@ -30,7 +30,7 @@ static void apfs_put_super(struct super_block *sb)
 	sb->s_fs_info = NULL;
 
 	apfs_release_table(sbi->s_cat_root);
-	apfs_release_table(sbi->s_btom_root);
+	apfs_release_table(sbi->s_omap_root);
 
 	brelse(sbi->s_mnode.bh);
 	brelse(sbi->s_vnode.bh);
@@ -138,7 +138,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_table *vtable;
-	struct apfs_table_raw *msb_omap_raw;
+	struct apfs_omap_phys *msb_omap_raw;
 	struct apfs_superblock *vsb_raw;
 	struct buffer_head *bh;
 	u64 msb_omap, vb, vsb;
@@ -152,10 +152,10 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 		apfs_err(sb, "unable to read container object map");
 		return -EIO;
 	}
-	msb_omap_raw = (struct apfs_table_raw *)bh->b_data;
+	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
 
 	/* Get the Volume Block */
-	vb = le64_to_cpu(msb_omap_raw->t_single_rec);
+	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
 	msb_omap_raw = NULL;
 	brelse(bh);
 	bh = NULL;
@@ -340,16 +340,16 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct buffer_head *bh, *bh2, *bh3;
 	struct apfs_sb_info *sbi;
 	struct apfs_nx_superblock *msb_raw;
-	struct apfs_table_raw *msb_omap_raw, *catb_raw;
+	struct apfs_omap_phys *msb_omap_raw, *vol_omap_raw;
 	struct apfs_superblock *vsb_raw;
 	struct apfs_table *vtable;
 	struct apfs_query *query;
 	struct apfs_key *key;
-	struct apfs_table *btom_table = NULL, *root_table = NULL;
+	struct apfs_table *vol_omap_table = NULL, *root_table = NULL;
 	struct inode *root;
 	u64 vol_id, root_id;
 	u64 msb_omap, vb, vsb = 0;
-	u64 cat_blk, btom_blk;
+	u64 cat_blk, vol_omap_blk;
 	int blocksize;
 	int err = -EINVAL;
 
@@ -438,10 +438,10 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		apfs_err(sb, "unable to read container object map");
 		goto failed_vol;
 	}
-	msb_omap_raw = (struct apfs_table_raw *)bh2->b_data;
+	msb_omap_raw = (struct apfs_omap_phys *)bh2->b_data;
 
 	/* Get the Volume Block */
-	vb = le64_to_cpu(msb_omap_raw->t_single_rec);
+	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
 	msb_omap_raw = NULL;
 	brelse(bh2);
 	vtable = apfs_read_table(sb, vb);
@@ -466,10 +466,10 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	query->key = key;
 	query->flags |= APFS_QUERY_VOL | APFS_QUERY_EXACT;
 	err = apfs_table_query(sb, query);
-	if (!err && query->len >= 16) {
-		/* The block number is in the second 64 bits of data */
-		vsb = le64_to_cpup((__le64 *)
-				(vtable->t_node.bh->b_data + query->off + 8));
+	if (!err && query->len >= sizeof(struct apfs_omap_val)) {
+		struct apfs_omap_val *omap_value = (struct apfs_omap_val *)
+				(vtable->t_node.bh->b_data + query->off);
+		vsb = le64_to_cpu(omap_value->ov_paddr);
 	}
 	kfree(key);
 	kfree(query);
@@ -505,25 +505,23 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		apfs_err(sb, "unable to read catalog data");
 		goto failed_cat;
 	}
-	catb_raw = (struct apfs_table_raw *) bh3->b_data;
+	vol_omap_raw = (struct apfs_omap_phys *) bh3->b_data;
 
-	/* Get the B-Tree object map */
-	/* TODO: could the catb_raw table hold more than one record? */
-	btom_blk = le64_to_cpu(catb_raw->t_single_rec);
+	/* Get the volume's object map */
+	vol_omap_blk = le64_to_cpu(vol_omap_raw->om_tree_oid);
 	brelse(bh3);
-	btom_table = apfs_read_table(sb, btom_blk);
-	if (!btom_table) {
-		apfs_err(sb, "unable to read the b-tree object map");
+	vol_omap_table = apfs_read_table(sb, vol_omap_blk);
+	if (!vol_omap_table) {
+		apfs_err(sb, "unable to read the volume object map");
 		goto failed_cat;
 	}
 
-	/* The btom needs to be set before the call to apfs_btom_read_table() */
-	sbi->s_btom_root = btom_table;
+	/* The omap needs to be set before the call to apfs_omap_read_table() */
+	sbi->s_omap_root = vol_omap_table;
 
-	/* Get the root node from the b-tree object map */
-	/* TODO: if files are few, could the btom and root node be the same? */
+	/* Get the root node from the volume object map */
 	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
-	root_table = apfs_btom_read_table(sb, root_id);
+	root_table = apfs_omap_read_table(sb, root_id);
 	if (!root_table) {
 		err = -EINVAL;
 		apfs_err(sb, "unable to read catalog root node");
@@ -558,7 +556,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 failed_mount:
 	apfs_release_table(root_table);
 failed_root:
-	apfs_release_table(btom_table);
+	apfs_release_table(vol_omap_table);
 failed_cat:
 	brelse(bh2);
 failed_vol:

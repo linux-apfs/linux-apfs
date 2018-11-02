@@ -259,8 +259,8 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 		case APFS_QUERY_CAT:
 			err = apfs_read_cat_key(this_key, len, query->curr);
 			break;
-		case APFS_QUERY_BTOM:
-			err = apfs_read_btom_key(this_key, len, query->curr);
+		case APFS_QUERY_OMAP:
+			err = apfs_read_omap_key(this_key, len, query->curr);
 			break;
 		case APFS_QUERY_VOL:
 			err = apfs_read_vol_key(this_key, len, query->curr);

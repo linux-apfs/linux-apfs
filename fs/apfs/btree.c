@@ -28,11 +28,11 @@ static int apfs_locate_block(struct super_block *sb, u64 id, u64 *block)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
 	struct apfs_key *key;
-	struct apfs_btom_data *data;
+	struct apfs_omap_val *data;
 	char *raw;
 	int ret = 0;
 
-	query = apfs_alloc_query(sbi->s_btom_root, NULL /* parent */);
+	query = apfs_alloc_query(sbi->s_omap_root, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
 
@@ -45,7 +45,7 @@ static int apfs_locate_block(struct super_block *sb, u64 id, u64 *block)
 	apfs_init_key(0 /* type */, id, NULL /* name */, 0 /* namelen */,
 		      0 /* offset */, key);
 	query->key = key;
-	query->flags |= APFS_QUERY_BTOM | APFS_QUERY_EXACT;
+	query->flags |= APFS_QUERY_OMAP | APFS_QUERY_EXACT;
 
 	ret = apfs_btree_query(sb, &query);
 	if (ret)
@@ -59,8 +59,8 @@ static int apfs_locate_block(struct super_block *sb, u64 id, u64 *block)
 	}
 
 	raw = query->table->t_node.bh->b_data;
-	data = (struct apfs_btom_data *)(raw + query->off);
-	*block = le64_to_cpu(data->block);
+	data = (struct apfs_omap_val *)(raw + query->off);
+	*block = le64_to_cpu(data->ov_paddr);
 
 fail:
 	kfree(key);
@@ -127,10 +127,10 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_table *root = sbi->s_cat_root;
-	struct apfs_table *btom = sbi->s_btom_root;
+	struct apfs_table *omap = sbi->s_omap_root;
 
 	kfree(query->curr);
-	if (query->table != root && query->table != btom)
+	if (query->table != root && query->table != omap)
 		apfs_release_table(query->table);
 	if (query->parent)
 		apfs_free_query(sb, query->parent);
@@ -155,7 +155,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_table *root = sbi->s_cat_root;
-	struct apfs_table *btom = sbi->s_btom_root;
+	struct apfs_table *omap = sbi->s_omap_root;
 	struct apfs_table *table;
 	struct apfs_query *parent;
 	char *raw = (*query)->table->t_node.bh->b_data;
@@ -199,10 +199,10 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	child_id = le64_to_cpup((__le64 *)(raw + (*query)->off));
 
 	/*
-	 * The btom maps a node id into a block number. The nodes
-	 * of the btom itself do not need this translation.
+	 * The omap maps a node id into a block number. The nodes
+	 * of the omap itself do not need this translation.
 	 */
-	if ((*query)->flags & APFS_QUERY_BTOM) {
+	if ((*query)->flags & APFS_QUERY_OMAP) {
 		child_blk = child_id;
 	} else {
 		err = apfs_locate_block(sb, child_id, &child_blk);
@@ -225,7 +225,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		*query = apfs_alloc_query(table, *query);
 	} else {
 		/* Reuse the same query structure to search the child */
-		if ((*query)->table != root && (*query)->table != btom)
+		if ((*query)->table != root && (*query)->table != omap)
 			apfs_release_table((*query)->table);
 		(*query)->table = table;
 		(*query)->index = table->t_records;
@@ -319,13 +319,13 @@ fail:
 }
 
 /**
- * apfs_btom_read_table - Find and read a table from a b-tree
+ * apfs_omap_read_table - Find and read a table from a b-tree
  * @id:		node id for the seeked table
  *
  * Returns NULL is case of failure, otherwise a pointer to the resulting
  * apfs_table structure.
  */
-struct apfs_table *apfs_btom_read_table(struct super_block *sb, u64 id)
+struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id)
 {
 	struct apfs_table *result;
 	u64 block;

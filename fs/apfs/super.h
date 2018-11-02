@@ -269,7 +269,7 @@ struct apfs_sb_info {
 	struct apfs_superblock *s_vsb_raw;		/* On-disk volume sb */
 
 	struct apfs_table *s_cat_root;	/* Root of the catalog tree */
-	struct apfs_table *s_btom_root;	/* Root of the b-tree object map */
+	struct apfs_table *s_omap_root;	/* Root of the object map tree */
 
 	struct apfs_node s_mnode;	/* Node of the main superblock */
 	struct apfs_node s_vnode;	/* Node of the volume checkpoint sb */

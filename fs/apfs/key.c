@@ -148,20 +148,20 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 }
 
 /**
- * apfs_read_btom_key - Parse an on-disk btom key
+ * apfs_read_omap_key - Parse an on-disk object map key
  * @raw:	pointer to the raw key
  * @size:	size of the raw key
  * @key:	apfs_key structure to store the result
  *
  * Returns 0 on success, or a negative error code otherwise.
  */
-int apfs_read_btom_key(void *raw, int size, struct apfs_key *key)
+int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
 {
-	if (size < sizeof(struct apfs_btom_key))
+	if (size < sizeof(struct apfs_omap_key))
 		return -EFSCORRUPTED;
 
 	key->type = 0;
-	key->id = le64_to_cpu(((struct apfs_btom_key *)raw)->block_id);
+	key->id = le64_to_cpu(((struct apfs_omap_key *)raw)->ok_oid);
 	key->name = NULL;
 	key->hash = 0;
 	key->offset = 0;
