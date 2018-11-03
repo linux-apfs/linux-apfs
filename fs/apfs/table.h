@@ -38,11 +38,83 @@ struct apfs_omap_val {
 	__le64 ov_paddr;
 } __packed;
 
+/* B-tree node flags */
+#define APFS_BTNODE_ROOT		0x0001
+#define APFS_BTNODE_LEAF		0x0002
+#define APFS_BTNODE_FIXED_KV_SIZE	0x0004
+#define APFS_BTNODE_CHECK_KOFF_INVAL	0x8000
+
+/* B-tree location constants */
+#define APFS_BTOFF_INVALID		0xffff
+
+/*
+ * Structure storing a location inside a B-tree node
+ */
+struct apfs_nloc {
+	__le16 off;
+	__le16 len;
+} __packed;
+
+/*
+ * Structure storing the location of a key/value pair within a B-tree node
+ */
+struct apfs_kvloc {
+	struct apfs_nloc k;
+	struct apfs_nloc v;
+} __packed;
+
+/*
+ * Structure storing the location of a key/value pair within a B-tree node
+ * having fixed-size key and value (flag APFS_BTNODE_FIXED_KV_SIZE is present)
+ */
+struct apfs_kvoff {
+	__le16 k;
+	__le16 v;
+} __packed;
+
+/*
+ * On-disk representation of a B-tree node
+ */
+struct apfs_btree_node_phys {
+/*00*/	struct apfs_obj_phys btn_o;
+/*20*/	__le16 btn_flags;
+	__le16 btn_level;
+	__le32 btn_nkeys;
+/*28*/	struct apfs_nloc btn_table_space;
+	struct apfs_nloc btn_free_space;
+	struct apfs_nloc btn_key_free_list;
+	struct apfs_nloc btn_val_free_list;
+/*38*/	__le64 btn_data[];
+} __packed;
+
+/*
+ * Structure used to store information about a B-tree that won't change
+ * over time
+ */
+struct apfs_btree_info_fixed {
+	__le32 bt_flags;
+	__le32 bt_node_size;
+	__le32 bt_key_size;
+	__le32 bt_val_size;
+} __packed;
+
+/*
+ * Structure used to store information about a B-tree (located at the end of
+ * a B-tree root node block)
+ */
+struct apfs_btree_info {
+	struct apfs_btree_info_fixed bt_fixed;
+	__le32 bt_longest_key;
+	__le32 bt_longest_val;
+	__le64 bt_key_count;
+	__le64 bt_node_count;
+} __packed;
+
 /*
  * In-memory representation of an APFS table
  */
 struct apfs_table {
-	u16 t_type;		/* Table type */
+	u16 t_flags;		/* Table flags */
 	u16 t_records;		/* Number of records in the table */
 
 	int t_key;		/* Offset of the key area in the block */
@@ -61,7 +133,7 @@ struct apfs_table {
  */
 static inline bool apfs_table_is_leaf(struct apfs_table *table)
 {
-	return (table->t_type & 2) != 0;
+	return (table->t_flags & 2) != 0;
 }
 
 /**
@@ -72,77 +144,8 @@ static inline bool apfs_table_is_leaf(struct apfs_table *table)
  */
 static inline bool apfs_table_is_omap(struct apfs_table *table)
 {
-	return (table->t_type & 4) != 0;
+	return (table->t_flags & 4) != 0;
 }
-
-/*
- * A block storing a table will have the following format, with the 0x28
- * bytes long footer only present for some of the table types.
- *
- *   +--------------+
- *   | node header  |
- *   | table header |
- *   | index        |
- *   | key area     |
- *   | free area    |
- *   | data area    |
- *   | (footer)     |
- *   +--------------+
- *
- */
-struct apfs_table_raw {
-/*00*/	struct apfs_obj_phys t_header;
-
-/*20*/	__le16 t_type;		/* Table type, can be 0 to 7 */
-	__le16 t_level;		/* Level in a b-tree. Level 0 is a leaf node */
-	__le16 t_records;	/* Number of records in the table */
-	__le16 unknown_1;
-/*28*/	__le16 unknown_2;
-	__le16 t_index_size;	/* Size in bytes of the table index */
-	__le16 t_key_size;	/* Size in bytes of the table key area */
-	__le16 t_free_size;	/* Size in bytes of the table free area */
-	/*
-	 * Some "tables" with t_records == 0 hold a __le64 record here,
-	 * but in normal tables this is actually four __le16 values of
-	 * unknown meaning.
-	 */
-/*30*/	union {
-		struct {
-			__le16 unknown_3;
-			__le16 unknown_4;
-			__le16 unknown_5;
-			__le16 unknown_6;
-		};
-		__le64 t_single_rec;
-	};
-	/* What follows is the body of the table, beginning with the index */
-	char t_body[0];
-} __attribute__ ((__packed__));
-
-/*
- * Structure of an index entry for table types 0 to 3. It stores both
- * position and length for the key and the data.
- */
-struct apfs_index_entry_long {
-	/* Offset of the key in the key section */
-	__le16 key_off;
-	__le16 key_len;
-	/* Data offset, counting backwards from the end of the data section */
-	__le16 data_off;
-	__le16 data_len;
-} __attribute__ ((__packed__));
-
-/*
- * For table types 4 to 7, the keys and data are of a fixed length. In that
- * case the index entries will be shorter, as they only need to store the
- * offsets.
- */
-struct apfs_index_entry_short {
-	/* Offset of the key in the key section */
-	__le16 key_off;
-	/* Data offset, counting backwards from the end of the data section */
-	__le16 data_off;
-} __attribute__ ((__packed__));
 
 extern struct apfs_table *apfs_read_table(struct super_block *sb, u64 block);
 extern void apfs_release_table(struct apfs_table *table);

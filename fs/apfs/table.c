@@ -28,15 +28,15 @@ static bool apfs_table_is_valid(struct super_block *sb,
 				struct apfs_table *table)
 {
 	int records = table->t_records;
-	int index_size = table->t_key - sizeof(struct apfs_table_raw);
+	int index_size = table->t_key - sizeof(struct apfs_btree_node_phys);
 	int entry_size;
-	u16 type = table->t_type;
+	u16 flags = table->t_flags;
 
 	if (table->t_key > sb->s_blocksize)
 		return false;
 
-	entry_size = (type & 0x04) ? sizeof(struct apfs_index_entry_short) :
-		     sizeof(struct apfs_index_entry_long);
+	entry_size = (flags & APFS_BTNODE_FIXED_KV_SIZE) ?
+		sizeof(struct apfs_kvoff) : sizeof(struct apfs_kvloc);
 
 	return records * entry_size <= index_size;
 }
@@ -54,7 +54,7 @@ static bool apfs_table_is_valid(struct super_block *sb,
 struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 {
 	struct buffer_head *bh;
-	struct apfs_table_raw *raw;
+	struct apfs_btree_node_phys *raw;
 	struct apfs_table *table;
 
 	bh = sb_bread(sb, block);
@@ -62,20 +62,21 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 		apfs_err(sb, "unable to read table");
 		return NULL;
 	}
-	raw = (struct apfs_table_raw *) bh->b_data;
+	raw = (struct apfs_btree_node_phys *) bh->b_data;
 
 	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table)
 		goto release_bh;
-	table->t_type = le16_to_cpu(raw->t_type);
-	table->t_records = le16_to_cpu(raw->t_records);
-	table->t_key = sizeof(*raw) + le16_to_cpu(raw->t_index_size);
-	table->t_free = table->t_key + le16_to_cpu(raw->t_key_size);
-	table->t_data = table->t_free + le16_to_cpu(raw->t_free_size);
+	table->t_flags = le16_to_cpu(raw->btn_flags);
+	table->t_records = le16_to_cpu(raw->btn_nkeys);
+	table->t_key = sizeof(*raw) + le16_to_cpu(raw->btn_table_space.off)
+				+ le16_to_cpu(raw->btn_table_space.len);
+	table->t_free = table->t_key + le16_to_cpu(raw->btn_free_space.off);
+	table->t_data = table->t_free + le16_to_cpu(raw->btn_free_space.len);
 
 	table->t_node.sb = sb;
 	table->t_node.block_nr = block;
-	table->t_node.node_id = le64_to_cpu(raw->t_header.o_oid);
+	table->t_node.node_id = le64_to_cpu(raw->btn_o.o_oid);
 	table->t_node.bh = bh;
 
 	if (!apfs_table_is_valid(sb, table)) {
@@ -116,31 +117,30 @@ void apfs_release_table(struct apfs_table *table)
 int apfs_table_locate_key(struct apfs_table *table, int index, int *off)
 {
 	struct super_block *sb = table->t_node.sb;
-	struct apfs_table_raw *raw;
-	int type;
+	struct apfs_btree_node_phys *raw;
+	int flags;
 	int len;
 
 	if (index >= table->t_records)
 		return 0;
 
-	raw = (struct apfs_table_raw *)table->t_node.bh->b_data;
-	type = table->t_type;
-	if (type & 0x04) {
-		/* These table types have fixed length keys and data */
-		struct apfs_index_entry_short *entry;
+	raw = (struct apfs_btree_node_phys *)table->t_node.bh->b_data;
+	flags = table->t_flags;
+	if (flags & APFS_BTNODE_FIXED_KV_SIZE) {
+		struct apfs_kvoff *entry;
 
-		entry = (struct apfs_index_entry_short *)raw->t_body + index;
+		entry = (struct apfs_kvoff *)raw->btn_data + index;
 		len = 16;
 		/* Translate offset in key area to offset in block */
-		*off = table->t_key + le16_to_cpu(entry->key_off);
+		*off = table->t_key + le16_to_cpu(entry->k);
 	} else {
 		/* These table types have variable length keys and data */
-		struct apfs_index_entry_long *entry;
+		struct apfs_kvloc *entry;
 
-		entry = (struct apfs_index_entry_long *)raw->t_body + index;
-		len = le16_to_cpu(entry->key_len);
+		entry = (struct apfs_kvloc *)raw->btn_data + index;
+		len = le16_to_cpu(entry->k.len);
 		/* Translate offset in key area to offset in block */
-		*off = table->t_key + le16_to_cpu(entry->key_off);
+		*off = table->t_key + le16_to_cpu(entry->k.off);
 	}
 
 	if (*off + len > sb->s_blocksize) {
@@ -163,45 +163,46 @@ int apfs_table_locate_key(struct apfs_table *table, int index, int *off)
 int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 {
 	struct super_block *sb = table->t_node.sb;
-	struct apfs_table_raw *raw;
-	int type;
+	struct apfs_btree_node_phys *raw;
+	int flags;
 	int len;
 
 	if (index >= table->t_records)
 		return 0;
 
-	raw = (struct apfs_table_raw *)table->t_node.bh->b_data;
-	type = table->t_type;
-	if (type & 0x04) {
+	raw = (struct apfs_btree_node_phys *)table->t_node.bh->b_data;
+	flags = table->t_flags;
+	if (flags & APFS_BTNODE_FIXED_KV_SIZE) {
 		/* These table types have fixed length keys and data */
-		struct apfs_index_entry_short *entry;
+		struct apfs_kvoff *entry;
 
-		entry = (struct apfs_index_entry_short *)raw->t_body + index;
-		len = (type & 0x02) ? 16 : 8; /* Table type decides length */
+		entry = (struct apfs_kvoff *)raw->btn_data + index;
+		/* Node type decides length */
+		len = (flags & APFS_BTNODE_LEAF) ? 16 : 8;
 		/*
 		 * Data offsets are counted backwards from the end of the
 		 * block, or from the beginning of the footer when it exists
 		 */
-		if (type & 0x01) /* has footer */
-			*off = sb->s_blocksize - 0x28 -
-				le16_to_cpu(entry->data_off);
+		if (flags & APFS_BTNODE_ROOT) /* has footer */
+			*off = sb->s_blocksize - sizeof(struct apfs_btree_info)
+					- le16_to_cpu(entry->v);
 		else
-			*off = sb->s_blocksize - le16_to_cpu(entry->data_off);
+			*off = sb->s_blocksize - le16_to_cpu(entry->v);
 	} else {
 		/* These table types have variable length keys and data */
-		struct apfs_index_entry_long *entry;
+		struct apfs_kvloc *entry;
 
-		entry = (struct apfs_index_entry_long *)raw->t_body + index;
-		len = le16_to_cpu(entry->data_len);
+		entry = (struct apfs_kvloc *)raw->btn_data + index;
+		len = le16_to_cpu(entry->v.len);
 		/*
 		 * Data offsets are counted backwards from the end of the
 		 * block, or from the beginning of the footer when it exists
 		 */
-		if (type & 0x01) /* has footer */
-			*off = sb->s_blocksize - 0x28 -
-				le16_to_cpu(entry->data_off);
+		if (flags & APFS_BTNODE_ROOT) /* has footer */
+			*off = sb->s_blocksize - sizeof(struct apfs_btree_info)
+					- le16_to_cpu(entry->v.off);
 		else
-			*off = sb->s_blocksize - le16_to_cpu(entry->data_off);
+			*off = sb->s_blocksize - le16_to_cpu(entry->v.off);
 	}
 
 	if (*off < 0 || *off + len > sb->s_blocksize) {
