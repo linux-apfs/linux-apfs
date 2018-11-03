@@ -28,15 +28,6 @@ struct apfs_omap_key {
 
 #define APFS_ROOT_CNID		2 /* Root directory cnid */
 
-/* Catalog node record types */
-#define APFS_RT_INODE		0x30
-#define APFS_RT_NAMED_ATTR	0x40
-#define APFS_RT_HARDLINK	0x50
-#define APFS_RT_EXTENT_STATUS	0x60 /* Shows the file object has records */
-#define APFS_RT_UNKNOWN		0x70
-#define APFS_RT_EXTENT		0x80
-#define APFS_RT_DENTRY		0x90
-
 /*
  * Structure of the dentry keys in the catalog tables.
  */
@@ -61,6 +52,26 @@ struct apfs_xattr_key {
 	char name[0];
 } __attribute__ ((__packed__));
 
+/* Catalog records types */
+enum {
+	APFS_TYPE_ANY			= 0,
+	APFS_TYPE_SNAP_METADATA		= 1,
+	APFS_TYPE_EXTENT		= 2,
+	APFS_TYPE_INODE			= 3,
+	APFS_TYPE_XATTR			= 4,
+	APFS_TYPE_SIBLING_LINK		= 5,
+	APFS_TYPE_DSTREAM_ID		= 6,
+	APFS_TYPE_CRYPTO_STATE		= 7,
+	APFS_TYPE_FILE_EXTENT		= 8,
+	APFS_TYPE_DIR_REC		= 9,
+	APFS_TYPE_DIR_STATS		= 10,
+	APFS_TYPE_SNAP_NAME		= 11,
+	APFS_TYPE_SIBLING_MAP		= 12,
+	APFS_TYPE_MAX_VALID		= 12,
+	APFS_TYPE_MAX			= 15,
+	APFS_TYPE_INVALID		= 15,
+};
+
 /*
  * Structure of the extent keys in the catalog tables.
  */
@@ -69,12 +80,15 @@ struct apfs_extent_key {
 	__le64 off;	/* Offset of the extent in the file */
 } __attribute__ ((__packed__));
 
-/*
- * Structure of catalog keys that don't include a name (other than extents).
- */
-struct apfs_anon_key {
-	__le64 cnid;	/* Id of the record, with the type in the last 8 bits */
-} __attribute__ ((__packed__));
+/* Bit masks for the 'obj_id_and_type' field of a key header */
+#define APFS_OBJ_ID_MASK		0x0fffffffffffffffULL
+#define APFS_OBJ_TYPE_MASK		0xf000000000000000ULL
+#define APFS_OBJ_TYPE_SHIFT		60
+
+/* Key header for filesystem-object keys */
+struct apfs_key_header {
+	__le64 obj_id_and_type;
+} __packed;
 
 /*
  * In-memory representation of a b-tree key. Many of the fields are unused for
