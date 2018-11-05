@@ -81,10 +81,10 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	 */
 	ret = -EFSCORRUPTED;
 	for (i = 0; i < (length >> parent->i_blkbits) + 2; i++) {
-		struct apfs_cat_extent *ext;
-		struct apfs_extent_key *ext_key;
+		struct apfs_file_extent_val *ext;
+		struct apfs_file_extent_key *ext_key;
 		char *raw;
-		u64 block, block_count, file_off;
+		u64 block, block_count, file_off, ext_len;
 		int err;
 		int j;
 
@@ -114,13 +114,15 @@ static int apfs_xattr_extents_read(struct inode *parent,
 			goto done;
 		}
 		raw = query->table->t_node.bh->b_data;
-		ext = (struct apfs_cat_extent *)(raw + query->off);
-		ext_key = (struct apfs_extent_key *)(raw + query->key_off);
+		ext = (struct apfs_file_extent_val *)(raw + query->off);
+		ext_key = (struct apfs_file_extent_key *)(raw + query->key_off);
 
-		block = le64_to_cpu(ext->block);
-		block_count = (le64_to_cpu(ext->length) + sb->s_blocksize) >>
+		ext_len = le64_to_cpu(ext->len_and_flags) &
+			  APFS_FILE_EXTENT_LEN_MASK;
+		block = le64_to_cpu(ext->phys_block_num);
+		block_count = (ext_len + sb->s_blocksize) >>
 			      sb->s_blocksize_bits;
-		file_off = le64_to_cpu(ext_key->off);
+		file_off = le64_to_cpu(ext_key->logical_addr);
 		for (j = 0; j < block_count; ++j) {
 			struct buffer_head *bh;
 			int bytes;

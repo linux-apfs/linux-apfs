@@ -541,7 +541,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_d_op = &apfs_dentry_operations;
 	sb->s_xattr = apfs_xattr_handlers;
 
-	root = apfs_iget(sb, APFS_ROOT_CNID);
+	root = apfs_iget(sb, APFS_ROOT_DIR_INO_NUM);
 	if (IS_ERR(root)) {
 		apfs_err(sb, "unable to get root inode");
 		goto failed_mount;

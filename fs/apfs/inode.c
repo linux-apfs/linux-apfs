@@ -26,8 +26,8 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
 	struct apfs_query *query;
-	struct apfs_cat_extent *ext;
-	struct apfs_extent_key *ext_key;
+	struct apfs_file_extent_val *ext;
+	struct apfs_file_extent_key *ext_key;
 	char *raw;
 	u64 blk_off, bno, length;
 	int ret = 0;
@@ -58,20 +58,22 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 		goto done;
 	}
 	raw = query->table->t_node.bh->b_data;
-	ext = (struct apfs_cat_extent *)(raw + query->off);
-	ext_key = (struct apfs_extent_key *)(raw + query->key_off);
+	ext = (struct apfs_file_extent_val *)(raw + query->off);
+	ext_key = (struct apfs_file_extent_key *)(raw + query->key_off);
 
 	/* Find the block offset of iblock within the extent */
-	blk_off = iblock - (le64_to_cpu(ext_key->off) >> inode->i_blkbits);
+	blk_off = iblock - (le64_to_cpu(ext_key->logical_addr)
+				>> inode->i_blkbits);
 
 	/* Extents representing holes have block number 0 */
-	if (ext->block != 0) {
+	if (ext->phys_block_num != 0) {
 		/* Find the block number of iblock within the disk */
-		bno = le64_to_cpu(ext->block) + blk_off;
+		bno = le64_to_cpu(ext->phys_block_num) + blk_off;
 		map_bh(bh_result, sb, bno);
 	}
 
-	length = le64_to_cpu(ext->length) - (blk_off << inode->i_blkbits);
+	length = (le64_to_cpu(ext->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK)
+			- (blk_off << inode->i_blkbits);
 	/* I think b_size needs to be a multiple of the block size */
 	length = round_up(length, sb->s_blocksize);
 	if (length > bh_result->b_size) /* Don't map more than requested */
@@ -121,13 +123,15 @@ const struct address_space_operations apfs_aops = {
  * On success, the caller must release @table after using the data, unless it's
  * the root table of the catalog.
  */
-static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
-					 struct apfs_table **table,
-					 struct apfs_inode_size **isize)
+static struct apfs_inode_val *apfs_get_inode(struct super_block *sb, u64 cnid,
+					     struct apfs_table **table,
+					     struct apfs_dstream **dstream)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
-	struct apfs_inode *raw;
+	struct apfs_inode_val *raw;
+	struct apfs_xf_blob *xblob;
+	struct apfs_x_field *xfield;
 	int len, rest;
 	int i;
 
@@ -144,7 +148,7 @@ static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 		return NULL;
 
 	/* Now we must parse the optional attrs to find the one for the size */
-	*isize = NULL;
+	*dstream = NULL;
 	if (sizeof(*raw) > len) {
 		/*
 		 * Sanity check: prevent out of bounds read of i_attr_count
@@ -152,23 +156,23 @@ static struct apfs_inode *apfs_get_inode(struct super_block *sb, u64 cnid,
 		 */
 		goto fail;
 	}
-	rest = len - sizeof(*raw);
-	rest -= le16_to_cpu(raw->i_attr_count) * sizeof(raw->i_opt_attrs[0]);
+	xblob = (struct apfs_xf_blob *) raw->xfields;
+	xfield = (struct apfs_x_field *) xblob->xf_data;
+	rest = len - (sizeof(*raw) + sizeof(*xblob));
+	rest -= le16_to_cpu(xblob->xf_num_exts) * sizeof(xfield[0]);
 	if (rest < 0)
 		goto fail;
-	for (i = 0; i < le16_to_cpu(raw->i_attr_count); ++i) {
+	for (i = 0; i < le16_to_cpu(xblob->xf_num_exts); ++i) {
 		int attrlen;
-		int attrtype;
 
 		/* Attribute length is padded to a multiple of 8 */
-		attrlen = round_up(le16_to_cpu(raw->i_opt_attrs[i].ia_len), 8);
+		attrlen = round_up(le16_to_cpu(xfield[i].x_size), 8);
 		if (attrlen > rest)
 			break;
-		attrtype = le16_to_cpu(raw->i_opt_attrs[i].ia_type);
-		if (attrtype == APFS_INODE_SIZE) {
+		if (xfield[i].x_type == APFS_INO_EXT_TYPE_DSTREAM) {
 			/* The only optional attr we care about, for now */
-			*isize = (struct apfs_inode_size *)((char *)raw +
-							    len - rest);
+			*dstream = (struct apfs_dstream *)((char *)raw +
+							   len - rest);
 			break;
 		}
 		rest -= attrlen;
@@ -202,8 +206,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode, *err;
 	struct apfs_inode_info *ai;
-	struct apfs_inode *raw_inode;
-	struct apfs_inode_size *raw_isize;
+	struct apfs_inode_val *raw_inode;
+	struct apfs_dstream *raw_isize;
 	struct apfs_table *table;
 	unsigned long ino = cnid;
 	u64 secs;
@@ -225,16 +229,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		goto failed_get;
 	}
 
-	inode->i_mode = le16_to_cpu(raw_inode->i_mode);
+	inode->i_mode = le16_to_cpu(raw_inode->mode);
 	/* Allow the user to override the ownership */
 	if (sbi->s_flags & APFS_UID_OVERRIDE)
 		inode->i_uid = sbi->s_uid;
 	else
-		i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->i_owner));
+		i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->owner));
 	if (sbi->s_flags & APFS_GID_OVERRIDE)
 		inode->i_gid = sbi->s_gid;
 	else
-		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->i_group));
+		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->group));
 
 	if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
 		/*
@@ -245,8 +249,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		 * it we would have to actually count the subdirectories. The
 		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
 		 */
-		set_nlink(inode, le64_to_cpu(raw_inode->i_link_count));
-		if (inode->i_nlink < le64_to_cpu(raw_inode->i_link_count)) {
+		set_nlink(inode, le64_to_cpu(raw_inode->nlink));
+		if (inode->i_nlink < le64_to_cpu(raw_inode->nlink)) {
 			apfs_warn(sb, "hardlink count overflow in inode 0x%llx",
 				  cnid);
 			err = ERR_PTR(-EOVERFLOW);
@@ -254,8 +258,8 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		}
 	}
 	if (raw_isize) {
-		inode->i_size = le64_to_cpu(raw_isize->i_size);
-		inode->i_blocks = le64_to_cpu(raw_isize->i_phys_size)
+		inode->i_size = le64_to_cpu(raw_isize->size);
+		inode->i_blocks = le64_to_cpu(raw_isize->alloced_size)
 							>> inode->i_blkbits;
 	} else {
 		/*
@@ -267,16 +271,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	}
 
 	/* APFS stores the time as unsigned nanoseconds since the epoch */
-	secs = le64_to_cpu(raw_inode->i_atime);
+	secs = le64_to_cpu(raw_inode->access_time);
 	inode->i_atime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_atime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->i_ctime);
+	secs = le64_to_cpu(raw_inode->change_time);
 	inode->i_ctime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_ctime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->i_mtime);
+	secs = le64_to_cpu(raw_inode->mod_time);
 	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	inode->i_mtime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->i_crtime);
+	secs = le64_to_cpu(raw_inode->create_time);
 	ai->i_crtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
 	ai->i_crtime.tv_sec = secs;
 

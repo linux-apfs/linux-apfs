@@ -26,8 +26,6 @@ struct apfs_omap_key {
  */
 #define APFS_NAME_LEN		254
 
-#define APFS_ROOT_CNID		2 /* Root directory cnid */
-
 /*
  * Structure of the dentry keys in the catalog tables.
  */
@@ -72,14 +70,6 @@ enum {
 	APFS_TYPE_INVALID		= 15,
 };
 
-/*
- * Structure of the extent keys in the catalog tables.
- */
-struct apfs_extent_key {
-	__le64 cnid;	/* Inode number, with 0x80 in the last byte */
-	__le64 off;	/* Offset of the extent in the file */
-} __attribute__ ((__packed__));
-
 /* Bit masks for the 'obj_id_and_type' field of a key header */
 #define APFS_OBJ_ID_MASK		0x0fffffffffffffffULL
 #define APFS_OBJ_TYPE_MASK		0xf000000000000000ULL
@@ -88,6 +78,28 @@ struct apfs_extent_key {
 /* Key header for filesystem-object keys */
 struct apfs_key_header {
 	__le64 obj_id_and_type;
+} __packed;
+
+/*
+ * Structure of the key for an inode record
+ */
+struct apfs_inode_key {
+	struct apfs_key_header hdr;
+} __packed;
+
+/*
+ * Structure of the key for a file extent record
+ */
+struct apfs_file_extent_key {
+	struct apfs_key_header hdr;
+	__le64 logical_addr;
+} __packed;
+
+/*
+ * Structure of the key for a data stream record
+ */
+struct apfs_dstream_id_key {
+	struct apfs_key_header hdr;
 } __packed;
 
 /*

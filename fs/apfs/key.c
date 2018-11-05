@@ -132,11 +132,12 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 		key->offset = 0;
 		break;
 	case APFS_TYPE_FILE_EXTENT:
-		if (size != sizeof(struct apfs_extent_key))
+		if (size != sizeof(struct apfs_file_extent_key))
 			return -EFSCORRUPTED;
 		key->hash = 0;
 		key->name = NULL;
-		key->offset = le64_to_cpu(((struct apfs_extent_key *)raw)->off);
+		key->offset = le64_to_cpu(
+			((struct apfs_file_extent_key *)raw)->logical_addr);
 		break;
 	default:
 		key->hash = 0;

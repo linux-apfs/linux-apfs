@@ -11,6 +11,97 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 
+/* Inode numbers for special inodes */
+#define APFS_INVALID_INO_NUM		0
+
+#define APFS_ROOT_DIR_PARENT		1	/* Root directory parent */
+#define APFS_ROOT_DIR_INO_NUM		2	/* Root directory */
+#define APFS_PRIV_DIR_INO_NUM		3	/* Private directory */
+#define APFS_SNAP_DIR_INO_NUM		6	/* Snapshots metadata */
+
+/* Smallest inode number available for user content */
+#define APFS_MIN_USER_INO_NUM		16
+
+/*
+ * Structure of an inode as stored as a B-tree value
+ */
+struct apfs_inode_val {
+/*00*/	__le64 parent_id;
+	__le64 private_id;
+/*10*/	__le64 create_time;
+	__le64 mod_time;
+	__le64 change_time;
+	__le64 access_time;
+/*30*/	__le64 internal_flags;
+	union {
+		__le32 nchildren;
+		__le32 nlink;
+	};
+	__le32 default_protection_class;
+/*40*/	__le32 write_generation_counter;
+	__le32 bsd_flags;
+	__le32 owner;
+	__le32 group;
+/*50*/	__le16 mode;
+	__le16 pad1;
+	__le64 pad2;
+/*5C*/	u8 xfields[];
+} __packed;
+
+/* Extended field types */
+#define APFS_DREC_EXT_TYPE_SIBLING_ID 1
+
+#define APFS_INO_EXT_TYPE_SNAP_XID 1
+#define APFS_INO_EXT_TYPE_DELTA_TREE_OID 2
+#define APFS_INO_EXT_TYPE_DOCUMENT_ID 3
+#define APFS_INO_EXT_TYPE_NAME 4
+#define APFS_INO_EXT_TYPE_PREV_FSIZE 5
+#define APFS_INO_EXT_TYPE_RESERVED_6 6
+#define APFS_INO_EXT_TYPE_FINDER_INFO 7
+#define APFS_INO_EXT_TYPE_DSTREAM 8
+#define APFS_INO_EXT_TYPE_RESERVED_9 9
+#define APFS_INO_EXT_TYPE_DIR_STATS_KEY 10
+#define APFS_INO_EXT_TYPE_FS_UUID 11
+#define APFS_INO_EXT_TYPE_RESERVED_12 12
+#define APFS_INO_EXT_TYPE_SPARSE_BYTES 13
+#define APFS_INO_EXT_TYPE_RDEV 14
+
+/*
+ * Structure used to store the number and size of extended fields of an inode
+ */
+struct apfs_xf_blob {
+	__le16 xf_num_exts;
+	__le16 xf_used_data;
+	u8 xf_data[];
+} __packed;
+
+/*
+ * Structure used to store an inode's extended field
+ */
+struct apfs_x_field {
+	u8 x_type;
+	u8 x_flags;
+	__le16 x_size;
+} __packed;
+
+/*
+ * Structure of a data stream record
+ */
+struct apfs_dstream_id_val {
+	__le32 refcnt;
+} __packed;
+
+/*
+ * Structure used to store information about a data stream
+ */
+struct apfs_dstream {
+	__le64 size;
+	__le64 alloced_size;
+	__le64 default_crypto_id;
+	__le64 total_bytes_written;
+	__le64 total_bytes_read;
+} __packed;
+
 /*
  * APFS inode data in memory
  */
@@ -24,57 +115,6 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 {
 	return container_of(inode, struct apfs_inode_info, vfs_inode);
 }
-
-/* Optional attribute types observed so far */
-#define APFS_INODE_NAME	0x0204
-#define APFS_INODE_SIZE	0x2008
-#define APFS_INODE_UNK1	0x280D
-#define APFS_INODE_UNK2	0x0005
-
-/*
- * Structure of an on-disk inode. This is the data in the catalog tables
- * for record type APFS_RT_INODE.
- */
-struct apfs_inode {
-	__le64 i_parent;	/* Parent ID */
-	__le64 i_node;		/* Node ID */
-	__le64 i_crtime;	/* File creation time */
-	__le64 i_mtime;		/* Last write time */
-	__le64 i_ctime;		/* Last inode change time */
-	__le64 i_atime;		/* Last access time */
-	__le64 unknown_1;
-	union {
-		__le64 i_child_count;	/* Children inodes of a directory */
-		__le64 i_link_count;	/* Hard links to a regular file */
-		char unknown_5[8];	/* Something else for special files */
-	};
-	__le64 unknown_2;
-	__le32 i_owner;		/* ID of the owner */
-	__le32 i_group;		/* ID of the group */
-	__le16 i_mode;
-	char unknown_3[6];	/* Flags of some kind? */
-	__le32 unknown_4;
-
-	/*
-	 * The inode is followed by a variable number of optional attributes.
-	 * Their type and length are declared here.
-	 */
-	__le16 i_attr_count;	/* Number of the attributes */
-	__le16 i_attr_len;	/* Length of the attributes */
-	struct {
-		__le16 ia_type;	/* Attr type */
-		__le16 ia_len;	/* Attr length (not counting padding) */
-	} i_opt_attrs[0];
-} __attribute__ ((__packed__));
-
-/*
- * Optional attribute of type APFS_INODE_SIZE, storing the size of the inode
- */
-struct apfs_inode_size {
-	__le64 i_size;		/* Logical file size */
-	__le64 i_phys_size;	/* Physical file size */
-	char unknown[24];	/* Or is it 8 bytes? */
-} __attribute__ ((__packed__));
 
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
 extern int apfs_getattr(const struct path *path, struct kstat *stat,
