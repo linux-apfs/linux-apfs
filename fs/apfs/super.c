@@ -343,8 +343,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct apfs_omap_phys *msb_omap_raw, *vol_omap_raw;
 	struct apfs_superblock *vsb_raw;
 	struct apfs_table *vtable;
-	struct apfs_query *query;
-	struct apfs_key *key;
 	struct apfs_table *vol_omap_table = NULL, *root_table = NULL;
 	struct inode *root;
 	u64 vol_id, root_id;
@@ -444,37 +442,21 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
 	msb_omap_raw = NULL;
 	brelse(bh2);
+
+	/*
+	 * The vtable is a one-time use object.  So we let it be
+	 * released indirectly alongside the query inside
+	 * apfs_omap_lookup_block. Eventually we want to make the kfree
+	 * explicit here for code clarity, but it is hard to do it now.
+	 */
 	vtable = apfs_read_table(sb, vb);
 	if (!vtable) {
 		apfs_err(sb, "unable to read volume block");
 		goto failed_vol;
 	}
 
-	/* Get the Volume Superblock with id == vol_id */
-	query = apfs_alloc_query(vtable, NULL /* parent */);
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!query || !key) {
-		/* TODO: I really need to break up apfs_fill_super()... */
-		kfree(key);
-		kfree(query);
-		apfs_release_table(vtable);
-		err = -ENOMEM;
-		goto failed_vol;
-	}
-	apfs_init_key(0 /* type */, vol_id, NULL /* name */, 0 /* namelen */,
-		      0 /* offset */, key);
-	query->key = key;
-	query->flags |= APFS_QUERY_OMAP | APFS_QUERY_EXACT;
-	err = apfs_table_query(sb, query);
-	if (!err && query->len >= sizeof(struct apfs_omap_val)) {
-		struct apfs_omap_val *omap_value = (struct apfs_omap_val *)
-				(vtable->t_node.bh->b_data + query->off);
-		vsb = le64_to_cpu(omap_value->ov_paddr);
-	}
-	kfree(key);
-	kfree(query);
-	apfs_release_table(vtable);
-	if (vsb == 0) {
+	err = apfs_omap_lookup_block(sb, vtable, vol_id, &vsb);
+	if (err) {
 		apfs_err(sb, "volume not found, likely corruption");
 		goto failed_vol;
 	}

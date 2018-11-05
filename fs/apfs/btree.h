@@ -50,5 +50,7 @@ extern void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 extern int apfs_cat_resolve(struct super_block *sb, struct apfs_key *key,
 			    u64 *ino);
 extern struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id);
+extern int apfs_omap_lookup_block(struct super_block *sb,
+				  struct apfs_table *tbl, u64 id, u64 *block);
 
 #endif	/* _APFS_BTREE_H */

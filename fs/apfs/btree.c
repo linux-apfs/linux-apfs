@@ -16,23 +16,24 @@
 #include "table.h"
 
 /**
- * apfs_locate_block - Find the block number of a b-tree node from its id
+ * apfs_omap_lookup_block - Find the block number of a b-tree node from its id
  * @sb:		filesystem superblock
+ * @tbl:	Root of the object map to be searched
  * @id:		id of the node
  * @block:	on return, the found block number
  *
  * Returns 0 on success or a negative error code in case of failure.
  */
-static int apfs_locate_block(struct super_block *sb, u64 id, u64 *block)
+int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
+			   u64 id, u64 *block)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
 	struct apfs_key *key;
 	struct apfs_omap_val *data;
 	char *raw;
 	int ret = 0;
 
-	query = apfs_alloc_query(sbi->s_omap_root, NULL /* parent */);
+	query = apfs_alloc_query(tbl, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
 
@@ -208,7 +209,12 @@ next_node:
 	if ((*query)->flags & APFS_QUERY_OMAP) {
 		child_blk = child_id;
 	} else {
-		err = apfs_locate_block(sb, child_id, &child_blk);
+		/*
+		 * we are always performing lookup from omap root. Might
+		 * need improvement in the future.
+		 */
+		err = apfs_omap_lookup_block(sb, sbi->s_omap_root,
+					     child_id, &child_blk);
 		if (err)
 			return err;
 	}
@@ -326,10 +332,11 @@ out:
  */
 struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id)
 {
+	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_table *result;
 	u64 block;
 
-	if (apfs_locate_block(sb, id, &block))
+	if (apfs_omap_lookup_block(sb, sbi->s_omap_root, id, &block))
 		return NULL;
 
 	result = apfs_read_table(sb, block);
