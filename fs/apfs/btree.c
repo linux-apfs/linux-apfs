@@ -158,10 +158,11 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	struct apfs_table *omap = sbi->s_omap_root;
 	struct apfs_table *table;
 	struct apfs_query *parent;
-	char *raw = (*query)->table->t_node.bh->b_data;
+	char *raw;
 	u64 child_id, child_blk;
 	int err;
 
+next_node:
 	if ((*query)->depth >= 12) {
 		/*
 		 * We need a maximum depth for the tree so we can't loop
@@ -183,7 +184,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		apfs_free_query(sb, *query);
 		*query = parent;
 		/* TODO: a crafted fs could have us spinning for too long */
-		return apfs_btree_query(sb, query);
+		goto next_node;
 	}
 	if (err)
 		return err;
@@ -196,6 +197,8 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 			   (*query)->table->t_node.block_nr);
 		return -EFSCORRUPTED;
 	}
+
+	raw = (*query)->table->t_node.bh->b_data;
 	child_id = le64_to_cpup((__le64 *)(raw + (*query)->off));
 
 	/*
@@ -231,8 +234,7 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 		(*query)->index = table->t_records;
 		(*query)->depth++;
 	}
-
-	return apfs_btree_query(sb, query);
+	goto next_node;
 }
 
 /**
