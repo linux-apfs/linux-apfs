@@ -9,6 +9,7 @@
 #define _APFS_TABLE_H
 
 #include <linux/fs.h>
+#include <linux/kref.h>
 #include <linux/types.h>
 #include "apfs.h"
 #include "btree.h"
@@ -122,6 +123,8 @@ struct apfs_table {
 	int t_data;		/* Offset of the data area in the block */
 
 	struct apfs_node t_node;/* Node holding the table */
+
+	struct kref refcount;
 };
 
 /**
@@ -148,11 +151,12 @@ static inline bool apfs_table_is_omap(struct apfs_table *table)
 }
 
 extern struct apfs_table *apfs_read_table(struct super_block *sb, u64 block);
-extern void apfs_release_table(struct apfs_table *table);
 extern int apfs_table_locate_key(struct apfs_table *table,
 				 int index, int *off);
 extern int apfs_table_locate_data(struct apfs_table *table,
 				  int index, int *off);
 extern int apfs_table_query(struct super_block *sb, struct apfs_query *query);
 
+void apfs_table_get(struct apfs_table *table);
+void apfs_table_put(struct apfs_table *table);
 #endif	/* _APFS_TABLE_H */

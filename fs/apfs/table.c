@@ -41,13 +41,32 @@ static bool apfs_table_is_valid(struct super_block *sb,
 	return records * entry_size <= index_size;
 }
 
+static void apfs_table_release(struct kref *kref)
+{
+	struct apfs_table *table =
+		container_of(kref, struct apfs_table, refcount);
+
+	brelse(table->t_node.bh);
+	kfree(table);
+}
+
+void apfs_table_get(struct apfs_table *table)
+{
+	kref_get(&table->refcount);
+}
+
+void apfs_table_put(struct apfs_table *table)
+{
+	kref_put(&table->refcount, apfs_table_release);
+}
+
 /**
  * apfs_read_table - Read a table header from disk
  * @sb:		filesystem superblock
  * @block:	number of the block where the table is stored
  *
  * Returns NULL in case of failure, otherwise a pointer to the resulting
- * apfs_table structure.
+ * apfs_table structure with the initial reference taken.
  *
  * For now we assume the table has not been read before.
  */
@@ -65,8 +84,11 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 	raw = (struct apfs_btree_node_phys *) bh->b_data;
 
 	table = kmalloc(sizeof(*table), GFP_KERNEL);
-	if (!table)
-		goto release_bh;
+	if (!table) {
+		brelse(bh);
+		return NULL;
+	}
+
 	table->t_flags = le16_to_cpu(raw->btn_flags);
 	table->t_records = le16_to_cpu(raw->btn_nkeys);
 	table->t_key = sizeof(*raw) + le16_to_cpu(raw->btn_table_space.off)
@@ -79,29 +101,15 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 	table->t_node.node_id = le64_to_cpu(raw->btn_o.o_oid);
 	table->t_node.bh = bh;
 
+	kref_init(&table->refcount);
+
 	if (!apfs_table_is_valid(sb, table)) {
-		kfree(table);
 		apfs_alert(sb, "bad table in block 0x%llx", block);
-		table = NULL;
-		goto release_bh;
+		apfs_table_put(table);
+		return NULL;
 	}
-	return table;
 
-release_bh:
-	brelse(bh);
 	return table;
-}
-
-/**
- * apfs_release_table - Release a table structure
- * @table: table to release. If NULL, do nothing.
- */
-void apfs_release_table(struct apfs_table *table)
-{
-	if (!table)
-		return;
-	brelse(table->t_node.bh);
-	kfree(table);
 }
 
 /**

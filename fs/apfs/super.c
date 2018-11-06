@@ -29,8 +29,8 @@ static void apfs_put_super(struct super_block *sb)
 
 	sb->s_fs_info = NULL;
 
-	apfs_release_table(sbi->s_cat_root);
-	apfs_release_table(sbi->s_omap_root);
+	apfs_table_put(sbi->s_cat_root);
+	apfs_table_put(sbi->s_omap_root);
 
 	brelse(sbi->s_mnode.bh);
 	brelse(sbi->s_vnode.bh);
@@ -195,7 +195,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	}
 
 cleanup:
-	apfs_release_table(vtable);
+	apfs_table_put(vtable);
 	return err;
 }
 
@@ -443,12 +443,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	msb_omap_raw = NULL;
 	brelse(bh2);
 
-	/*
-	 * The vtable is a one-time use object.  So we let it be
-	 * released indirectly alongside the query inside
-	 * apfs_omap_lookup_block. Eventually we want to make the kfree
-	 * explicit here for code clarity, but it is hard to do it now.
-	 */
 	vtable = apfs_read_table(sb, vb);
 	if (!vtable) {
 		apfs_err(sb, "unable to read volume block");
@@ -460,6 +454,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		apfs_err(sb, "volume not found, likely corruption");
 		goto failed_vol;
 	}
+	apfs_table_put(vtable);
 
 	err = -EINVAL;
 	bh2 = sb_bread(sb, vsb);
@@ -536,9 +531,9 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 failed_mount:
-	apfs_release_table(root_table);
+	apfs_table_put(root_table);
 failed_root:
-	apfs_release_table(vol_omap_table);
+	apfs_table_put(vol_omap_table);
 failed_cat:
 	brelse(bh2);
 failed_vol:

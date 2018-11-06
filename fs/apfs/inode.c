@@ -119,15 +119,11 @@ const struct address_space_operations apfs_aops = {
  *
  * Returns a pointer to the data, or NULL in case of failure. TODO: use more
  * descriptive error pointers.
- *
- * On success, the caller must release @table after using the data, unless it's
- * the root table of the catalog.
  */
 static struct apfs_inode_val *apfs_get_inode(struct super_block *sb, u64 cnid,
 					     struct apfs_table **table,
 					     struct apfs_dstream **dstream)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
 	struct apfs_inode_val *raw;
 	struct apfs_xf_blob *xblob;
@@ -181,8 +177,7 @@ static struct apfs_inode_val *apfs_get_inode(struct super_block *sb, u64 cnid,
 	return raw;
 
 fail:
-	if (*table != sbi->s_cat_root)
-		apfs_release_table(*table);
+	apfs_table_put(*table);
 	return NULL;
 }
 
@@ -298,15 +293,13 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		inode->i_op = &apfs_special_inode_operations;
 	}
 
-	if (table != sbi->s_cat_root) /* Never release the root table */
-		apfs_release_table(table);
+	apfs_table_put(table);
 	/* Inode flags are not important for now, leave them at 0 */
 	unlock_new_inode(inode);
 	return inode;
 
 failed_read:
-	if (table != sbi->s_cat_root)
-		apfs_release_table(table);
+	apfs_table_put(table);
 failed_get:
 	iget_failed(inode);
 	return err;

@@ -99,6 +99,8 @@ struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 	if (!curr)
 		goto fail;
 
+	/* To be released by free_query. */
+	apfs_table_get(table);
 	query->table = table;
 	query->key = parent ? parent->key : NULL;
 	query->curr = curr;
@@ -126,13 +128,9 @@ fail:
  */
 void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *root = sbi->s_cat_root;
-	struct apfs_table *omap = sbi->s_omap_root;
-
 	kfree(query->curr);
-	if (query->table != root && query->table != omap)
-		apfs_release_table(query->table);
+	apfs_table_put(query->table);
+
 	if (query->parent)
 		apfs_free_query(sb, query->parent);
 	kfree(query);
@@ -155,8 +153,6 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *root = sbi->s_cat_root;
-	struct apfs_table *omap = sbi->s_omap_root;
 	struct apfs_table *table;
 	struct apfs_query *parent;
 	char *raw;
@@ -232,10 +228,10 @@ next_node:
 		 * the parent table and index to continue the search later.
 		 */
 		*query = apfs_alloc_query(table, *query);
+		apfs_table_put(table);
 	} else {
 		/* Reuse the same query structure to search the child */
-		if ((*query)->table != root && (*query)->table != omap)
-			apfs_release_table((*query)->table);
+		apfs_table_put((*query)->table);
 		(*query)->table = table;
 		(*query)->index = table->t_records;
 		(*query)->depth++;
@@ -252,10 +248,6 @@ next_node:
  *
  * Returns a pointer to the data, which will consist of @len bytes; or NULL
  * in case of failure.
- *
- * The caller must release @table (unless it's NULL) after using the data. The
- * exception is the root table, that should never be released. This is messy;
- * I have to rework it.
  */
 void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 			int *length, struct apfs_table **table)
@@ -273,11 +265,11 @@ void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
 	if (apfs_btree_query(sb, &query))
 		goto fail;
 
+	/* table is going to be passed to upper layer. */
+	apfs_table_get(query->table);
 	*table = query->table;
 	*length = query->len;
 	data = query->table->t_node.bh->b_data + query->off;
-
-	query->table = NULL; /* apfs_free_query() must not release the table */
 
 fail:
 	apfs_free_query(sb, query);
