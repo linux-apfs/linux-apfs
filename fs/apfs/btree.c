@@ -282,35 +282,39 @@ fail:
  * apfs_cat_resolve - Resolve a catalog key into an inode number
  * @sb:		filesystem superblock
  * @key:	catalog key (for a key record)
+ * @ino:	on return, the inode number found
  *
- * Returns the inode number (cnid of the file record), or 0 in case of
- * failure.
+ * Returns 0 and the inode number on success; Otherwise, return the
+ * appropriate error code.
  */
-u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
+int apfs_cat_resolve(struct super_block *sb, struct apfs_key *key, u64 *ino)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
 	struct apfs_drec_val *data;
 	char *raw;
-	u64 cnid = 0;
+	int err = 0;
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
-		return 0;
+		return -ENOMEM;
 	query->key = key;
 	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
-	if (apfs_btree_query(sb, &query))
-		goto fail;
+	err = apfs_btree_query(sb, &query);
+	if (err)
+		goto out;
 
 	raw = query->table->t_node.bh->b_data + query->off;
 	data = (struct apfs_drec_val *)raw;
 	if (query->len >= sizeof(*data))
-		cnid = le64_to_cpu(data->file_id);
+		*ino = le64_to_cpu(data->file_id);
+	else
+		err = -EFSCORRUPTED;
 
-fail:
+out:
 	apfs_free_query(sb, query);
-	return cnid;
+	return err;
 }
 
 /**

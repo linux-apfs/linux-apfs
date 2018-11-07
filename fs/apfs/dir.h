@@ -22,7 +22,8 @@ struct apfs_drec_val {
 	u8 xfields[];
 } __packed;
 
-extern u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child);
+extern int apfs_inode_by_name(struct inode *dir, const struct qstr *child,
+			      u64 *ino);
 
 extern const struct file_operations apfs_dir_operations;
 

@@ -16,14 +16,22 @@ static struct dentry *apfs_lookup(struct inode *dir, struct dentry *dentry,
 				  unsigned int flags)
 {
 	struct inode *inode = NULL;
-	u64 ino;
+	u64 ino = 0;
+	int err;
 
 	if (dentry->d_name.len > APFS_NAME_LEN)
 		return ERR_PTR(-ENAMETOOLONG);
 
-	ino = apfs_inode_by_name(dir, &dentry->d_name);
-	if (ino)
+	err = apfs_inode_by_name(dir, &dentry->d_name, &ino);
+	if (err && err != -ENODATA)
+		return ERR_PTR(err);
+
+	if (!err) {
 		inode = apfs_iget(dir->i_sb, ino);
+		if (IS_ERR(inode))
+			return ERR_CAST(inode);
+	}
+
 	return d_splice_alias(inode, dentry);
 }
 

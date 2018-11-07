@@ -19,27 +19,29 @@
  * apfs_inode_by_name - Find the cnid for a given filename
  * @dir:	parent directory
  * @child:	filename
+ * @ino:	on return, the inode number found
  *
- * Returns the inode number (which is the cnid of the file record), or 0 in
- * case of failure.
+ * Returns 0 and the inode number (which is the cnid of the file
+ * record); otherwise, return the appropriate error code.
  */
-u64 apfs_inode_by_name(struct inode *dir, const struct qstr *child)
+int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
 {
 	struct apfs_key *key;
 	u64 cnid = dir->i_ino;
-	u64 result = 0;
+	int err;
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
-		return 0;
+		return -ENOMEM;
 
 	/* We are looking for a key record */
 	apfs_init_key(APFS_TYPE_DIR_REC, cnid, child->name,
 		      child->len, 0 /* offset */, key);
-	result = apfs_cat_resolve(dir->i_sb, key);
+
+	err = apfs_cat_resolve(dir->i_sb, key, ino);
 
 	kfree(key);
-	return result;
+	return err;
 }
 
 static int apfs_readdir(struct file *file, struct dir_context *ctx)
