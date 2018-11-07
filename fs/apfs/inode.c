@@ -322,7 +322,7 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 	stat->btime.tv_sec = ai->i_crtime.tv_sec;
 	stat->btime.tv_nsec = ai->i_crtime.tv_nsec;
 
-	if (apfs_xattr_get(inode, "com.apple.decmpfs", NULL, 0) >= 0)
+	if (apfs_xattr_get(inode, APFS_XATTR_NAME_COMPRESSED, NULL, 0) >= 0)
 		stat->attributes |= STATX_ATTR_COMPRESSED;
 
 	stat->attributes_mask |= STATX_ATTR_COMPRESSED;

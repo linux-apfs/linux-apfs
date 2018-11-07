@@ -29,26 +29,27 @@
  * of failure.
  */
 static int apfs_xattr_extents_read(struct inode *parent,
-				   struct apfs_xattr_ext *xattr,
+				   struct apfs_xattr_val *xattr,
 				   void *buffer, size_t size)
 {
 	struct super_block *sb = parent->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key = NULL;
 	struct apfs_query *query;
+	struct apfs_xattr_dstream *xdata;
 	int length;
 	int ret;
 	int i;
 
-	if (le16_to_cpu(xattr->header.len) + sizeof(xattr->header) !=
-							sizeof(*xattr)) {
+	if (le16_to_cpu(xattr->xdata_len) != sizeof(*xdata)) {
 		apfs_alert(sb, "bad extent-based xattr record for inode 0x%llx",
 			   (unsigned long long) parent->i_ino);
 		return -EFSCORRUPTED;
 	}
 
-	length = le64_to_cpu(xattr->size);
-	if (length < 0 || length < le64_to_cpu(xattr->size)) {
+	xdata = (struct apfs_xattr_dstream *) xattr->xdata;
+	length = le64_to_cpu(xdata->dstream.size);
+	if (length < 0 || length < le64_to_cpu(xdata->dstream.size)) {
 		apfs_warn(sb, "too large xattr in inode 0x%llx",
 			  (unsigned long long) parent->i_ino);
 		return -EOVERFLOW;
@@ -63,8 +64,8 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	if (!key)
 		return -ENOMEM;
 	/* We will read all the extents, starting with the last one */
-	apfs_init_key(APFS_TYPE_FILE_EXTENT, xattr->cnid, NULL /* name */,
-		      0 /* namelen */, length, key);
+	apfs_init_key(APFS_TYPE_FILE_EXTENT, xdata->xattr_obj_id,
+		      NULL /* name */, 0 /* namelen */, length, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
@@ -165,16 +166,16 @@ fail:
  * of failure.
  */
 static int apfs_xattr_inline_read(struct inode *parent,
-				  struct apfs_xattr_inline *xattr,
+				  struct apfs_xattr_val *xattr,
 				  void *buffer, size_t size)
 {
-	int length = le16_to_cpu(xattr->header.len);
+	int length = le16_to_cpu(xattr->xdata_len);
 
 	if (!buffer) /* All we want is the length */
 		return length;
 	if (length > size) /* xattr won't fit in the buffer */
 		return -ERANGE;
-	memcpy(buffer, xattr->value, length);
+	memcpy(buffer, xattr->xdata, length);
 	return length;
 }
 
@@ -198,7 +199,7 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
 	struct apfs_query *query;
-	struct apfs_xattr_header *header;
+	struct apfs_xattr_val *xattr;
 	char *raw;
 	u64 cnid = inode->i_ino;
 	int ret;
@@ -222,22 +223,18 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 		goto done;
 
 	raw = query->table->t_node.bh->b_data;
-	header = (struct apfs_xattr_header *)(raw + query->off);
-	if (query->len < sizeof(*header) ||
-	    sizeof(*header) + le16_to_cpu(header->len) != query->len) {
+	xattr = (struct apfs_xattr_val *)(raw + query->off);
+	if (query->len < sizeof(*xattr) ||
+	    sizeof(*xattr) + le16_to_cpu(xattr->xdata_len) != query->len) {
 		apfs_alert(sb, "bad xattr record in inode 0x%llx", cnid);
 		ret = -EFSCORRUPTED;
 		goto done;
 	}
 
-	if (le16_to_cpu(header->flags) & APFS_XATTR_HAS_EXTENTS)
-		ret = apfs_xattr_extents_read(inode,
-					      (struct apfs_xattr_ext *)header,
-					      buffer, size);
+	if (le16_to_cpu(xattr->flags) & APFS_XATTR_DATA_STREAM)
+		ret = apfs_xattr_extents_read(inode, xattr, buffer, size);
 	else
-		ret = apfs_xattr_inline_read(inode,
-					     (struct apfs_xattr_inline *)header,
-					     buffer, size);
+		ret = apfs_xattr_inline_read(inode, xattr, buffer, size);
 
 done:
 	apfs_free_query(sb, query);

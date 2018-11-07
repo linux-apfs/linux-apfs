@@ -30,7 +30,7 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 	if (!dentry)
 		return ERR_PTR(-ECHILD);
 
-	size = apfs_xattr_get(inode, "com.apple.fs.symlink",
+	size = apfs_xattr_get(inode, APFS_XATTR_NAME_SYMLINK,
 			      NULL /* buffer */, 0 /* size */);
 	if (size < 0) /* TODO: return a better error code */
 		return ERR_PTR(size);
@@ -39,7 +39,7 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 	if (!target)
 		return ERR_PTR(-ENOMEM);
 
-	size = apfs_xattr_get(inode, "com.apple.fs.symlink", target, size);
+	size = apfs_xattr_get(inode, APFS_XATTR_NAME_SYMLINK, target, size);
 	if (size < 0) {
 		err = ERR_PTR(size);
 		goto fail;

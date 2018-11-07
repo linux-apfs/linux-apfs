@@ -9,38 +9,39 @@
 #define _APFS_XATTR_H
 
 #include <linux/types.h>
+#include "inode.h"
 
-/* xattr header flags */
-#define APFS_XATTR_HAS_EXTENTS	0x0001	/* The xattr value is kept on extents */
+/* Extended attributes constants */
+#define APFS_XATTR_MAX_EMBEDDED_SIZE	3804
 
-/*
- * This structure heads the data of all xattr catalog entries
- */
-struct apfs_xattr_header {
-	__le16	flags;
-	__le16	len;		/* Length of the xattr body */
-} __attribute__ ((__packed__));
+/* Extended attributes names */
+#define APFS_XATTR_NAME_SYMLINK		"com.apple.fs.symlink"
+#define APFS_XATTR_NAME_COMPRESSED	"com.apple.decmpfs"
 
-/*
- * Structure of xattr catalog entries with an inline value
- */
-struct apfs_xattr_inline {
-	struct apfs_xattr_header header;
-
-	char value[0];	/* Value of the xattr */
-} __attribute__ ((__packed__));
+/* Extended attributes flags */
+enum {
+	APFS_XATTR_DATA_STREAM		= 0x00000001,
+	APFS_XATTR_DATA_EMBEDDED	= 0x00000002,
+	APFS_XATTR_FILE_SYSTEM_OWNED	= 0x00000004,
+	APFS_XATTR_RESERVED_8		= 0x00000008,
+};
 
 /*
- * Structure of xattr catalog entries that keep their value on extents
+ * Structure of the value of an extended attributes record
  */
-struct apfs_xattr_ext {
-	struct apfs_xattr_header header;
+struct apfs_xattr_val {
+	__le16 flags;
+	__le16 xdata_len;
+	u8 xdata[0];
+} __packed;
 
-	__le64	cnid;		/* Catalog id for the value extents */
-	__le64	size;		/* Logical size of the value */
-	__le64	phys_size;	/* Physical size of the value */
-	char	unknown[24];
-} __attribute__ ((__packed__));
+/*
+ * Structure used to store the data of an extended attributes record
+ */
+struct apfs_xattr_dstream {
+	__le64 xattr_obj_id;
+	struct apfs_dstream dstream;
+} __packed;
 
 extern int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 			  size_t size);

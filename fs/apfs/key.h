@@ -18,18 +18,6 @@ struct apfs_omap_key {
 	__le64 ok_xid;
 } __packed;
 
-/*
- * Structure of the keys for named attributes in the catalog tables.
- */
-struct apfs_xattr_key {
-	/* Inode the xattr belongs to, with record type 0x40 in the last byte */
-	__le64 cnid;
-	/* Length of the attribute name */
-	__le16 length;
-	/* Attribute name */
-	char name[0];
-} __attribute__ ((__packed__));
-
 /* Catalog records types */
 enum {
 	APFS_TYPE_ANY			= 0,
@@ -103,6 +91,15 @@ enum {
 struct apfs_drec_hashed_key {
 	struct apfs_key_header hdr;
 	__le32 name_len_and_hash;
+	u8 name[0];
+} __packed;
+
+/*
+ * Structure of the key for an extended attributes record
+ */
+struct apfs_xattr_key {
+	struct apfs_key_header hdr;
+	__le16 name_len;
 	u8 name[0];
 } __packed;
 
