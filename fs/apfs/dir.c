@@ -89,8 +89,8 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		 */
 		char *raw;
 		int namelen;
-		struct apfs_dentry_key *de_key;
-		struct apfs_dentry *de;
+		struct apfs_drec_hashed_key *de_key;
+		struct apfs_drec_val *de;
 
 		err = apfs_btree_query(sb, &query);
 		if (err == -ENODATA) { /* Got all the records */
@@ -101,8 +101,8 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 			break;
 
 		raw = query->table->t_node.bh->b_data;
-		de = (struct apfs_dentry *)(raw + query->off);
-		de_key = (struct apfs_dentry_key *)(raw + query->key_off);
+		de = (struct apfs_drec_val *)(raw + query->off);
+		de_key = (struct apfs_drec_hashed_key *)(raw + query->key_off);
 		namelen = query->key_len - sizeof(*de_key);
 
 		/*
@@ -124,11 +124,12 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 
 		err = 0;
 		if (pos <= 0) {
-			/* TODO: what if the d_type is corrupted? */
+			/* TODO: what if the dentry flags are corrupted? */
 			if (!dir_emit(ctx, de_key->name,
 				      namelen - 1, /* Don't count NULL */
-				      le64_to_cpu(de->d_cnid),
-				      le16_to_cpu(de->d_type)))
+				      le64_to_cpu(de->file_id),
+				      le16_to_cpu(de->flags)
+					      & APFS_DREC_TYPE_MASK))
 				break;
 			ctx->pos++;
 		}

@@ -112,13 +112,14 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 
 	switch (key->type) {
 	case APFS_TYPE_DIR_REC:
-		if (size < sizeof(struct apfs_dentry_key) + 1 ||
+		if (size < sizeof(struct apfs_drec_hashed_key) + 1 ||
 		    *((char *)raw + size - 1) != 0) {
 			/* Filename must have NULL-termination */
 			return -EFSCORRUPTED;
 		}
-		key->hash = le32_to_cpu(((struct apfs_dentry_key *)raw)->hash);
-		key->name = ((struct apfs_dentry_key *)raw)->name;
+		key->hash = le32_to_cpu(
+		       ((struct apfs_drec_hashed_key *)raw)->name_len_and_hash);
+		key->name = ((struct apfs_drec_hashed_key *)raw)->name;
 		key->offset = 0;
 		break;
 	case APFS_TYPE_XATTR:

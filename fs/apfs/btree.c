@@ -290,7 +290,7 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
-	struct apfs_dentry *data;
+	struct apfs_drec_val *data;
 	char *raw;
 	u64 cnid = 0;
 
@@ -304,16 +304,9 @@ u64 apfs_cat_resolve(struct super_block *sb, struct apfs_key *key)
 		goto fail;
 
 	raw = query->table->t_node.bh->b_data + query->off;
-	data = (struct apfs_dentry *)raw;
-	switch (query->len) {
-	case 0x22: /* hard link */
-	case 0x12:
-		cnid = le64_to_cpu(data->d_cnid);
-		break;
-	default:
-		/* Corrupted filesystem? Or something new? */
-		break;
-	}
+	data = (struct apfs_drec_val *)raw;
+	if (query->len >= sizeof(*data))
+		cnid = le64_to_cpu(data->file_id);
 
 fail:
 	apfs_free_query(sb, query);

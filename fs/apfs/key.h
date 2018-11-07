@@ -19,26 +19,6 @@ struct apfs_omap_key {
 } __packed;
 
 /*
- * The name length in the catalog key counts the terminating null byte.
- *
- * TODO: It seems that the catalog keys use 10 bits to store the length
- * instead of 8, so this could be wrong.
- */
-#define APFS_NAME_LEN		254
-
-/*
- * Structure of the dentry keys in the catalog tables.
- */
-struct apfs_dentry_key {
-	/* Parent directory cnid, with record type 0x90 in the last 8 bits */
-	__le64 parent;
-	/* Hash of the normalized filename, mixing the crc32c and the length */
-	__le32 hash;
-	/* Filename, with no normalization */
-	char name[0];
-} __attribute__ ((__packed__));
-
-/*
  * Structure of the keys for named attributes in the catalog tables.
  */
 struct apfs_xattr_key {
@@ -100,6 +80,30 @@ struct apfs_file_extent_key {
  */
 struct apfs_dstream_id_key {
 	struct apfs_key_header hdr;
+} __packed;
+
+/* Bit masks for the 'name_len_and_hash' field of a directory entry */
+#define APFS_DREC_LEN_MASK	0x000003ff
+#define APFS_DREC_HASH_MASK	0xfffff400
+#define APFS_DREC_HASH_SHIFT	10
+
+/* The name length in the catalog key counts the terminating null byte. */
+#define APFS_NAME_LEN		(APFS_DREC_LEN_MASK - 1)
+
+/* Bit masks for the 'type' field of a directory entry */
+enum {
+	APFS_DREC_TYPE_MASK	= 0x000f,
+	APFS_DREC_RESERVED_10	= 0x0010
+};
+
+/*
+ * Structure of the key for a directory entry, including a precomputed
+ * hash of its name
+ */
+struct apfs_drec_hashed_key {
+	struct apfs_key_header hdr;
+	__le32 name_len_and_hash;
+	u8 name[0];
 } __packed;
 
 /*
