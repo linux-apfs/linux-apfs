@@ -523,6 +523,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	root = apfs_iget(sb, APFS_ROOT_DIR_INO_NUM);
 	if (IS_ERR(root)) {
 		apfs_err(sb, "unable to get root inode");
+		err = PTR_ERR(root);
 		goto failed_mount;
 	}
 	sb->s_root = d_make_root(root);
