@@ -160,9 +160,9 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	brelse(bh);
 	bh = NULL;
 	vtable = apfs_read_table(sb, vb);
-	if (!vtable) {
+	if (IS_ERR(vtable)) {
 		apfs_err(sb, "unable to read volume block");
-		return -EIO;
+		return PTR_ERR(vtable);
 	}
 
 	/* Iterate through the checkpoint superblocks and add the used blocks */
@@ -205,7 +205,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_superblock *vol = sbi->s_vsb_raw;
-	u64 used_blocks, fsid;
+	u64 fsid, used_blocks = 0;
 	int err;
 
 	buf->f_type = APFS_SUPER_MAGIC;
@@ -444,8 +444,9 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	brelse(bh2);
 
 	vtable = apfs_read_table(sb, vb);
-	if (!vtable) {
+	if (IS_ERR(vtable)) {
 		apfs_err(sb, "unable to read volume block");
+		err = PTR_ERR(vtable);
 		goto failed_vol;
 	}
 
@@ -488,8 +489,9 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	vol_omap_blk = le64_to_cpu(vol_omap_raw->om_tree_oid);
 	brelse(bh3);
 	vol_omap_table = apfs_read_table(sb, vol_omap_blk);
-	if (!vol_omap_table) {
+	if (IS_ERR(vol_omap_table)) {
 		apfs_err(sb, "unable to read the volume object map");
+		err = PTR_ERR(vol_omap_table);
 		goto failed_cat;
 	}
 
@@ -499,8 +501,8 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	/* Get the root node from the volume object map */
 	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
 	root_table = apfs_omap_read_table(sb, root_id);
-	if (!root_table) {
-		err = -EINVAL;
+	if (IS_ERR(root_table)) {
+		err = PTR_ERR(root_table);
 		apfs_err(sb, "unable to read catalog root node");
 		goto failed_root;
 	}

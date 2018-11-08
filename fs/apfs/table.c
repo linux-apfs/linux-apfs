@@ -65,8 +65,8 @@ void apfs_table_put(struct apfs_table *table)
  * @sb:		filesystem superblock
  * @block:	number of the block where the table is stored
  *
- * Returns NULL in case of failure, otherwise a pointer to the resulting
- * apfs_table structure with the initial reference taken.
+ * Returns ERR_PTR in case of failure, otherwise return a pointer to the
+ * resulting apfs_table structure with the initial reference taken.
  *
  * For now we assume the table has not been read before.
  */
@@ -79,14 +79,14 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 	bh = sb_bread(sb, block);
 	if (!bh) {
 		apfs_err(sb, "unable to read table");
-		return NULL;
+		return ERR_PTR(-EINVAL);
 	}
 	raw = (struct apfs_btree_node_phys *) bh->b_data;
 
 	table = kmalloc(sizeof(*table), GFP_KERNEL);
 	if (!table) {
 		brelse(bh);
-		return NULL;
+		return ERR_PTR(-ENOMEM);
 	}
 
 	table->t_flags = le16_to_cpu(raw->btn_flags);
@@ -106,7 +106,7 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 	if (!apfs_table_is_valid(sb, table)) {
 		apfs_alert(sb, "bad table in block 0x%llx", block);
 		apfs_table_put(table);
-		return NULL;
+		return ERR_PTR(-EFSCORRUPTED);
 	}
 
 	return table;

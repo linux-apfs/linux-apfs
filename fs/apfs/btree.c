@@ -217,8 +217,9 @@ next_node:
 
 	/* Now go a level deeper and search the child */
 	table = apfs_read_table(sb, child_blk);
-	if (!table)
-		return -ENOMEM;
+	if (IS_ERR(table))
+		return PTR_ERR(table);
+
 	if (table->t_node.node_id != child_id)
 		apfs_debug(sb, "corrupt b-tree");
 
@@ -327,13 +328,15 @@ struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_table *result;
 	u64 block;
+	int err;
 
-	if (apfs_omap_lookup_block(sb, sbi->s_omap_root, id, &block))
-		return NULL;
+	err = apfs_omap_lookup_block(sb, sbi->s_omap_root, id, &block);
+	if (err)
+		return ERR_PTR(err);
 
 	result = apfs_read_table(sb, block);
-	if (!result)
-		return NULL;
+	if (IS_ERR(result))
+		return result;
 
 	if (result->t_node.node_id != id)
 		apfs_debug(sb, "corrupt b-tree");
