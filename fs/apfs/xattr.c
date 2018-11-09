@@ -140,7 +140,6 @@ static int apfs_xattr_extents_read(struct inode *parent,
 			}
 			memcpy(buffer + file_off, bh->b_data, bytes);
 			brelse(bh);
-			block++;
 			file_off = file_off + bytes;
 		}
 	}
