@@ -222,7 +222,9 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	/* The file count is only for the mounted volume */
 	buf->f_files = le64_to_cpu(vol->apfs_num_files) +
-		       le64_to_cpu(vol->apfs_num_directories);
+		       le64_to_cpu(vol->apfs_num_directories) +
+		       le64_to_cpu(vol->apfs_num_symlinks) +
+		       le64_to_cpu(vol->apfs_num_other_fsobjects);
 
 	/*
 	 * buf->f_ffree is left undefined for now. Maybe it should report the
