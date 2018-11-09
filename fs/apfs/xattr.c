@@ -121,8 +121,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 		ext_len = le64_to_cpu(ext->len_and_flags) &
 			  APFS_FILE_EXTENT_LEN_MASK;
 		block = le64_to_cpu(ext->phys_block_num);
-		block_count = (ext_len + sb->s_blocksize) >>
-			      sb->s_blocksize_bits;
+		block_count = ext_len >> sb->s_blocksize_bits;
 		file_off = le64_to_cpu(ext_key->logical_addr);
 		for (j = 0; j < block_count; ++j) {
 			struct buffer_head *bh;
