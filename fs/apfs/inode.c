@@ -29,7 +29,7 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	struct apfs_file_extent_val *ext;
 	struct apfs_file_extent_key *ext_key;
 	char *raw;
-	u64 blk_off, bno, length;
+	u64 blk_off, bno, map_len, ext_len;
 	int ret = 0;
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
@@ -60,11 +60,29 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	raw = query->table->t_node.bh->b_data;
 	ext = (struct apfs_file_extent_val *)(raw + query->off);
 	ext_key = (struct apfs_file_extent_key *)(raw + query->key_off);
+	ext_len = le64_to_cpu(ext->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
+	/* Extent length must be a multiple of the block size */
+	if (ext_len & (sb->s_blocksize - 1)) {
+		apfs_alert(sb, "bad extent length for inode 0x%llx",
+			   (unsigned long long) inode->i_ino);
+		ret = -EFSCORRUPTED;
+		goto done;
+	}
 
 	/* Find the block offset of iblock within the extent */
 	blk_off = iblock - (le64_to_cpu(ext_key->logical_addr)
 				>> inode->i_blkbits);
 
+	/* Make sure we don't read past the extent boundaries */
+	map_len = ext_len - (blk_off << inode->i_blkbits);
+	if (bh_result->b_size > map_len)
+		bh_result->b_size = map_len;
+
+	/*
+	 * Save the requested mapping length as map_bh() replaces it with
+	 * the filesystem block size
+	 */
+	map_len = bh_result->b_size;
 	/* Extents representing holes have block number 0 */
 	if (ext->phys_block_num != 0) {
 		/* Find the block number of iblock within the disk */
@@ -72,14 +90,7 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 		map_bh(bh_result, sb, bno);
 	}
 
-	length = (le64_to_cpu(ext->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK)
-			- (blk_off << inode->i_blkbits);
-	/* I think b_size needs to be a multiple of the block size */
-	length = round_up(length, sb->s_blocksize);
-	if (length > bh_result->b_size) /* Don't map more than requested */
-		length = bh_result->b_size;
-
-	bh_result->b_size = length;
+	bh_result->b_size = map_len;
 
 done:
 	apfs_free_query(sb, query);
