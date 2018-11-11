@@ -123,17 +123,19 @@ fail:
  * @query:	query to free
  *
  * Also frees the current key, the table if it's not root of a b-tree, and
- * the parent query if it is kept. If a search key was allocated, the caller
- * still needs to free it.
+ * the ancestor queries if they are kept. If a search key was allocated, the
+ * caller still needs to free it.
  */
 void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 {
-	kfree(query->curr);
-	apfs_table_put(query->table);
+	while (query) {
+		struct apfs_query *parent = query->parent;
 
-	if (query->parent)
-		apfs_free_query(sb, query->parent);
-	kfree(query);
+		kfree(query->curr);
+		apfs_table_put(query->table);
+		kfree(query);
+		query = parent;
+	}
 }
 
 /**
