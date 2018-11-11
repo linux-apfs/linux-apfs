@@ -510,14 +510,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 	sbi->s_cat_root = root_table;
 
-	/* Print the last write time to verify the mount was successful */
-	apfs_info(sb, "volume last modified at %llx",
-		  le64_to_cpu(vsb_raw->apfs_last_mod_time));
-	/* Also the number of files */
-	apfs_info(sb, "volume has %llu files and %llu directories",
-		  le64_to_cpu(vsb_raw->apfs_num_files),
-		  le64_to_cpu(vsb_raw->apfs_num_directories));
-
 	sb->s_op = &apfs_sops;
 	sb->s_d_op = &apfs_dentry_operations;
 	sb->s_xattr = apfs_xattr_handlers;
