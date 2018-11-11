@@ -41,12 +41,6 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	int ret;
 	int i;
 
-	if (le16_to_cpu(xattr->xdata_len) != sizeof(*xdata)) {
-		apfs_alert(sb, "bad extent-based xattr record for inode 0x%llx",
-			   (unsigned long long) parent->i_ino);
-		return -EFSCORRUPTED;
-	}
-
 	xdata = (struct apfs_xattr_dstream *) xattr->xdata;
 	length = le64_to_cpu(xdata->dstream.size);
 	if (length < 0 || length < le64_to_cpu(xdata->dstream.size)) {
@@ -200,6 +194,7 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	struct apfs_xattr_val *xattr;
 	char *raw;
 	u64 cnid = inode->i_ino;
+	int xdata_len;
 	int ret;
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
@@ -222,18 +217,25 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 
 	raw = query->table->t_node.bh->b_data;
 	xattr = (struct apfs_xattr_val *)(raw + query->off);
-	if (query->len < sizeof(*xattr) ||
-	    sizeof(*xattr) + le16_to_cpu(xattr->xdata_len) != query->len) {
-		apfs_alert(sb, "bad xattr record in inode 0x%llx", cnid);
-		ret = -EFSCORRUPTED;
-		goto done;
-	}
 
-	if (le16_to_cpu(xattr->flags) & APFS_XATTR_DATA_STREAM)
+	if (query->len < sizeof(*xattr))
+		goto corrupted;
+	xdata_len = query->len - sizeof(*xattr);
+
+	if (le16_to_cpu(xattr->flags) & APFS_XATTR_DATA_STREAM) {
+		if (xdata_len != sizeof(struct apfs_xattr_dstream))
+			goto corrupted;
 		ret = apfs_xattr_extents_read(inode, xattr, buffer, size);
-	else
+	} else {
+		if (xdata_len != le16_to_cpu(xattr->xdata_len))
+			goto corrupted;
 		ret = apfs_xattr_inline_read(inode, xattr, buffer, size);
+	}
+	goto done;
 
+corrupted:
+	ret = -EFSCORRUPTED;
+	apfs_alert(sb, "bad xattr record in inode 0x%llx", cnid);
 done:
 	apfs_free_query(sb, query);
 fail:
