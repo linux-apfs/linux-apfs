@@ -43,7 +43,7 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
 		goto fail;
 	}
 
-	apfs_init_key(0 /* type */, id, NULL /* name */, 0 /* namelen */,
+	apfs_init_key(sb, 0 /* type */, id, NULL /* name */, 0 /* namelen */,
 		      0 /* offset */, key);
 	query->key = key;
 	query->flags |= APFS_QUERY_OMAP | APFS_QUERY_EXACT;

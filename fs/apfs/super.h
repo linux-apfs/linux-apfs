@@ -290,4 +290,10 @@ static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
+static inline bool apfs_is_case_insensitive(struct super_block *sb)
+{
+	return APFS_SB(sb)->s_vsb_raw->apfs_incompatible_features &
+	       cpu_to_le64(APFS_INCOMPAT_CASE_INSENSITIVE);
+}
+
 #endif	/* _APFS_SUPER_H */

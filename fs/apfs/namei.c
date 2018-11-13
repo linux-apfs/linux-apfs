@@ -9,6 +9,7 @@
 #include "dir.h"
 #include "inode.h"
 #include "key.h"
+#include "super.h"
 #include "unicode.h"
 #include "xattr.h"
 
@@ -50,6 +51,7 @@ static int apfs_dentry_hash(const struct dentry *dir, struct qstr *child)
 {
 	struct apfs_unicursor cursor;
 	unsigned long hash;
+	bool case_fold = apfs_is_case_insensitive(dir->d_sb);
 
 	apfs_init_unicursor(&cursor, child->name);
 	hash = init_name_hash(dir);
@@ -58,7 +60,7 @@ static int apfs_dentry_hash(const struct dentry *dir, struct qstr *child)
 		int i;
 		unicode_t utf32;
 
-		utf32 = apfs_normalize_next(&cursor);
+		utf32 = apfs_normalize_next(&cursor, case_fold);
 		if (!utf32)
 			break;
 
@@ -77,7 +79,7 @@ static int apfs_dentry_hash(const struct dentry *dir, struct qstr *child)
 static int apfs_dentry_compare(const struct dentry *dentry, unsigned int len,
 			       const char *str, const struct qstr *name)
 {
-	return apfs_filename_cmp(name->name, str);
+	return apfs_filename_cmp(dentry->d_sb, name->name, str);
 }
 
 const struct dentry_operations apfs_dentry_operations = {

@@ -8,6 +8,7 @@
 #include <linux/crc32c.h>
 #include "apfs.h"
 #include "key.h"
+#include "super.h"
 #include "unicode.h"
 
 /**
@@ -37,17 +38,18 @@ static inline u64 apfs_cat_cnid(struct apfs_key_header *key)
 
 /**
  * apfs_filename_cmp - Normalize and compare two APFS filenames
+ * @sb:			filesystem superblock
  * @name1, @name2:	names to compare
  *
  * returns   0 if @name1 and @name2 are equal
  *	   < 0 if @name1 comes before @name2 in the btree
  *	   > 0 if @name1 comes after @name2 in the btree
- *
- * TODO: support case sensitive filesystems.
  */
-int apfs_filename_cmp(const char *name1, const char *name2)
+int apfs_filename_cmp(struct super_block *sb,
+		      const char *name1, const char *name2)
 {
 	struct apfs_unicursor cursor1, cursor2;
+	bool case_fold = apfs_is_case_insensitive(sb);
 
 	apfs_init_unicursor(&cursor1, name1);
 	apfs_init_unicursor(&cursor2, name2);
@@ -55,8 +57,8 @@ int apfs_filename_cmp(const char *name1, const char *name2)
 	while (1) {
 		unicode_t uni1, uni2;
 
-		uni1 = apfs_normalize_next(&cursor1);
-		uni2 = apfs_normalize_next(&cursor2);
+		uni1 = apfs_normalize_next(&cursor1, case_fold);
+		uni2 = apfs_normalize_next(&cursor2, case_fold);
 
 		if (uni1 != uni2)
 			return uni1 < uni2 ? -1 : 1;
@@ -67,13 +69,15 @@ int apfs_filename_cmp(const char *name1, const char *name2)
 
 /**
  * apfs_keycmp - Compare two keys
+ * @sb:		filesystem superblock
  * @k1, @k2:	keys to compare
  *
  * returns   0 if @k1 and @k2 are equal
  *	   < 0 if @k1 comes before @k2 in the btree
  *	   > 0 if @k1 comes after @k2 in the btree
  */
-int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
+int apfs_keycmp(struct super_block *sb,
+		struct apfs_key *k1, struct apfs_key *k2)
 {
 	if (k1->id != k2->id)
 		return k1->id < k2->id ? -1 : 1;
@@ -92,7 +96,7 @@ int apfs_keycmp(struct apfs_key *k1, struct apfs_key *k2)
 	}
 
 	/* Only guessing, I've never seen two names with the same hash. TODO */
-	return apfs_filename_cmp(k1->name, k2->name);
+	return apfs_filename_cmp(sb, k1->name, k2->name);
 }
 
 /**
@@ -174,6 +178,7 @@ int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
 
 /**
  * apfs_init_key - Initialize an in-memory key
+ * @sb:		filesystem superblock
  * @type:	type of the record
  * @id:		id for the record
  * @name:	name of the record (may be NULL)
@@ -183,10 +188,11 @@ int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
  *
  * On success, @key will be ready to query for the record.
  */
-void apfs_init_key(int type, u64 id, const char *name, int namelen,
-		   u64 offset, struct apfs_key *key)
+void apfs_init_key(struct super_block *sb, int type, u64 id, const char *name,
+		   int namelen, u64 offset, struct apfs_key *key)
 {
 	struct apfs_unicursor cursor;
+	bool case_fold;
 	u32 hash;
 
 	key->type = type;
@@ -198,14 +204,14 @@ void apfs_init_key(int type, u64 id, const char *name, int namelen,
 		return;
 	}
 
-	/* TODO: support case sensitive filesystems */
+	case_fold = apfs_is_case_insensitive(sb);
 	apfs_init_unicursor(&cursor, name);
 	hash = 0xFFFFFFFF;
 
 	while (1) {
 		unicode_t utf32;
 
-		utf32 = apfs_normalize_next(&cursor);
+		utf32 = apfs_normalize_next(&cursor, case_fold);
 		if (!utf32)
 			break;
 

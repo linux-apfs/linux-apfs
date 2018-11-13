@@ -158,11 +158,13 @@ static unicode_t apfs_decompose_hangul(unicode_t utf32char, int off)
  * apfs_normalize_char - Normalize a unicode character
  * @utf32char:	character to normalize
  * @off:	offset of the wanted character from the normalization
+ * @case_fold:	case fold the char?
  *
  * Returns the single character at offset @off in the normalization of
  * @utf32char, or NORM_END if this offset is past the end.
  */
-static unicode_t apfs_normalize_char(unicode_t utf32char, int off)
+static unicode_t apfs_normalize_char(unicode_t utf32char, int off,
+				     bool case_fold)
 {
 	int nfd_len;
 	unicode_t *nfd, *cf;
@@ -181,6 +183,12 @@ static unicode_t apfs_normalize_char(unicode_t utf32char, int off)
 	} else {
 		nfd_len = ret;
 		nfd = &apfs_nfd[pos];
+	}
+
+	if (!case_fold) {
+		if (off < nfd_len)
+			return nfd[off];
+		return NORM_END;
 	}
 
 	for (; nfd_len > 0; nfd++, nfd_len--) {
@@ -208,12 +216,13 @@ static unicode_t apfs_normalize_char(unicode_t utf32char, int off)
 /**
  * apfs_get_normalization_length - Count the characters until the next starter
  * @utf8str:	string to normalize, may begin with several starters
+ * @case_fold:	true if the count should consider case folding
  *
  * Returns the number of unicode characters in the normalization of the
  * substring that begins at @utf8str and ends at the first nonconsecutive
  * starter. Or 0 if the substring has invalid UTF-8.
  */
-static int apfs_get_normalization_length(const char *utf8str)
+static int apfs_get_normalization_length(const char *utf8str, bool case_fold)
 {
 	int utf8len, pos, norm_len = 0;
 	bool starters_over = false;
@@ -230,7 +239,8 @@ static int apfs_get_normalization_length(const char *utf8str)
 			unicode_t utf32norm;
 			u8 ccc;
 
-			utf32norm = apfs_normalize_char(utf32char, pos);
+			utf32norm = apfs_normalize_char(utf32char, pos,
+							case_fold);
 			if (utf32norm == NORM_END)
 				break;
 
@@ -249,6 +259,7 @@ static int apfs_get_normalization_length(const char *utf8str)
 /**
  * apfs_normalize_next - Return the next normalized character from a string
  * @cursor:	unicode cursor for the string
+ * @case_fold:	case fold the string?
  *
  * Sets @cursor->length to the length of the normalized substring between
  * @cursor->utf8curr and the first nonconsecutive starter. Returns a single
@@ -259,7 +270,7 @@ static int apfs_get_normalization_length(const char *utf8str)
  *
  * Returns 0 if the substring has invalid UTF-8.
  */
-unicode_t apfs_normalize_next(struct apfs_unicursor *cursor)
+unicode_t apfs_normalize_next(struct apfs_unicursor *cursor, bool case_fold)
 {
 	const char *utf8str = cursor->utf8curr;
 	int str_pos, min_pos = -1;
@@ -269,11 +280,14 @@ unicode_t apfs_normalize_next(struct apfs_unicursor *cursor)
 new_starter:
 	if (likely(isascii(*utf8str))) {
 		cursor->utf8curr = utf8str + 1;
-		return tolower(*utf8str);
+		if (case_fold)
+			return tolower(*utf8str);
+		return *utf8str;
 	}
 
 	if (cursor->length < 0) {
-		cursor->length = apfs_get_normalization_length(utf8str);
+		cursor->length = apfs_get_normalization_length(utf8str,
+							       case_fold);
 		if (cursor->length == 0)
 			return 0;
 	}
@@ -290,7 +304,8 @@ new_starter:
 			unicode_t utf32norm;
 			u8 ccc;
 
-			utf32norm = apfs_normalize_char(utf32char, pos);
+			utf32norm = apfs_normalize_char(utf32char, pos,
+							case_fold);
 			if (utf32norm == NORM_END)
 				break;
 

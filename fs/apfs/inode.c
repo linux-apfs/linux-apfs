@@ -53,8 +53,8 @@ static struct apfs_file_extent *apfs_extent_read(struct inode *inode,
 	if (!key)
 		return ERR_PTR(-ENOMEM);
 	/* We will search for the extent that covers iblock */
-	apfs_init_key(APFS_TYPE_FILE_EXTENT, ai->i_extent_id, NULL /* name */,
-		      0 /* namelen */, iaddr, key);
+	apfs_init_key(sb, APFS_TYPE_FILE_EXTENT, ai->i_extent_id,
+		      NULL /* name */, 0 /* namelen */, iaddr, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
@@ -184,8 +184,8 @@ static struct apfs_inode_val *apfs_get_inode(struct super_block *sb, u64 cnid,
 	if (!key)
 		return NULL;
 	/* Looking for an inode record, so this is the only field of the key */
-	apfs_init_key(APFS_TYPE_INODE, cnid, NULL /* name */, 0 /* namelen */,
-		      0 /* offset */, key);
+	apfs_init_key(sb, APFS_TYPE_INODE, cnid, NULL /* name */,
+		      0 /* namelen */, 0 /* offset */, key);
 
 	raw = apfs_cat_get_data(sb, key, &len, table);
 	kfree(key);

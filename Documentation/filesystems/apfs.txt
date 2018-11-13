@@ -35,8 +35,6 @@ Many features are not yet supported:
  o Compression, though the compressed contents of a file can be read from the
    'com.apple.decmpfs' and 'com.apple.ResourceFork' xattrs as long as they are
    under 64k.
- o Case sensitivity. All mounted images are assumed to be case-insensitive, and
-   capitalized filenames will be unreadable if that is not correct.
  o Restoring to a snapshot.
  o Access control lists. This is not a priority.
 

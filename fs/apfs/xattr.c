@@ -58,7 +58,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	if (!key)
 		return -ENOMEM;
 	/* We will read all the extents, starting with the last one */
-	apfs_init_key(APFS_TYPE_FILE_EXTENT, xdata->xattr_obj_id,
+	apfs_init_key(sb, APFS_TYPE_FILE_EXTENT, xdata->xattr_obj_id,
 		      NULL /* name */, 0 /* namelen */, length, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
@@ -200,7 +200,7 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	apfs_init_key(APFS_TYPE_XATTR, cnid, name, 0 /* namelen */,
+	apfs_init_key(sb, APFS_TYPE_XATTR, cnid, name, 0 /* namelen */,
 		      0 /* offset */, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
@@ -283,7 +283,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	}
 
 	/* We want all the xattrs for the cnid, regardless of the name */
-	apfs_init_key(APFS_TYPE_XATTR, cnid, NULL /* name */,
+	apfs_init_key(sb, APFS_TYPE_XATTR, cnid, NULL /* name */,
 		      0 /* namelen */, 0 /* offset */, key);
 	query->key = key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;

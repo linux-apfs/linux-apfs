@@ -23,6 +23,7 @@ struct apfs_unicursor {
 
 extern void apfs_init_unicursor(struct apfs_unicursor *cursor,
 				 const char *utf8str);
-extern unicode_t apfs_normalize_next(struct apfs_unicursor *cursor);
+extern unicode_t apfs_normalize_next(struct apfs_unicursor *cursor,
+				     bool case_fold);
 
 #endif	/* _APFS_UNICODE_H */

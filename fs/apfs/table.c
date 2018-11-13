@@ -281,7 +281,7 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 			return err;
 		}
 
-		cmp = apfs_keycmp(query->curr, query->key);
+		cmp = apfs_keycmp(sb, query->curr, query->key);
 
 		if (cmp <= 0) {
 			if (apfs_table_is_leaf(query->table) &&
