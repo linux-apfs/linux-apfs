@@ -53,7 +53,7 @@ static struct apfs_file_extent *apfs_extent_read(struct inode *inode,
 	if (!key)
 		return ERR_PTR(-ENOMEM);
 	/* We will search for the extent that covers iblock */
-	apfs_init_key(APFS_TYPE_FILE_EXTENT, inode->i_ino, NULL /* name */,
+	apfs_init_key(APFS_TYPE_FILE_EXTENT, ai->i_extent_id, NULL /* name */,
 		      0 /* namelen */, iaddr, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
@@ -273,6 +273,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		goto failed_get;
 	}
 
+	ai->i_extent_id = le64_to_cpu(raw_inode->private_id);
 	inode->i_mode = le16_to_cpu(raw_inode->mode);
 	/* Allow the user to override the ownership */
 	if (sbi->s_flags & APFS_UID_OVERRIDE)
