@@ -19,42 +19,61 @@
 #include "table.h"
 #include "xattr.h"
 
-static int apfs_get_block(struct inode *inode, sector_t iblock,
-			  struct buffer_head *bh_result, int create)
+/**
+ * apfs_extent_read - Read the extent record that covers a block
+ * @inode:	inode that owns the record
+ * @iblock:	logical number of the wanted block
+ *
+ * Finds and caches the extent record.  On success, returns a pointer to the
+ * cache record and locks it; on failure, returns an error pointer.
+ */
+static struct apfs_file_extent *apfs_extent_read(struct inode *inode,
+						 sector_t iblock)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_inode_info *ai = APFS_I(inode);
 	struct apfs_key *key;
 	struct apfs_query *query;
 	struct apfs_file_extent_val *ext;
 	struct apfs_file_extent_key *ext_key;
+	struct apfs_file_extent *cache = &ai->i_cached_extent;
 	char *raw;
-	u64 blk_off, bno, map_len, ext_len;
-	int ret = 0;
+	u64 iaddr = iblock << inode->i_blkbits;
+	u64 ext_len;
+	int ret;
+
+	mutex_lock(&ai->i_extent_lock);
+	if (iaddr >= cache->logical_addr &&
+	    iaddr < cache->logical_addr + cache->len)
+		return cache;
+	mutex_unlock(&ai->i_extent_lock);
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	/* We will search for the extent that covers iblock */
 	apfs_init_key(APFS_TYPE_FILE_EXTENT, inode->i_ino, NULL /* name */,
-		      0 /* namelen */, iblock << inode->i_blkbits, key);
+		      0 /* namelen */, iaddr, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
-		ret = -ENOMEM;
+		cache = ERR_PTR(-ENOMEM);
 		goto fail;
 	}
 	query->key = key;
 	query->flags = APFS_QUERY_CAT;
 
 	ret = apfs_btree_query(sb, &query);
-	if (ret)
+	if (ret) {
+		cache = ERR_PTR(ret);
 		goto done;
+	}
 
 	if (query->len != sizeof(*ext) || query->key_len != sizeof(*ext_key)) {
 		apfs_alert(sb, "bad extent record for inode 0x%llx",
 			   (unsigned long long) inode->i_ino);
-		ret = -EFSCORRUPTED;
+		cache = ERR_PTR(-EFSCORRUPTED);
 		goto done;
 	}
 	raw = query->table->t_node.bh->b_data;
@@ -65,16 +84,39 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	if (ext_len & (sb->s_blocksize - 1)) {
 		apfs_alert(sb, "bad extent length for inode 0x%llx",
 			   (unsigned long long) inode->i_ino);
-		ret = -EFSCORRUPTED;
+		cache = ERR_PTR(-EFSCORRUPTED);
 		goto done;
 	}
 
+	mutex_lock(&ai->i_extent_lock);
+	cache->logical_addr = le64_to_cpu(ext_key->logical_addr);
+	cache->phys_block_num = le64_to_cpu(ext->phys_block_num);
+	cache->len = ext_len;
+done:
+	apfs_free_query(sb, query);
+fail:
+	kfree(key);
+	return cache;
+}
+
+
+static int apfs_get_block(struct inode *inode, sector_t iblock,
+			  struct buffer_head *bh_result, int create)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_inode_info *ai = APFS_I(inode);
+	struct apfs_file_extent *ext;
+	u64 blk_off, bno, map_len;
+
+	ext = apfs_extent_read(inode, iblock);
+	if (IS_ERR(ext))
+		return PTR_ERR(ext);
+
 	/* Find the block offset of iblock within the extent */
-	blk_off = iblock - (le64_to_cpu(ext_key->logical_addr)
-				>> inode->i_blkbits);
+	blk_off = iblock - (ext->logical_addr >> inode->i_blkbits);
 
 	/* Make sure we don't read past the extent boundaries */
-	map_len = ext_len - (blk_off << inode->i_blkbits);
+	map_len = ext->len - (blk_off << inode->i_blkbits);
 	if (bh_result->b_size > map_len)
 		bh_result->b_size = map_len;
 
@@ -86,17 +128,13 @@ static int apfs_get_block(struct inode *inode, sector_t iblock,
 	/* Extents representing holes have block number 0 */
 	if (ext->phys_block_num != 0) {
 		/* Find the block number of iblock within the disk */
-		bno = le64_to_cpu(ext->phys_block_num) + blk_off;
+		bno = ext->phys_block_num + blk_off;
 		map_bh(bh_result, sb, bno);
 	}
 
+	mutex_unlock(&ai->i_extent_lock);
 	bh_result->b_size = map_len;
-
-done:
-	apfs_free_query(sb, query);
-fail:
-	kfree(key);
-	return ret;
+	return 0;
 }
 
 static int apfs_readpage(struct file *file, struct page *page)

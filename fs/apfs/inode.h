@@ -106,7 +106,9 @@ struct apfs_dstream {
  * APFS inode data in memory
  */
 struct apfs_inode_info {
-	struct timespec i_crtime;	/* Time of creation */
+	struct apfs_file_extent	i_cached_extent; /* Latest extent record */
+	struct mutex		i_extent_lock;	 /* Protects i_cached_extent */
+	struct timespec		i_crtime;	 /* Time of creation */
 
 	struct inode vfs_inode;
 };

@@ -109,6 +109,15 @@ struct apfs_file_extent_val {
 } __packed;
 
 /*
+ * Extent record data in memory
+ */
+struct apfs_file_extent {
+	u64 logical_addr;
+	u64 phys_block_num;
+	u64 len;
+};
+
+/*
  * Inode and file operations
  */
 
