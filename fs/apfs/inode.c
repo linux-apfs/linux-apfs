@@ -265,8 +265,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	}
 	if (raw_isize) {
 		inode->i_size = le64_to_cpu(raw_isize->size);
-		inode->i_blocks = le64_to_cpu(raw_isize->alloced_size)
-							>> inode->i_blkbits;
+		inode->i_blocks = le64_to_cpu(raw_isize->alloced_size) >> 9;
 	} else {
 		/*
 		 * This inode is "empty", but it may actually hold compressed
