@@ -128,26 +128,31 @@ struct apfs_table {
 };
 
 /**
- * apfs_table_is_leaf - Check if a b-tree table is a leaf
+ * apfs_table_is_leaf - Check if a b-tree table is a leaf node
  * @table: the table to check
- *
- * This function would probably not be necessary if I just gave a name to the
- * magical constant 2 that it uses, but I'm not sure of its meaning.
  */
 static inline bool apfs_table_is_leaf(struct apfs_table *table)
 {
-	return (table->t_flags & 2) != 0;
+	return (table->t_flags & APFS_BTNODE_LEAF) != 0;
 }
 
 /**
- * apfs_table_is_omap - Check if a b-tree table belongs to the omap
+ * apfs_table_is_root - Check if a b-tree table is a root node
  * @table: the table to check
- *
- * This function is no longer used, but I'm keeping it as documentation for now.
  */
-static inline bool apfs_table_is_omap(struct apfs_table *table)
+static inline bool apfs_table_is_root(struct apfs_table *table)
 {
-	return (table->t_flags & 4) != 0;
+	return (table->t_flags & APFS_BTNODE_ROOT) != 0;
+}
+
+/**
+ * apfs_table_has_fixed_kv_size - Check if a b-tree table has fixed key/value
+ * sizes
+ * @table: the table to check
+ */
+static inline bool apfs_table_has_fixed_kv_size(struct apfs_table *table)
+{
+	return (table->t_flags & APFS_BTNODE_FIXED_KV_SIZE) != 0;
 }
 
 extern struct apfs_table *apfs_read_table(struct super_block *sb, u64 block);

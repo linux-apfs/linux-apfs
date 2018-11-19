@@ -30,12 +30,11 @@ static bool apfs_table_is_valid(struct super_block *sb,
 	int records = table->t_records;
 	int index_size = table->t_key - sizeof(struct apfs_btree_node_phys);
 	int entry_size;
-	u16 flags = table->t_flags;
 
 	if (table->t_key > sb->s_blocksize)
 		return false;
 
-	entry_size = (flags & APFS_BTNODE_FIXED_KV_SIZE) ?
+	entry_size = (apfs_table_has_fixed_kv_size(table)) ?
 		sizeof(struct apfs_kvoff) : sizeof(struct apfs_kvloc);
 
 	return records * entry_size <= index_size;
@@ -134,7 +133,7 @@ int apfs_table_locate_key(struct apfs_table *table, int index, int *off)
 
 	raw = (struct apfs_btree_node_phys *)table->t_node.bh->b_data;
 	flags = table->t_flags;
-	if (flags & APFS_BTNODE_FIXED_KV_SIZE) {
+	if (apfs_table_has_fixed_kv_size(table)) {
 		struct apfs_kvoff *entry;
 
 		entry = (struct apfs_kvoff *)raw->btn_data + index;
@@ -180,18 +179,18 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 
 	raw = (struct apfs_btree_node_phys *)table->t_node.bh->b_data;
 	flags = table->t_flags;
-	if (flags & APFS_BTNODE_FIXED_KV_SIZE) {
+	if (apfs_table_has_fixed_kv_size(table)) {
 		/* These table types have fixed length keys and data */
 		struct apfs_kvoff *entry;
 
 		entry = (struct apfs_kvoff *)raw->btn_data + index;
 		/* Node type decides length */
-		len = (flags & APFS_BTNODE_LEAF) ? 16 : 8;
+		len = apfs_table_is_leaf(table) ? 16 : 8;
 		/*
 		 * Data offsets are counted backwards from the end of the
 		 * block, or from the beginning of the footer when it exists
 		 */
-		if (flags & APFS_BTNODE_ROOT) /* has footer */
+		if (apfs_table_is_root(table)) /* has footer */
 			*off = sb->s_blocksize - sizeof(struct apfs_btree_info)
 					- le16_to_cpu(entry->v);
 		else
@@ -206,7 +205,7 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 		 * Data offsets are counted backwards from the end of the
 		 * block, or from the beginning of the footer when it exists
 		 */
-		if (flags & APFS_BTNODE_ROOT) /* has footer */
+		if (apfs_table_is_root(table)) /* has footer */
 			*off = sb->s_blocksize - sizeof(struct apfs_btree_info)
 					- le16_to_cpu(entry->v.off);
 		else
