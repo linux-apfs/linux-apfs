@@ -1,5 +1,6 @@
 config APFS_FS
 	tristate "APFS filesystem support"
+	default y
 	select LIBCRC32C
 	select NLS
 	help
@@ -9,12 +10,13 @@ config APFS_FS
 	  To compile this file system support as a module, choose M here: the
 	  module will be called apfs.
 
-	  This module is out-of-tree, so if you are reading this you probably
-	  want to choose Y or M.
+	  If you want to use the APFS file systems, then you must say Y or M here
+	  to inlucde APFS support.
 
 config APFS_DEBUG
 	bool "APFS debugging support"
+	default n
 	depends on APFS_FS
 	help
-	  Enable the debugging features for apfs. This may hurt performance,
+	  Enable the debugging features for APFS. This may hurt performance,
 	  so say N if you are not a developer.

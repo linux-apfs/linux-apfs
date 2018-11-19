@@ -8,6 +8,8 @@
 #ifndef _APFS_SUPER_H
 #define _APFS_SUPER_H
 
+#define APFS_VERSION	"1.0"
+
 #include <linux/fs.h>
 #include <linux/types.h>
 #include "apfs.h"

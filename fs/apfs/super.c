@@ -7,7 +7,7 @@
 
 #include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/magic.h>
+#include "../../include/uapi/linux/magic.h"
 #include <linux/slab.h>
 #include <linux/parser.h>
 #include <linux/buffer_head.h>
@@ -560,6 +560,8 @@ static int __init init_apfs_fs(void)
 {
 	int err = 0;
 
+	printk(KERN_INFO "APFS: FS Version %s\n", APFS_VERSION);
+
 	err = init_inodecache();
 	if (err)
 		return err;
@@ -575,8 +577,10 @@ static void __exit exit_apfs_fs(void)
 	destroy_inodecache();
 }
 
-MODULE_AUTHOR("Ernesto A. Fernández");
-MODULE_DESCRIPTION("Apple File System");
-MODULE_LICENSE("GPL");
 module_init(init_apfs_fs)
 module_exit(exit_apfs_fs)
+
+MODULE_AUTHOR("Ernesto A. Fernández");
+MODULE_DESCRIPTION("Apple File System v1.0");
+MODULE_LICENSE("GPL");
+MODULE_VERSION(APFS_VERSION);
