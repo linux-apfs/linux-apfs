@@ -17,9 +17,58 @@
 #include "xattr.h"
 
 /**
+ * apfs_xattr_from_query - Read the xattr record found by a successful query
+ * @query:	the query that found the record
+ * @xattr:	Return parameter.  The xattr record found.
+ *
+ * Reads the xattr record into @xattr and performs some basic sanity checks
+ * as a protection against crafted filesystems.  Returns 0 on success or
+ * -EFSCORRUPTED otherwise.
+ *
+ * The caller must not free @query while @xattr is in use, because @xattr->name
+ * and @xattr->xdata point to data on disk.
+ */
+static int apfs_xattr_from_query(struct apfs_query *query,
+				 struct apfs_xattr *xattr)
+{
+	struct apfs_xattr_val *xattr_val;
+	struct apfs_xattr_key *xattr_key;
+	char *raw = query->table->t_node.bh->b_data;
+	int datalen = query->len - sizeof(*xattr_val);
+	int namelen = query->key_len - sizeof(*xattr_key);
+
+	if (namelen < 1 || datalen < 0)
+		return -EFSCORRUPTED;
+
+	xattr_val = (struct apfs_xattr_val *)(raw + query->off);
+	xattr_key = (struct apfs_xattr_key *)(raw + query->key_off);
+
+	if (namelen != le16_to_cpu(xattr_key->name_len))
+		return -EFSCORRUPTED;
+
+	/* The xattr name must be NULL-terminated */
+	if (xattr_key->name[namelen - 1] != 0)
+		return -EFSCORRUPTED;
+
+	xattr->has_dstream = le16_to_cpu(xattr_val->flags) &
+			     APFS_XATTR_DATA_STREAM;
+
+	if (xattr->has_dstream && datalen != sizeof(struct apfs_xattr_dstream))
+		return -EFSCORRUPTED;
+	if (!xattr->has_dstream && datalen != le16_to_cpu(xattr_val->xdata_len))
+		return -EFSCORRUPTED;
+
+	xattr->name = xattr_key->name;
+	xattr->name_len = namelen - 1; /* Don't count the NULL termination */
+	xattr->xdata = xattr_val->xdata;
+	xattr->xdata_len = datalen;
+	return 0;
+}
+
+/**
  * apfs_xattr_extents_read - Read the value of a xattr from its extents
  * @parent:	inode the attribute belongs to
- * @xattr:	the xattr data in the catalog tree
+ * @xattr:	the xattr structure
  * @buffer:	where to copy the attribute value
  * @size:	size of @buffer
  *
@@ -30,7 +79,7 @@
  * of failure.
  */
 static int apfs_xattr_extents_read(struct inode *parent,
-				   struct apfs_xattr_val *xattr,
+				   struct apfs_xattr *xattr,
 				   void *buffer, size_t size)
 {
 	struct super_block *sb = parent->i_sb;
@@ -140,7 +189,7 @@ fail:
 /**
  * apfs_xattr_inline_read - Read the value of an inline xattr
  * @parent:	inode the attribute belongs to
- * @xattr:	the xattr data in the catalog tree
+ * @xattr:	the xattr structure
  * @buffer:	where to copy the attribute value
  * @size:	size of @buffer
  *
@@ -151,10 +200,10 @@ fail:
  * of failure.
  */
 static int apfs_xattr_inline_read(struct inode *parent,
-				  struct apfs_xattr_val *xattr,
+				  struct apfs_xattr *xattr,
 				  void *buffer, size_t size)
 {
-	int length = le16_to_cpu(xattr->xdata_len);
+	int length = xattr->xdata_len;
 
 	if (!buffer) /* All we want is the length */
 		return length;
@@ -184,10 +233,8 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key *key;
 	struct apfs_query *query;
-	struct apfs_xattr_val *xattr;
-	char *raw;
+	struct apfs_xattr xattr;
 	u64 cnid = inode->i_ino;
-	int xdata_len;
 	int ret;
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
@@ -208,27 +255,17 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	if (ret)
 		goto done;
 
-	raw = query->table->t_node.bh->b_data;
-	xattr = (struct apfs_xattr_val *)(raw + query->off);
-
-	if (query->len < sizeof(*xattr))
-		goto corrupted;
-	xdata_len = query->len - sizeof(*xattr);
-
-	if (le16_to_cpu(xattr->flags) & APFS_XATTR_DATA_STREAM) {
-		if (xdata_len != sizeof(struct apfs_xattr_dstream))
-			goto corrupted;
-		ret = apfs_xattr_extents_read(inode, xattr, buffer, size);
-	} else {
-		if (xdata_len != le16_to_cpu(xattr->xdata_len))
-			goto corrupted;
-		ret = apfs_xattr_inline_read(inode, xattr, buffer, size);
+	ret = apfs_xattr_from_query(query, &xattr);
+	if (ret) {
+		apfs_alert(sb, "bad xattr record in inode 0x%llx", cnid);
+		goto done;
 	}
-	goto done;
 
-corrupted:
-	ret = -EFSCORRUPTED;
-	apfs_alert(sb, "bad xattr record in inode 0x%llx", cnid);
+	if (xattr.has_dstream)
+		ret = apfs_xattr_extents_read(inode, &xattr, buffer, size);
+	else
+		ret = apfs_xattr_inline_read(inode, &xattr, buffer, size);
+
 done:
 	apfs_free_query(sb, query);
 fail:
@@ -282,9 +319,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 
 	while (1) {
-		char *raw;
-		int namelen;
-		struct apfs_xattr_key *this_key;
+		struct apfs_xattr xattr;
 
 		ret = apfs_btree_query(sb, &query);
 		if (ret == -ENODATA) { /* Got all the xattrs */
@@ -294,34 +329,26 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		if (ret)
 			break;
 
-		raw = query->table->t_node.bh->b_data;
-		this_key = (struct apfs_xattr_key *)(raw + query->key_off);
-		namelen = query->key_len - sizeof(*this_key);
-
-		/*
-		 * Check that the found key is long enough to fit the structure
-		 * we expect, and that the attribute name is NULL-terminated.
-		 * Otherwise the filesystem is invalid.
-		 */
-		if (namelen < 1 || this_key->name[namelen - 1] != 0) {
+		ret = apfs_xattr_from_query(query, &xattr);
+		if (ret) {
 			apfs_alert(sb, "bad xattr key in inode %llx", cnid);
-			ret = -EFSCORRUPTED;
 			break;
 		}
 
 		if (buffer) {
 			/* Prepend the fake 'osx' prefix before listing */
-			if (namelen + XATTR_MAC_OSX_PREFIX_LEN > free) {
+			if (xattr.name_len + XATTR_MAC_OSX_PREFIX_LEN + 1 >
+									free) {
 				ret = -ERANGE;
 				break;
 			}
 			memcpy(buffer, XATTR_MAC_OSX_PREFIX,
 			       XATTR_MAC_OSX_PREFIX_LEN);
 			buffer += XATTR_MAC_OSX_PREFIX_LEN;
-			memcpy(buffer, this_key->name, namelen);
-			buffer += namelen;
+			memcpy(buffer, xattr.name, xattr.name_len + 1);
+			buffer += xattr.name_len + 1;
 		}
-		free -= namelen + XATTR_MAC_OSX_PREFIX_LEN;
+		free -= xattr.name_len + XATTR_MAC_OSX_PREFIX_LEN + 1;
 	}
 	apfs_free_query(sb, query);
 

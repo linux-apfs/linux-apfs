@@ -43,6 +43,17 @@ struct apfs_xattr_dstream {
 	struct apfs_dstream dstream;
 } __packed;
 
+/*
+ * Xattr record data in memory
+ */
+struct apfs_xattr {
+	u8 *name;
+	u8 *xdata;
+	int name_len;
+	int xdata_len;
+	bool has_dstream;
+};
+
 extern int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 			  size_t size);
 extern ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size);
