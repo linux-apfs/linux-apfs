@@ -10,6 +10,7 @@
 
 #include <linux/fs.h>
 #include <linux/types.h>
+#include "extents.h"
 
 /* Inode numbers for special inodes */
 #define APFS_INVALID_INO_NUM		0

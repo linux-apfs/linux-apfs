@@ -9,6 +9,7 @@
 #include <linux/xattr.h>
 #include "apfs.h"
 #include "btree.h"
+#include "extents.h"
 #include "key.h"
 #include "super.h"
 #include "table.h"
