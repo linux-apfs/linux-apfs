@@ -16,6 +16,48 @@
 #include "table.h"
 
 /**
+ * apfs_drec_from_query - Read the directory record found by a successful query
+ * @query:	the query that found the record
+ * @drec:	Return parameter.  The directory record found.
+ *
+ * Reads the directory record into @drec and performs some basic sanity checks
+ * as a protection against crafted filesystems.  Returns 0 on success or
+ * -EFSCORRUPTED otherwise.
+ *
+ * The caller must not free @query while @drec is in use, because @drec->name
+ * points to data on disk.
+ */
+int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
+{
+	char *raw = query->table->t_node.bh->b_data;
+	struct apfs_drec_hashed_key *de_key;
+	struct apfs_drec_val *de;
+	int namelen = query->key_len - sizeof(*de_key);
+
+	if (namelen < 1)
+		return -EFSCORRUPTED;
+	if (query->len < sizeof(*de))
+		return -EFSCORRUPTED;
+
+	de = (struct apfs_drec_val *)(raw + query->off);
+	de_key = (struct apfs_drec_hashed_key *)(raw + query->key_off);
+
+	if (namelen != (le32_to_cpu(de_key->name_len_and_hash) & 0x3FF))
+		return -EFSCORRUPTED;
+
+	/* Filename must be NULL-terminated */
+	if (de_key->name[namelen - 1] != 0)
+		return -EFSCORRUPTED;
+
+	drec->name = de_key->name;
+	drec->name_len = namelen - 1; /* Don't count the NULL termination */
+	drec->ino = le64_to_cpu(de->file_id);
+	/* TODO: what if the dentry flags are corrupted? */
+	drec->type = le16_to_cpu(de->flags) & APFS_DREC_TYPE_MASK;
+	return 0;
+}
+
+/**
  * apfs_inode_by_name - Find the cnid for a given filename
  * @dir:	parent directory
  * @child:	filename
@@ -84,16 +126,13 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 
 	pos = ctx->pos - 2;
 	while (1) {
+		struct apfs_drec drec;
 		/*
 		 * We query for the matching records, one by one. After we
 		 * pass ctx->pos we begin to emit them.
 		 *
 		 * TODO: Faster approach for large directories?
 		 */
-		char *raw;
-		int namelen;
-		struct apfs_drec_hashed_key *de_key;
-		struct apfs_drec_val *de;
 
 		err = apfs_btree_query(sb, &query);
 		if (err == -ENODATA) { /* Got all the records */
@@ -103,36 +142,17 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		if (err)
 			break;
 
-		raw = query->table->t_node.bh->b_data;
-		de = (struct apfs_drec_val *)(raw + query->off);
-		de_key = (struct apfs_drec_hashed_key *)(raw + query->key_off);
-		namelen = query->key_len - sizeof(*de_key);
-
-		/*
-		 * Check that the found key and data are long enough to fit
-		 * the structures we expect, and that the filename is
-		 * NULL-terminated. Otherwise the filesystem is invalid.
-		 */
-		err = -EFSCORRUPTED;
-		if (namelen < 1 || de_key->name[namelen - 1] != 0) {
-			apfs_alert(sb, "bad dentry key in directory 0x%llx",
-				   cnid);
-			break;
-		}
-		if (query->len < sizeof(*de)) {
-			apfs_alert(sb, "bad dentry data in directory 0x%llx",
+		err = apfs_drec_from_query(query, &drec);
+		if (err) {
+			apfs_alert(sb, "bad dentry record in directory 0x%llx",
 				   cnid);
 			break;
 		}
 
 		err = 0;
 		if (pos <= 0) {
-			/* TODO: what if the dentry flags are corrupted? */
-			if (!dir_emit(ctx, de_key->name,
-				      namelen - 1, /* Don't count NULL */
-				      le64_to_cpu(de->file_id),
-				      le16_to_cpu(de->flags)
-					      & APFS_DREC_TYPE_MASK))
+			if (!dir_emit(ctx, drec.name, drec.name_len,
+				      drec.ino, drec.type))
 				break;
 			ctx->pos++;
 		}

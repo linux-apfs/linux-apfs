@@ -292,8 +292,7 @@ int apfs_cat_resolve(struct super_block *sb, struct apfs_key *key, u64 *ino)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
-	struct apfs_drec_val *data;
-	char *raw;
+	struct apfs_drec drec;
 	int err = 0;
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
@@ -306,12 +305,9 @@ int apfs_cat_resolve(struct super_block *sb, struct apfs_key *key, u64 *ino)
 	if (err)
 		goto out;
 
-	raw = query->table->t_node.bh->b_data + query->off;
-	data = (struct apfs_drec_val *)raw;
-	if (query->len >= sizeof(*data))
-		*ino = le64_to_cpu(data->file_id);
-	else
-		err = -EFSCORRUPTED;
+	err = apfs_drec_from_query(query, &drec);
+	if (!err)
+		*ino = drec.ino;
 
 out:
 	apfs_free_query(sb, query);

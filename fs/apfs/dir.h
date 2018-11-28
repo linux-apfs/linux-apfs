@@ -11,6 +11,8 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 
+struct apfs_query;
+
 /*
  * Structure of the value of a directory entry. This is the data in
  * the catalog tables for record type APFS_TYPE_DIR_REC.
@@ -22,6 +24,18 @@ struct apfs_drec_val {
 	u8 xfields[];
 } __packed;
 
+/*
+ * Directory entry record in memory
+ */
+struct apfs_drec {
+	u8 *name;
+	u64 ino;
+	int name_len;
+	unsigned int type;
+};
+
+extern int apfs_drec_from_query(struct apfs_query *query,
+				struct apfs_drec *drec);
 extern int apfs_inode_by_name(struct inode *dir, const struct qstr *child,
 			      u64 *ino);
 
