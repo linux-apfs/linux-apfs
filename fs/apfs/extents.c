@@ -17,6 +17,41 @@
 #include "table.h"
 
 /**
+ * apfs_extent_from_query - Read the extent found by a successful query
+ * @query:	the query that found the record
+ * @extent:	Return parameter.  The extent found.
+ *
+ * Reads the extent record into @extent and performs some basic sanity checks
+ * as a protection against crafted filesystems.  Returns 0 on success or
+ * -EFSCORRUPTED otherwise.
+ */
+int apfs_extent_from_query(struct apfs_query *query,
+			   struct apfs_file_extent *extent)
+{
+	struct super_block *sb = query->table->t_node.sb;
+	struct apfs_file_extent_val *ext;
+	struct apfs_file_extent_key *ext_key;
+	char *raw = query->table->t_node.bh->b_data;
+	u64 ext_len;
+
+	if (query->len != sizeof(*ext) || query->key_len != sizeof(*ext_key))
+		return -EFSCORRUPTED;
+
+	ext = (struct apfs_file_extent_val *)(raw + query->off);
+	ext_key = (struct apfs_file_extent_key *)(raw + query->key_off);
+	ext_len = le64_to_cpu(ext->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
+
+	/* Extent length must be a multiple of the block size */
+	if (ext_len & (sb->s_blocksize - 1))
+		return -EFSCORRUPTED;
+
+	extent->logical_addr = le64_to_cpu(ext_key->logical_addr);
+	extent->phys_block_num = le64_to_cpu(ext->phys_block_num);
+	extent->len = ext_len;
+	return 0;
+}
+
+/**
  * apfs_extent_read - Read the extent record that covers a block
  * @inode:	inode that owns the record
  * @iblock:	logical number of the wanted block
@@ -33,12 +68,8 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	struct apfs_inode_info *ai = APFS_I(inode);
 	struct apfs_key *key;
 	struct apfs_query *query;
-	struct apfs_file_extent_val *ext;
-	struct apfs_file_extent_key *ext_key;
 	struct apfs_file_extent *cache = &ai->i_cached_extent;
-	char *raw;
 	u64 iaddr = iblock << inode->i_blkbits;
-	u64 ext_len;
 	int ret = 0;
 
 	mutex_lock(&ai->i_extent_lock);
@@ -69,28 +100,12 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	if (ret)
 		goto done;
 
-	if (query->len != sizeof(*ext) || query->key_len != sizeof(*ext_key)) {
+	ret = apfs_extent_from_query(query, extent);
+	if (ret) {
 		apfs_alert(sb, "bad extent record for inode 0x%llx",
 			   (unsigned long long) inode->i_ino);
-		ret = -EFSCORRUPTED;
 		goto done;
 	}
-	raw = query->table->t_node.bh->b_data;
-	ext = (struct apfs_file_extent_val *)(raw + query->off);
-	ext_key = (struct apfs_file_extent_key *)(raw + query->key_off);
-	ext_len = le64_to_cpu(ext->len_and_flags) & APFS_FILE_EXTENT_LEN_MASK;
-
-	/* Extent length must be a multiple of the block size */
-	if (ext_len & (sb->s_blocksize - 1)) {
-		apfs_alert(sb, "bad extent length for inode 0x%llx",
-			   (unsigned long long) inode->i_ino);
-		ret = -EFSCORRUPTED;
-		goto done;
-	}
-
-	extent->logical_addr = le64_to_cpu(ext_key->logical_addr);
-	extent->phys_block_num = le64_to_cpu(ext->phys_block_num);
-	extent->len = ext_len;
 
 	mutex_lock(&ai->i_extent_lock);
 	*cache = *extent;

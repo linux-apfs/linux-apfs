@@ -10,6 +10,8 @@
 
 #include <linux/types.h>
 
+struct apfs_query;
+
 /* File extent records */
 #define APFS_FILE_EXTENT_LEN_MASK	0x00ffffffffffffffULL
 #define APFS_FILE_EXTENT_FLAG_MASK	0xff00000000000000ULL
@@ -33,6 +35,8 @@ struct apfs_file_extent {
 	u64 len;
 };
 
+extern int apfs_extent_from_query(struct apfs_query *query,
+				  struct apfs_file_extent *extent);
 extern int apfs_get_block(struct inode *inode, sector_t iblock,
 			  struct buffer_head *bh_result, int create);
 

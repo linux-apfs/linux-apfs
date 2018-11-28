@@ -77,10 +77,8 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	 */
 	ret = -EFSCORRUPTED;
 	for (i = 0; i < (length >> parent->i_blkbits) + 2; i++) {
-		struct apfs_file_extent_val *ext;
-		struct apfs_file_extent_key *ext_key;
-		char *raw;
-		u64 block, block_count, file_off, ext_len;
+		struct apfs_file_extent ext;
+		u64 block_count, file_off;
 		int err;
 		int j;
 
@@ -102,22 +100,16 @@ static int apfs_xattr_extents_read(struct inode *parent,
 			goto done;
 		}
 
-		if (query->len != sizeof(*ext) ||
-		    query->key_len != sizeof(*ext_key)) {
+		err = apfs_extent_from_query(query, &ext);
+		if (err) {
 			apfs_alert(sb, "bad extent for xattr in inode 0x%llx",
 				   (unsigned long long) parent->i_ino);
-			ret = -EFSCORRUPTED;
+			ret = err;
 			goto done;
 		}
-		raw = query->table->t_node.bh->b_data;
-		ext = (struct apfs_file_extent_val *)(raw + query->off);
-		ext_key = (struct apfs_file_extent_key *)(raw + query->key_off);
 
-		ext_len = le64_to_cpu(ext->len_and_flags) &
-			  APFS_FILE_EXTENT_LEN_MASK;
-		block = le64_to_cpu(ext->phys_block_num);
-		block_count = ext_len >> sb->s_blocksize_bits;
-		file_off = le64_to_cpu(ext_key->logical_addr);
+		block_count = ext.len >> sb->s_blocksize_bits;
+		file_off = ext.logical_addr;
 		for (j = 0; j < block_count; ++j) {
 			struct buffer_head *bh;
 			int bytes;
@@ -127,7 +119,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 			bytes = min(sb->s_blocksize,
 				    (unsigned long)(length - file_off));
 
-			bh = sb_bread(sb, block + j);
+			bh = sb_bread(sb, ext.phys_block_num + j);
 			if (!bh) {
 				ret = -EIO;
 				goto done;
