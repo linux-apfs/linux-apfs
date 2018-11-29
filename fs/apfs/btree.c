@@ -16,6 +16,26 @@
 #include "table.h"
 
 /**
+ * apfs_child_from_query - Read the child id found by a successful nonleaf query
+ * @query:	the query that found the record
+ * @child:	Return parameter.  The child id found.
+ *
+ * Reads the child id in the nonleaf node record into @child and performs a
+ * basic sanity check as a protection against crafted filesystems.  Returns 0
+ * on success or -EFSCORRUPTED otherwise.
+ */
+static int apfs_child_from_query(struct apfs_query *query, u64 *child)
+{
+	char *raw = query->table->t_node.bh->b_data;
+
+	if (query->len != 8) /* The data on a nonleaf node is the child id */
+		return -EFSCORRUPTED;
+
+	*child = le64_to_cpup((__le64 *)(raw + query->off));
+	return 0;
+}
+
+/**
  * apfs_omap_lookup_block - Find the block number of a b-tree node from its id
  * @sb:		filesystem superblock
  * @tbl:	Root of the object map to be searched
@@ -149,7 +169,6 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_table *table;
 	struct apfs_query *parent;
-	char *raw;
 	u64 child_id, child_blk;
 	int err;
 
@@ -182,15 +201,12 @@ next_node:
 	if (apfs_table_is_leaf((*query)->table)) /* All done */
 		return 0;
 
-	/* The data on an index node is the id of the child */
-	if ((*query)->len != 8) {
+	err = apfs_child_from_query(*query, &child_id);
+	if (err) {
 		apfs_alert(sb, "bad index block: 0x%llx",
 			   (*query)->table->t_node.block_nr);
-		return -EFSCORRUPTED;
+		return err;
 	}
-
-	raw = (*query)->table->t_node.bh->b_data;
-	child_id = le64_to_cpup((__le64 *)(raw + (*query)->off));
 
 	/*
 	 * The omap maps a node id into a block number. The nodes
