@@ -29,8 +29,6 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
 {
 	struct apfs_query *query;
 	struct apfs_key *key;
-	struct apfs_omap_val *data;
-	char *raw;
 	int ret = 0;
 
 	query = apfs_alloc_query(tbl, NULL /* parent */);
@@ -52,16 +50,10 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
 	if (ret)
 		goto fail;
 
-	if (query->len != sizeof(*data)) {
+	ret = apfs_bno_from_query(query, block);
+	if (ret)
 		apfs_alert(sb, "bad object map leaf block: 0x%llx",
 			   query->table->t_node.block_nr);
-		ret = -EFSCORRUPTED;
-		goto fail;
-	}
-
-	raw = query->table->t_node.bh->b_data;
-	data = (struct apfs_omap_val *)(raw + query->off);
-	*block = le64_to_cpu(data->ov_paddr);
 
 fail:
 	kfree(key);

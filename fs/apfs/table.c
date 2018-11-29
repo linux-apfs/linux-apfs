@@ -318,3 +318,25 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 
 	return -ENODATA;
 }
+
+/**
+ * apfs_bno_from_query - Read the block number found by a successful omap query
+ * @query:	the query that found the record
+ * @bno:	Return parameter.  The block number found.
+ *
+ * Reads the block number in the omap record into @bno and performs a basic
+ * sanity check as a protection against crafted filesystems.  Returns 0 on
+ * success or -EFSCORRUPTED otherwise.
+ */
+int apfs_bno_from_query(struct apfs_query *query, u64 *bno)
+{
+	struct apfs_omap_val *omap_val;
+	char *raw = query->table->t_node.bh->b_data;
+
+	if (query->len != sizeof(*omap_val))
+		return -EFSCORRUPTED;
+
+	omap_val = (struct apfs_omap_val *)(raw + query->off);
+	*bno = le64_to_cpu(omap_val->ov_paddr);
+	return 0;
+}
