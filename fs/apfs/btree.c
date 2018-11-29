@@ -251,43 +251,6 @@ next_node:
 }
 
 /**
- * apfs_cat_get_data - Get the data for a catalog key
- * @sb:		filesystem superblock
- * @key:	catalog key
- * @length:	on return it will hold the length of the data
- * @table:	on return it will point to the table that stores the data
- *
- * Returns a pointer to the data, which will consist of @len bytes; or NULL
- * in case of failure.
- */
-void *apfs_cat_get_data(struct super_block *sb, struct apfs_key *key,
-			int *length, struct apfs_table **table)
-{
-	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_query *query;
-	void *data = NULL;
-
-	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query)
-		return NULL;
-	query->key = key;
-	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
-
-	if (apfs_btree_query(sb, &query))
-		goto fail;
-
-	/* table is going to be passed to upper layer. */
-	apfs_table_get(query->table);
-	*table = query->table;
-	*length = query->len;
-	data = query->table->t_node.bh->b_data + query->off;
-
-fail:
-	apfs_free_query(sb, query);
-	return data;
-}
-
-/**
  * apfs_cat_resolve - Resolve a catalog key into an inode number
  * @sb:		filesystem superblock
  * @key:	catalog key (for a key record)

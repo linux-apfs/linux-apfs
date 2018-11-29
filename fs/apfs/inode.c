@@ -43,53 +43,73 @@ const struct address_space_operations apfs_aops = {
 };
 
 /**
- * apfs_get_inode - Get the raw metadata corresponding to an inode number
- * @sb:		filesystem superblock
- * @cnid:	the inode number
- * @table:	on success it will point to the table that stores the data
- * @isize:	on success points to the inode size attr. NULL if there is none
+ * apfs_inode_from_query - Read the inode found by a successful query
+ * @query:	the query that found the record
+ * @inode:	vfs inode to be filled with the read data
  *
- * Returns a pointer to the data, or NULL in case of failure. TODO: use more
- * descriptive error pointers.
+ * Reads the inode record into @inode and performs some basic sanity checks,
+ * mostly as a protection against crafted filesystems.  Returns 0 on success
+ * or a negative error code otherwise.
  */
-static struct apfs_inode_val *apfs_get_inode(struct super_block *sb, u64 cnid,
-					     struct apfs_table **table,
-					     struct apfs_dstream **dstream)
+static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 {
-	struct apfs_key *key;
-	struct apfs_inode_val *raw;
+	struct super_block *sb = inode->i_sb;
+	struct apfs_inode_info *ai = APFS_I(inode);
+	struct apfs_inode_val *inode_val;
+	struct apfs_dstream *dstream = NULL;
 	struct apfs_xf_blob *xblob;
 	struct apfs_x_field *xfield;
-	int len, rest;
-	int i;
+	char *raw = query->table->t_node.bh->b_data;
+	int rest, i;
+	u64 secs;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return NULL;
-	/* Looking for an inode record, so this is the only field of the key */
-	apfs_init_key(sb, APFS_TYPE_INODE, cnid, NULL /* name */,
-		      0 /* namelen */, 0 /* offset */, key);
+	if (query->len < sizeof(*inode_val))
+		return -EFSCORRUPTED;
 
-	raw = apfs_cat_get_data(sb, key, &len, table);
-	kfree(key);
-	if (!raw)
-		return NULL;
+	inode_val = (struct apfs_inode_val *)(raw + query->off);
 
-	/* Now we must parse the optional attrs to find the one for the size */
-	*dstream = NULL;
-	if (sizeof(*raw) > len) {
+	ai->i_extent_id = le64_to_cpu(inode_val->private_id);
+	inode->i_mode = le16_to_cpu(inode_val->mode);
+	i_uid_write(inode, (uid_t)le32_to_cpu(inode_val->owner));
+	i_gid_write(inode, (gid_t)le32_to_cpu(inode_val->group));
+
+	if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
 		/*
-		 * Sanity check: prevent out of bounds read of i_attr_count
-		 * and the other raw inode fields.
+		 * It seems that hard links are only allowed for regular files,
+		 * and perhaps for symlinks.
+		 *
+		 * Directory inodes don't store their link count, so to provide
+		 * it we would have to actually count the subdirectories. The
+		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
 		 */
-		goto fail;
+		set_nlink(inode, le64_to_cpu(inode_val->nlink));
+		if (inode->i_nlink < le64_to_cpu(inode_val->nlink)) {
+			apfs_warn(sb, "hardlink count overflow in inode 0x%llx",
+				  (u64)inode->i_ino);
+			return -EOVERFLOW;
+		}
 	}
-	xblob = (struct apfs_xf_blob *) raw->xfields;
+
+	/* APFS stores the time as unsigned nanoseconds since the epoch */
+	secs = le64_to_cpu(inode_val->access_time);
+	inode->i_atime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	inode->i_atime.tv_sec = secs;
+	secs = le64_to_cpu(inode_val->change_time);
+	inode->i_ctime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	inode->i_ctime.tv_sec = secs;
+	secs = le64_to_cpu(inode_val->mod_time);
+	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	inode->i_mtime.tv_sec = secs;
+	secs = le64_to_cpu(inode_val->create_time);
+	ai->i_crtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
+	ai->i_crtime.tv_sec = secs;
+
+	xblob = (struct apfs_xf_blob *) inode_val->xfields;
 	xfield = (struct apfs_x_field *) xblob->xf_data;
-	rest = len - (sizeof(*raw) + sizeof(*xblob));
+	rest = query->len - (sizeof(*inode_val) + sizeof(*xblob));
 	rest -= le16_to_cpu(xblob->xf_num_exts) * sizeof(xfield[0]);
 	if (rest < 0)
-		goto fail;
+		return -EFSCORRUPTED;
 	for (i = 0; i < le16_to_cpu(xblob->xf_num_exts); ++i) {
 		int attrlen;
 
@@ -99,18 +119,71 @@ static struct apfs_inode_val *apfs_get_inode(struct super_block *sb, u64 cnid,
 			break;
 		if (xfield[i].x_type == APFS_INO_EXT_TYPE_DSTREAM) {
 			/* The only optional attr we care about, for now */
-			*dstream = (struct apfs_dstream *)((char *)raw +
-							   len - rest);
+			dstream = (struct apfs_dstream *)
+					((char *)inode_val + query->len - rest);
 			break;
 		}
 		rest -= attrlen;
 	}
 
-	return raw;
+	if (dstream) {
+		inode->i_size = le64_to_cpu(dstream->size);
+		inode->i_blocks = le64_to_cpu(dstream->alloced_size) >> 9;
+	} else {
+		/*
+		 * This inode is "empty", but it may actually hold compressed
+		 * data in the named attribute com.apple.decmpfs, and sometimes
+		 * in com.apple.ResourceFork
+		 */
+		inode->i_size = inode->i_blocks = 0;
+	}
 
+	return 0;
+}
+
+/**
+ * apfs_inode_lookup - Lookup an inode record in the b-tree and read its data
+ * @inode:	vfs inode to lookup and fill
+ *
+ * Queries the b-tree for the @inode->i_ino inode record and reads its data to
+ * @inode.  Returns 0 on success or a negative error code otherwise.
+ */
+static int apfs_inode_lookup(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key *key;
+	struct apfs_query *query;
+	u64 cnid = inode->i_ino;
+	int ret;
+
+	key = kmalloc(sizeof(*key), GFP_KERNEL);
+	if (!key)
+		return -ENOMEM;
+	apfs_init_key(sb, APFS_TYPE_INODE, cnid, NULL /* name */,
+		      0 /* namelen */, 0 /* offset */, key);
+
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query) {
+		ret = -ENOMEM;
+		goto fail;
+	}
+	query->key = key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret)
+		goto done;
+
+	ret = apfs_inode_from_query(query, inode);
+	if (ret)
+		apfs_alert(sb, "bad inode record for inode 0x%llx", cnid);
+
+done:
+	apfs_free_query(sb, query);
 fail:
-	apfs_table_put(*table);
-	return NULL;
+	kfree(key);
+	return ret;
 }
 
 /**
@@ -131,13 +204,9 @@ fail:
 struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct inode *inode, *err;
-	struct apfs_inode_info *ai;
-	struct apfs_inode_val *raw_inode;
-	struct apfs_dstream *raw_isize;
-	struct apfs_table *table;
+	struct inode *inode;
 	unsigned long ino = cnid;
-	u64 secs;
+	int err;
 
 	if (ino < cnid) {
 		apfs_warn(sb, "inode number overflow: 0x%llx", cnid);
@@ -148,68 +217,18 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		return ERR_PTR(-ENOMEM);
 	if (!(inode->i_state & I_NEW))
 		return inode;
-	ai = APFS_I(inode);
 
-	raw_inode = apfs_get_inode(sb, (u64)ino, &table, &raw_isize);
-	if (!raw_inode) {
-		err = ERR_PTR(-EIO);
-		goto failed_get;
+	err = apfs_inode_lookup(inode);
+	if (err) {
+		iget_failed(inode);
+		return ERR_PTR(err);
 	}
 
-	ai->i_extent_id = le64_to_cpu(raw_inode->private_id);
-	inode->i_mode = le16_to_cpu(raw_inode->mode);
 	/* Allow the user to override the ownership */
 	if (sbi->s_flags & APFS_UID_OVERRIDE)
 		inode->i_uid = sbi->s_uid;
-	else
-		i_uid_write(inode, (uid_t)le32_to_cpu(raw_inode->owner));
 	if (sbi->s_flags & APFS_GID_OVERRIDE)
 		inode->i_gid = sbi->s_gid;
-	else
-		i_gid_write(inode, (gid_t)le32_to_cpu(raw_inode->group));
-
-	if (S_ISREG(inode->i_mode) || S_ISLNK(inode->i_mode)) {
-		/*
-		 * It seems that hard links are only allowed for regular files,
-		 * and perhaps for symlinks.
-		 *
-		 * Directory inodes don't store their link count, so to provide
-		 * it we would have to actually count the subdirectories. The
-		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
-		 */
-		set_nlink(inode, le64_to_cpu(raw_inode->nlink));
-		if (inode->i_nlink < le64_to_cpu(raw_inode->nlink)) {
-			apfs_warn(sb, "hardlink count overflow in inode 0x%llx",
-				  cnid);
-			err = ERR_PTR(-EOVERFLOW);
-			goto failed_read;
-		}
-	}
-	if (raw_isize) {
-		inode->i_size = le64_to_cpu(raw_isize->size);
-		inode->i_blocks = le64_to_cpu(raw_isize->alloced_size) >> 9;
-	} else {
-		/*
-		 * This inode is "empty", but it may actually hold compressed
-		 * data in the named attribute com.apple.decmpfs, and sometimes
-		 * in com.apple.ResourceFork
-		 */
-		inode->i_size = inode->i_blocks = 0;
-	}
-
-	/* APFS stores the time as unsigned nanoseconds since the epoch */
-	secs = le64_to_cpu(raw_inode->access_time);
-	inode->i_atime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	inode->i_atime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->change_time);
-	inode->i_ctime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	inode->i_ctime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->mod_time);
-	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	inode->i_mtime.tv_sec = secs;
-	secs = le64_to_cpu(raw_inode->create_time);
-	ai->i_crtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	ai->i_crtime.tv_sec = secs;
 
 	/* A lot of operations still missing, of course */
 	if (S_ISREG(inode->i_mode)) {
@@ -225,16 +244,9 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		inode->i_op = &apfs_special_inode_operations;
 	}
 
-	apfs_table_put(table);
 	/* Inode flags are not important for now, leave them at 0 */
 	unlock_new_inode(inode);
 	return inode;
-
-failed_read:
-	apfs_table_put(table);
-failed_get:
-	iget_failed(inode);
-	return err;
 }
 
 int apfs_getattr(const struct path *path, struct kstat *stat,
