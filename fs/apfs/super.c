@@ -23,20 +23,6 @@
 #include "table.h"
 #include "xattr.h"
 
-static void apfs_put_super(struct super_block *sb)
-{
-	struct apfs_sb_info *sbi = APFS_SB(sb);
-
-	sb->s_fs_info = NULL;
-
-	apfs_table_put(sbi->s_cat_root);
-	apfs_table_put(sbi->s_omap_root);
-
-	brelse(sbi->s_mnode.bh);
-	brelse(sbi->s_vnode.bh);
-	kfree(sbi);
-}
-
 /*
  * Note that this is not a generic implementation of fletcher64, as it assumes
  * a message length that doesn't overflow sum1 and sum2.  This constraint is ok
@@ -69,6 +55,99 @@ int apfs_obj_verify_csum(struct super_block *sb, struct apfs_obj_phys *obj)
 	return  (le64_to_cpu(obj->o_cksum) ==
 		 apfs_fletcher64((char *) obj + APFS_MAX_CKSUM_SIZE,
 				 sb->s_blocksize - APFS_MAX_CKSUM_SIZE));
+}
+
+/**
+ * apfs_map_main_super - Verify the container superblock and map it into memory
+ * @sb:	superblock structure
+ *
+ * Returns a negative error code in case of failure.  On success, returns 0
+ * and sets APFS_SB(@sb)->s_msb_raw and APFS_SB(@sb)->s_mnode.
+ */
+static int apfs_map_main_super(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *msb_raw;
+	struct buffer_head *bh;
+	int blocksize;
+	int err = -EINVAL;
+
+	/*
+	 * For now assume a small blocksize, we only need it so that we can
+	 * read the actual blocksize from disk.
+	 */
+	if (!sb_set_blocksize(sb, APFS_NX_DEFAULT_BLOCK_SIZE)) {
+		apfs_err(sb, "unable to set blocksize");
+		return err;
+	}
+	bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
+	if (!bh) {
+		apfs_err(sb, "unable to read superblock");
+		return err;
+	}
+	msb_raw = (struct apfs_nx_superblock *)bh->b_data;
+	blocksize = le32_to_cpu(msb_raw->nx_block_size);
+
+	if (sb->s_blocksize != blocksize) {
+		brelse(bh);
+
+		if (!sb_set_blocksize(sb, blocksize)) {
+			apfs_err(sb, "bad blocksize %d", blocksize);
+			return err;
+		}
+		bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
+		if (!bh) {
+			apfs_err(sb, "unable to read superblock 2nd time");
+			return err;
+		}
+		msb_raw = (struct apfs_nx_superblock *)bh->b_data;
+	}
+
+	sb->s_magic = le32_to_cpu(msb_raw->nx_magic);
+	if (sb->s_magic != APFS_NX_MAGIC) {
+		apfs_err(sb, "not an apfs filesystem");
+		goto fail;
+	}
+	if (!apfs_obj_verify_csum(sb, &msb_raw->nx_o)) {
+		apfs_err(sb, "inconsistent container superblock");
+		goto fail;
+	}
+
+	sbi->s_msb_raw = msb_raw;
+	sbi->s_mnode.sb = sb;
+	sbi->s_mnode.block_nr = APFS_NX_BLOCK_NUM;
+	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->nx_o.o_oid);
+	sbi->s_mnode.bh = bh;
+	return 0;
+
+fail:
+	brelse(bh);
+	return err;
+}
+
+/**
+ * apfs_unmap_main_super - Clean up apfs_map_main_super()
+ * @sb:	filesystem superblock
+ */
+static inline void apfs_unmap_main_super(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+
+	brelse(sbi->s_mnode.bh);
+}
+
+static void apfs_put_super(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+
+	apfs_table_put(sbi->s_cat_root);
+	apfs_table_put(sbi->s_omap_root);
+
+	apfs_unmap_main_super(sb);
+	brelse(sbi->s_vnode.bh);
+
+	sb->s_fs_info = NULL;
+	kfree(sbi);
 }
 
 static struct kmem_cache *apfs_inode_cachep;
@@ -341,7 +420,7 @@ static int parse_options(struct super_block *sb, char *options)
 
 static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct buffer_head *bh, *bh2, *bh3;
+	struct buffer_head *bh2, *bh3;
 	struct apfs_sb_info *sbi;
 	struct apfs_nx_superblock *msb_raw;
 	struct apfs_omap_phys *msb_omap_raw, *vol_omap_raw;
@@ -352,64 +431,20 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	u64 vol_id, root_id;
 	u64 msb_omap, vb, vsb = 0;
 	u64 cat_blk, vol_omap_blk;
-	int blocksize;
-	int err = -EINVAL;
+	int err;
 
 	apfs_notice(sb, "this module is read-only");
 	sb->s_flags |= SB_RDONLY;
 
-	/*
-	 * For now assume a small blocksize, we only need it so that we can
-	 * read the actual blocksize from disk.
-	 */
-	if (!sb_set_blocksize(sb, APFS_NX_DEFAULT_BLOCK_SIZE)) {
-		apfs_err(sb, "unable to set blocksize");
-		return err;
-	}
-	bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
-	if (!bh) {
-		apfs_err(sb, "unable to read superblock");
-		return err;
-	}
-	msb_raw = (struct apfs_nx_superblock *)bh->b_data;
-	blocksize = le32_to_cpu(msb_raw->nx_block_size);
-	if (sb->s_blocksize != blocksize) {
-		brelse(bh);
-
-		if (!sb_set_blocksize(sb, blocksize)) {
-			apfs_err(sb, "bad blocksize %d", blocksize);
-			return err;
-		}
-		bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
-		if (!bh) {
-			apfs_err(sb, "unable to read superblock 2nd time");
-			return err;
-		}
-		msb_raw = (struct apfs_nx_superblock *)bh->b_data;
-	}
-
-	sb->s_maxbytes = MAX_LFS_FILESIZE;
-	sb->s_magic = le32_to_cpu(msb_raw->nx_magic);
-	if (sb->s_magic != APFS_NX_MAGIC) {
-		apfs_err(sb, "not an apfs filesystem");
-		goto failed_super;
-	}
-
-	if (!apfs_obj_verify_csum(sb, &msb_raw->nx_o)) {
-		apfs_err(sb, "inconsistent container superblock");
-		goto failed_super;
-	}
-
-	err = -ENOMEM;
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
-		goto failed_super;
+		return -ENOMEM;
 	sb->s_fs_info = sbi;
-	sbi->s_msb_raw = msb_raw;
-	sbi->s_mnode.sb = sb;
-	sbi->s_mnode.block_nr = APFS_NX_BLOCK_NUM;
-	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->nx_o.o_oid);
-	sbi->s_mnode.bh = bh;
+
+	err = apfs_map_main_super(sb);
+	if (err)
+		goto failed_main_super;
+	msb_raw = sbi->s_msb_raw;
 
 	/* For now we only support nodesize < PAGE_SIZE */
 	sbi->s_nodesize = sb->s_blocksize;
@@ -515,6 +550,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &apfs_sops;
 	sb->s_d_op = &apfs_dentry_operations;
 	sb->s_xattr = apfs_xattr_handlers;
+	sb->s_maxbytes = MAX_LFS_FILESIZE;
 
 	root = apfs_iget(sb, APFS_ROOT_DIR_INO_NUM);
 	if (IS_ERR(root)) {
@@ -536,10 +572,10 @@ failed_root:
 failed_cat:
 	brelse(bh2);
 failed_vol:
+	apfs_unmap_main_super(sb);
+failed_main_super:
 	sb->s_fs_info = NULL;
 	kfree(sbi);
-failed_super:
-	brelse(bh);
 	return err;
 }
 
