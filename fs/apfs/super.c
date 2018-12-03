@@ -136,6 +136,96 @@ static inline void apfs_unmap_main_super(struct super_block *sb)
 	brelse(sbi->s_mnode.bh);
 }
 
+/**
+ * apfs_map_volume_super - Find the volume superblock and map it into memory
+ * @sb:	superblock structure
+ *
+ * Returns a negative error code in case of failure.  On success, returns 0
+ * and sets APFS_SB(@sb)->s_vsb_raw and APFS_SB(@sb)->s_vnode.
+ */
+static int apfs_map_volume_super(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
+	struct apfs_superblock *vsb_raw;
+	struct apfs_omap_phys *msb_omap_raw;
+	struct apfs_table *vtable;
+	struct buffer_head *bh;
+	u64 vol_id;
+	u64 msb_omap, vb, vsb;
+	int err;
+
+	/* Get the id for the requested volume number */
+	if (sizeof(*msb_raw) + 8 * (sbi->s_vol_nr + 1) >= sb->s_blocksize) {
+		/* For now we assume that nodesize <= PAGE_SIZE */
+		apfs_err(sb, "volume number out of range");
+		return -EINVAL;
+	}
+	vol_id = le64_to_cpu(msb_raw->nx_fs_oid[sbi->s_vol_nr]);
+	if (vol_id == 0) {
+		apfs_err(sb, "requested volume does not exist");
+		return -EINVAL;
+	}
+
+	/* Get the container's object map */
+	msb_omap = le64_to_cpu(msb_raw->nx_omap_oid);
+	bh = sb_bread(sb, msb_omap);
+	if (!bh) {
+		apfs_err(sb, "unable to read container object map");
+		return -EINVAL;
+	}
+	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
+
+	/* Get the Volume Block */
+	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
+	msb_omap_raw = NULL;
+	brelse(bh);
+
+	vtable = apfs_read_table(sb, vb);
+	if (IS_ERR(vtable)) {
+		apfs_err(sb, "unable to read volume block");
+		return PTR_ERR(vtable);
+	}
+
+	err = apfs_omap_lookup_block(sb, vtable, vol_id, &vsb);
+	if (err) {
+		apfs_err(sb, "volume not found, likely corruption");
+		return err;
+	}
+	apfs_table_put(vtable);
+
+	bh = sb_bread(sb, vsb);
+	if (!bh) {
+		apfs_err(sb, "unable to read volume superblock");
+		return -EINVAL;
+	}
+
+	vsb_raw = (struct apfs_superblock *)bh->b_data;
+	if (le32_to_cpu(vsb_raw->apfs_magic) != APFS_MAGIC) {
+		apfs_err(sb, "wrong magic in volume superblock");
+		brelse(bh);
+		return -EINVAL;
+	}
+
+	sbi->s_vsb_raw = vsb_raw;
+	sbi->s_vnode.sb = sb;
+	sbi->s_vnode.block_nr = vsb;
+	sbi->s_vnode.node_id = le64_to_cpu(vsb_raw->apfs_o.o_oid);
+	sbi->s_vnode.bh = bh;
+	return 0;
+}
+
+/**
+ * apfs_unmap_volume_super - Clean up apfs_map_volume_super()
+ * @sb:	filesystem superblock
+ */
+static inline void apfs_unmap_volume_super(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+
+	brelse(sbi->s_vnode.bh);
+}
+
 static void apfs_put_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -144,7 +234,7 @@ static void apfs_put_super(struct super_block *sb)
 	apfs_table_put(sbi->s_omap_root);
 
 	apfs_unmap_main_super(sb);
-	brelse(sbi->s_vnode.bh);
+	apfs_unmap_volume_super(sb);
 
 	sb->s_fs_info = NULL;
 	kfree(sbi);
@@ -420,16 +510,13 @@ static int parse_options(struct super_block *sb, char *options)
 
 static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct buffer_head *bh2, *bh3;
+	struct buffer_head *bh3;
 	struct apfs_sb_info *sbi;
-	struct apfs_nx_superblock *msb_raw;
-	struct apfs_omap_phys *msb_omap_raw, *vol_omap_raw;
+	struct apfs_omap_phys *vol_omap_raw;
 	struct apfs_superblock *vsb_raw;
-	struct apfs_table *vtable;
 	struct apfs_table *vol_omap_table = NULL, *root_table = NULL;
 	struct inode *root;
-	u64 vol_id, root_id;
-	u64 msb_omap, vb, vsb = 0;
+	u64 root_id;
 	u64 cat_blk, vol_omap_blk;
 	int err;
 
@@ -444,7 +531,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	err = apfs_map_main_super(sb);
 	if (err)
 		goto failed_main_super;
-	msb_raw = sbi->s_msb_raw;
 
 	/* For now we only support nodesize < PAGE_SIZE */
 	sbi->s_nodesize = sb->s_blocksize;
@@ -452,68 +538,13 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	err = parse_options(sb, data);
 	if (err)
-		goto failed_vol;
+		goto failed_volume_super;
 
+	err = apfs_map_volume_super(sb);
+	if (err)
+		goto failed_volume_super;
+	vsb_raw = sbi->s_vsb_raw;
 	err = -EINVAL;
-
-	/* Get the id for the requested volume number */
-	if (sizeof(*msb_raw) + 8 * (sbi->s_vol_nr + 1) >= sb->s_blocksize) {
-		/* For now we assume that nodesize <= PAGE_SIZE */
-		apfs_err(sb, "volume number out of range");
-		goto failed_vol;
-	}
-	vol_id = le64_to_cpu(msb_raw->nx_fs_oid[sbi->s_vol_nr]);
-	if (vol_id == 0) {
-		apfs_err(sb, "requested volume does not exist");
-		goto failed_vol;
-	}
-
-	/* Get the container's object map */
-	msb_omap = le64_to_cpu(msb_raw->nx_omap_oid);
-	bh2 = sb_bread(sb, msb_omap);
-	if (!bh2) {
-		apfs_err(sb, "unable to read container object map");
-		goto failed_vol;
-	}
-	msb_omap_raw = (struct apfs_omap_phys *)bh2->b_data;
-
-	/* Get the Volume Block */
-	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
-	msb_omap_raw = NULL;
-	brelse(bh2);
-
-	vtable = apfs_read_table(sb, vb);
-	if (IS_ERR(vtable)) {
-		apfs_err(sb, "unable to read volume block");
-		err = PTR_ERR(vtable);
-		goto failed_vol;
-	}
-
-	err = apfs_omap_lookup_block(sb, vtable, vol_id, &vsb);
-	if (err) {
-		apfs_err(sb, "volume not found, likely corruption");
-		goto failed_vol;
-	}
-	apfs_table_put(vtable);
-
-	err = -EINVAL;
-	bh2 = sb_bread(sb, vsb);
-	if (!bh2) {
-		apfs_err(sb, "unable to read volume superblock");
-		goto failed_vol;
-	}
-
-	vsb_raw = (struct apfs_superblock *)bh2->b_data;
-	if (le32_to_cpu(vsb_raw->apfs_magic) != APFS_MAGIC) {
-		apfs_err(sb, "wrong magic in volume superblock");
-		goto failed_mount;
-	}
-
-	sbi->s_vsb_raw = vsb_raw;
-	sbi->s_vnode.sb = sb;
-	sbi->s_vnode.block_nr = vsb;
-	sbi->s_vnode.node_id = le64_to_cpu(vsb_raw->apfs_o.o_oid);
-	sbi->s_vnode.bh = bh2;
 
 	/* Get the block holding the catalog data */
 	cat_blk = le64_to_cpu(vsb_raw->apfs_omap_oid);
@@ -570,8 +601,8 @@ failed_mount:
 failed_root:
 	apfs_table_put(vol_omap_table);
 failed_cat:
-	brelse(bh2);
-failed_vol:
+	apfs_unmap_volume_super(sb);
+failed_volume_super:
 	apfs_unmap_main_super(sb);
 failed_main_super:
 	sb->s_fs_info = NULL;
