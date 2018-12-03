@@ -264,6 +264,30 @@ static int apfs_read_omap(struct super_block *sb)
 	return 0;
 }
 
+/**
+ * apfs_read_catalog - Find and read the catalog root node
+ * @sb:	superblock structure
+ *
+ * On success, returns 0 and sets APFS_SB(@sb)->s_cat_root; on failure returns
+ * a negative error code.
+ */
+static int apfs_read_catalog(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+	struct apfs_table *root_table;
+	u64 root_id;
+
+	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
+	root_table = apfs_omap_read_table(sb, root_id);
+	if (IS_ERR(root_table)) {
+		apfs_err(sb, "unable to read catalog root node");
+		return PTR_ERR(root_table);
+	}
+	sbi->s_cat_root = root_table;
+	return 0;
+}
+
 static void apfs_put_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -549,10 +573,7 @@ static int parse_options(struct super_block *sb, char *options)
 static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct apfs_sb_info *sbi;
-	struct apfs_superblock *vsb_raw;
-	struct apfs_table *root_table = NULL;
 	struct inode *root;
-	u64 root_id;
 	int err;
 
 	apfs_notice(sb, "this module is read-only");
@@ -578,22 +599,15 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	err = apfs_map_volume_super(sb);
 	if (err)
 		goto failed_volume_super;
-	vsb_raw = sbi->s_vsb_raw;
 
-	/* The omap needs to be set before the call to apfs_omap_read_table() */
+	/* The omap needs to be set before the call to apfs_read_catalog() */
 	err = apfs_read_omap(sb);
 	if (err)
 		goto failed_omap;
 
-	/* Get the root node from the volume object map */
-	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
-	root_table = apfs_omap_read_table(sb, root_id);
-	if (IS_ERR(root_table)) {
-		err = PTR_ERR(root_table);
-		apfs_err(sb, "unable to read catalog root node");
-		goto failed_root;
-	}
-	sbi->s_cat_root = root_table;
+	err = apfs_read_catalog(sb);
+	if (err)
+		goto failed_cat;
 
 	sb->s_op = &apfs_sops;
 	sb->s_d_op = &apfs_dentry_operations;
@@ -615,8 +629,8 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 failed_mount:
-	apfs_table_put(root_table);
-failed_root:
+	apfs_table_put(sbi->s_cat_root);
+failed_cat:
 	apfs_table_put(sbi->s_omap_root);
 failed_omap:
 	apfs_unmap_volume_super(sb);
