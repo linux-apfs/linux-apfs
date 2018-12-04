@@ -188,11 +188,11 @@ static int apfs_map_volume_super(struct super_block *sb)
 	}
 
 	err = apfs_omap_lookup_block(sb, vtable, vol_id, &vsb);
+	apfs_table_put(vtable);
 	if (err) {
 		apfs_err(sb, "volume not found, likely corruption");
 		return err;
 	}
-	apfs_table_put(vtable);
 
 	bh = sb_bread(sb, vsb);
 	if (!bh) {
