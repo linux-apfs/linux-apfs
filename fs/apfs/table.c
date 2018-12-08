@@ -255,6 +255,58 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 }
 
 /**
+ * apfs_table_next - Find the next matching record in the current table
+ * @sb:		filesystem superblock
+ * @query:	multiple query in execution
+ *
+ * Returns 0 on success, -EAGAIN if the next record is in another table,
+ * -ENODATA if no more matching records exist, or another negative error
+ * code in case of failure.
+ */
+static int apfs_table_next(struct super_block *sb, struct apfs_query *query)
+{
+	struct apfs_table *table = query->table;
+	int cmp, err;
+
+	if (query->flags & APFS_QUERY_DONE)
+		/* Nothing left to search; the query failed */
+		return -ENODATA;
+
+	if (!query->index) /* The next record may be in another table */
+		return -EAGAIN;
+	--query->index;
+
+	query->key_len = apfs_table_locate_key(table, query->index,
+					       &query->key_off);
+	err = apfs_key_from_query(query, query->curr);
+	if (err)
+		return err;
+
+	cmp = apfs_keycmp(sb, query->curr, query->key);
+
+	if (cmp > 0) /* Records are out of order */
+		return -EFSCORRUPTED;
+
+	if (cmp != 0 && apfs_table_is_leaf(table) &&
+	    query->flags & APFS_QUERY_EXACT)
+		return -ENODATA;
+
+	query->len = apfs_table_locate_data(table, query->index, &query->off);
+	if (query->len == 0)
+		return -EFSCORRUPTED;
+
+	if (cmp != 0) {
+		/*
+		 * This is the last entry that can be relevant in this table.
+		 * Keep searching the children, but don't return to this level.
+		 */
+		query->flags |= APFS_QUERY_DONE;
+	}
+
+	return 0;
+}
+
+/**
  * apfs_table_query - Execute a query on a single table
  * @sb:		filesystem superblock
  * @query:	the query to execute
@@ -284,9 +336,8 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_table *table = query->table;
 
-	if (query->flags & APFS_QUERY_DONE)
-		/* Nothing left to search; the query failed */
-		return -ENODATA;
+	if (query->flags & APFS_QUERY_NEXT)
+		return apfs_table_next(sb, query);
 
 	while (--query->index >= 0) {
 		int cmp, err;
@@ -309,23 +360,14 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 							    &query->off);
 			if (query->len == 0)
 				return -EFSCORRUPTED;
-			if (apfs_table_is_leaf(query->table) &&
-			    query->flags & APFS_QUERY_MULTIPLE &&
-			    cmp != 0) {
-				/*
-				 * This is the last entry that can be relevant
-				 * in this table. Keep searching the children,
-				 * but don't come back to this level.
-				 */
-				query->flags |= APFS_QUERY_DONE;
+
+			if (query->flags & APFS_QUERY_MULTIPLE) {
+				if (cmp != 0) /* Last relevant entry in level */
+					query->flags |= APFS_QUERY_DONE;
+				query->flags |= APFS_QUERY_NEXT;
 			}
 			return 0;
 		}
-	}
-
-	if (query->flags & APFS_QUERY_MULTIPLE) {
-		/* The next record may be in another table */
-		return -EAGAIN;
 	}
 
 	return -ENODATA;

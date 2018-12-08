@@ -116,7 +116,8 @@ struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 	query->table = table;
 	query->key = parent ? parent->key : NULL;
 	query->curr = curr;
-	query->flags = parent ? parent->flags & ~APFS_QUERY_DONE : 0;
+	query->flags = parent ?
+		parent->flags & ~(APFS_QUERY_DONE | APFS_QUERY_NEXT) : 0;
 	query->parent = parent;
 	/* Start the search with the last record and go backwards */
 	query->index = table->t_records;

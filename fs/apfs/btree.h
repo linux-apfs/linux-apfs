@@ -12,12 +12,13 @@
 #include <linux/types.h>
 
 /* Flags for the query structure */
-#define APFS_QUERY_TREE_MASK	007	/* Which b-tree we query */
-#define APFS_QUERY_OMAP		001	/* This is a b-tree object map query */
-#define APFS_QUERY_CAT		002	/* This is a catalog tree query */
-#define APFS_QUERY_MULTIPLE	010	/* Search for multiple matches */
-#define APFS_QUERY_EXACT	020	/* Search for an exact match */
-#define APFS_QUERY_DONE		040	/* The search at this level is over */
+#define APFS_QUERY_TREE_MASK	0007	/* Which b-tree we query */
+#define APFS_QUERY_OMAP		0001	/* This is a b-tree object map query */
+#define APFS_QUERY_CAT		0002	/* This is a catalog tree query */
+#define APFS_QUERY_MULTIPLE	0010	/* Search for multiple matches */
+#define APFS_QUERY_NEXT		0020	/* Find next of multiple matches */
+#define APFS_QUERY_EXACT	0040	/* Search for an exact match */
+#define APFS_QUERY_DONE		0100	/* The search at this level is over */
 
 /*
  * Structure used to retrieve data from an APFS B-Tree. For now only used
