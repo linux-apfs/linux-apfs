@@ -220,6 +220,41 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 }
 
 /**
+ * apfs_key_from_query - Read the current key from a query structure
+ * @query:	the query, with @query->key_off and @query->key_len already set
+ * @key:	return parameter for the key, should be @query->curr
+ *
+ * Reads the key into @key and performs some basic sanity checks as a
+ * protection against crafted filesystems.  Returns 0 on success or a
+ * negative error code otherwise.
+ */
+static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
+{
+	struct super_block *sb = query->table->t_node.sb;
+	char *raw = query->table->t_node.bh->b_data;
+	void *raw_key = (void *)(raw + query->key_off);
+	int err = 0;
+
+	switch (query->flags & APFS_QUERY_TREE_MASK) {
+	case APFS_QUERY_CAT:
+		err = apfs_read_cat_key(raw_key, query->key_len, key);
+		break;
+	case APFS_QUERY_OMAP:
+		err = apfs_read_omap_key(raw_key, query->key_len, query->curr);
+		break;
+	default:
+		/* Not implemented yet */
+		err = -EINVAL;
+		break;
+	}
+	if (err) {
+		apfs_alert(sb, "bad table key in block 0x%llx",
+			   query->table->t_node.block_nr);
+	}
+	return err;
+}
+
+/**
  * apfs_table_query - Execute a query on a single table
  * @sb:		filesystem superblock
  * @query:	the query to execute
@@ -254,32 +289,13 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 		return -ENODATA;
 
 	while (--query->index >= 0) {
-		char *raw = table->t_node.bh->b_data;
-		void *this_key;
-		int off, len;
-		int cmp;
-		int err;
+		int cmp, err;
 
-		len = apfs_table_locate_key(table, query->index, &off);
-		this_key = (void *)(raw + off);
-
-		switch (query->flags & APFS_QUERY_TREE_MASK) {
-		case APFS_QUERY_CAT:
-			err = apfs_read_cat_key(this_key, len, query->curr);
-			break;
-		case APFS_QUERY_OMAP:
-			err = apfs_read_omap_key(this_key, len, query->curr);
-			break;
-		default:
-			/* Not implemented yet */
-			err = -EINVAL;
-			break;
-		}
-		if (err) {
-			apfs_alert(sb, "bad table key in block 0x%llx",
-				   table->t_node.block_nr);
+		query->key_len = apfs_table_locate_key(table, query->index,
+						       &query->key_off);
+		err = apfs_key_from_query(query, query->curr);
+		if (err)
 			return err;
-		}
 
 		cmp = apfs_keycmp(sb, query->curr, query->key);
 
@@ -289,14 +305,10 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 			    cmp != 0)
 				return -ENODATA;
 
-			query->key_off = off;
-			query->key_len = len;
-
-			len = apfs_table_locate_data(table, query->index, &off);
-			if (len == 0)
+			query->len = apfs_table_locate_data(table, query->index,
+							    &query->off);
+			if (query->len == 0)
 				return -EFSCORRUPTED;
-			query->off = off;
-			query->len = len;
 			if (apfs_table_is_leaf(query->table) &&
 			    query->flags & APFS_QUERY_MULTIPLE &&
 			    cmp != 0) {
