@@ -328,19 +328,30 @@ static int apfs_table_next(struct super_block *sb, struct apfs_query *query)
  *
  * -ENODATA will be returned if no appropriate entry was found, -EFSCORRUPTED
  * in case of corruption.
- *
- * TODO: the search algorithm is far from optimal for the ordered case, it
- * would be better to search by bisection.
  */
 int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_table *table = query->table;
+	int left, right;
+	int cmp;
+	int err;
 
 	if (query->flags & APFS_QUERY_NEXT)
 		return apfs_table_next(sb, query);
 
-	while (--query->index >= 0) {
-		int cmp, err;
+	/* Search by bisection */
+	cmp = 1;
+	left = 0;
+	do {
+		if (cmp > 0) {
+			right = query->index - 1;
+			if (right < left)
+				return -ENODATA;
+			query->index = (left + right) / 2;
+		} else {
+			left = query->index;
+			query->index = DIV_ROUND_UP(left + right, 2);
+		}
 
 		query->key_len = apfs_table_locate_key(table, query->index,
 						       &query->key_off);
@@ -349,28 +360,27 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 			return err;
 
 		cmp = apfs_keycmp(sb, query->curr, query->key);
+		if (cmp == 0 && !(query->flags & APFS_QUERY_MULTIPLE))
+			break;
+	} while (left != right);
 
-		if (cmp <= 0) {
-			if (apfs_table_is_leaf(query->table) &&
-			    query->flags & APFS_QUERY_EXACT &&
-			    cmp != 0)
-				return -ENODATA;
+	if (cmp > 0)
+		return -ENODATA;
 
-			query->len = apfs_table_locate_data(table, query->index,
-							    &query->off);
-			if (query->len == 0)
-				return -EFSCORRUPTED;
+	if (cmp != 0 && apfs_table_is_leaf(query->table) &&
+	    query->flags & APFS_QUERY_EXACT)
+		return -ENODATA;
 
-			if (query->flags & APFS_QUERY_MULTIPLE) {
-				if (cmp != 0) /* Last relevant entry in level */
-					query->flags |= APFS_QUERY_DONE;
-				query->flags |= APFS_QUERY_NEXT;
-			}
-			return 0;
-		}
+	if (query->flags & APFS_QUERY_MULTIPLE) {
+		if (cmp != 0) /* Last relevant entry in level */
+			query->flags |= APFS_QUERY_DONE;
+		query->flags |= APFS_QUERY_NEXT;
 	}
 
-	return -ENODATA;
+	query->len = apfs_table_locate_data(table, query->index, &query->off);
+	if (query->len == 0)
+		return -EFSCORRUPTED;
+	return 0;
 }
 
 /**
