@@ -72,14 +72,14 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	u64 iaddr = iblock << inode->i_blkbits;
 	int ret = 0;
 
-	mutex_lock(&ai->i_extent_lock);
+	spin_lock(&ai->i_extent_lock);
 	if (iaddr >= cache->logical_addr &&
 	    iaddr < cache->logical_addr + cache->len) {
 		*extent = *cache;
-		mutex_unlock(&ai->i_extent_lock);
+		spin_unlock(&ai->i_extent_lock);
 		return 0;
 	}
-	mutex_unlock(&ai->i_extent_lock);
+	spin_unlock(&ai->i_extent_lock);
 
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
@@ -107,9 +107,9 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 		goto done;
 	}
 
-	mutex_lock(&ai->i_extent_lock);
+	spin_lock(&ai->i_extent_lock);
 	*cache = *extent;
-	mutex_unlock(&ai->i_extent_lock);
+	spin_unlock(&ai->i_extent_lock);
 
 done:
 	apfs_free_query(sb, query);

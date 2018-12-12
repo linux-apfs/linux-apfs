@@ -100,7 +100,7 @@ static void init_once(void *p)
 {
 	struct apfs_inode_info *ai = (struct apfs_inode_info *)p;
 
-	mutex_init(&ai->i_extent_lock);
+	spin_lock_init(&ai->i_extent_lock);
 	ai->i_cached_extent.len = 0;
 	inode_init_once(&ai->vfs_inode);
 }
