@@ -85,8 +85,7 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	if (!key)
 		return -ENOMEM;
 	/* We will search for the extent that covers iblock */
-	apfs_init_key(sb, APFS_TYPE_FILE_EXTENT, ai->i_extent_id,
-		      NULL /* name */, 0 /* namelen */, iaddr, key);
+	apfs_init_file_extent_key(ai->i_extent_id, iaddr, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {

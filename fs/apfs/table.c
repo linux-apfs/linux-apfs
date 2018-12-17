@@ -251,6 +251,12 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 		apfs_alert(sb, "bad table key in block 0x%llx",
 			   query->table->t_node.block_nr);
 	}
+
+	if (query->flags & APFS_QUERY_MULTIPLE) {
+		/* A multiple query must ignore these fields */
+		key->number = 0;
+		key->name = NULL;
+	}
 	return err;
 }
 

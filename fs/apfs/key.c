@@ -83,12 +83,10 @@ int apfs_keycmp(struct super_block *sb,
 		return k1->id < k2->id ? -1 : 1;
 	if (k1->type != k2->type)
 		return k1->type < k2->type ? -1 : 1;
-	if (k1->offset != k2->offset)
-		return k1->offset < k2->offset ? -1 : 1;
-	if (k2->name == NULL) /* We ignore the names (if they exist) */
+	if (k1->number != k2->number)
+		return k1->number < k2->number ? -1 : 1;
+	if (!k1->name) /* Keys of this type have no name */
 		return 0;
-	if (k1->hash != k2->hash)
-		return k1->hash < k2->hash ? -1 : 1;
 
 	if (k1->type == APFS_TYPE_XATTR) {
 		/* xattr names seem to be always case sensitive */
@@ -111,8 +109,8 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 {
 	if (size < sizeof(struct apfs_key_header))
 		return -EFSCORRUPTED;
-	key->type = apfs_cat_type((struct apfs_key_header *)raw);
 	key->id = apfs_cat_cnid((struct apfs_key_header *)raw);
+	key->type = apfs_cat_type((struct apfs_key_header *)raw);
 
 	switch (key->type) {
 	case APFS_TYPE_DIR_REC:
@@ -121,10 +119,9 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 			/* Filename must have NULL-termination */
 			return -EFSCORRUPTED;
 		}
-		key->hash = le32_to_cpu(
+		key->number = le32_to_cpu(
 		       ((struct apfs_drec_hashed_key *)raw)->name_len_and_hash);
 		key->name = ((struct apfs_drec_hashed_key *)raw)->name;
-		key->offset = 0;
 		break;
 	case APFS_TYPE_XATTR:
 		if (size < sizeof(struct apfs_xattr_key) + 1 ||
@@ -132,22 +129,19 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 			/* xattr name must have NULL-termination */
 			return -EFSCORRUPTED;
 		}
-		key->hash = 0;
+		key->number = 0;
 		key->name = ((struct apfs_xattr_key *)raw)->name;
-		key->offset = 0;
 		break;
 	case APFS_TYPE_FILE_EXTENT:
 		if (size != sizeof(struct apfs_file_extent_key))
 			return -EFSCORRUPTED;
-		key->hash = 0;
-		key->name = NULL;
-		key->offset = le64_to_cpu(
+		key->number = le64_to_cpu(
 			((struct apfs_file_extent_key *)raw)->logical_addr);
+		key->name = NULL;
 		break;
 	default:
-		key->hash = 0;
+		key->number = 0;
 		key->name = NULL;
-		key->offset = 0;
 		break;
 	}
 
@@ -167,46 +161,38 @@ int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
 	if (size < sizeof(struct apfs_omap_key))
 		return -EFSCORRUPTED;
 
-	key->type = 0;
 	key->id = le64_to_cpu(((struct apfs_omap_key *)raw)->ok_oid);
+	key->type = 0;
+	key->number = 0;
 	key->name = NULL;
-	key->hash = 0;
-	key->offset = 0;
 
 	return 0;
 }
 
 /**
- * apfs_init_key - Initialize an in-memory key
+ * apfs_init_drec_hashed_key - Initialize an in-memory key for a dentry query
  * @sb:		filesystem superblock
- * @type:	type of the record
- * @id:		id for the record
- * @name:	name of the record (may be NULL)
- * @namelen:	for dentry keys, length of @name (without the NULL); otherwise 0
- * @offset:	for extent records, offset within the file; otherwise 0
+ * @ino:	inode number of the parent directory
+ * @name:	filename (NULL for a multiple query)
  * @key:	apfs_key structure to initialize
- *
- * On success, @key will be ready to query for the record.
  */
-void apfs_init_key(struct super_block *sb, int type, u64 id, const char *name,
-		   int namelen, u64 offset, struct apfs_key *key)
+void apfs_init_drec_hashed_key(struct super_block *sb, u64 ino,
+			       const char *name, struct apfs_key *key)
 {
 	struct apfs_unicursor cursor;
-	bool case_fold;
-	u32 hash;
+	bool case_fold = apfs_is_case_insensitive(sb);
+	u32 hash = 0xFFFFFFFF;
+	int namelen;
 
-	key->type = type;
-	key->id = id;
-	key->name = name;
-	key->offset = offset;
-	if (name == NULL || type == APFS_TYPE_XATTR) {
-		key->hash = 0;
+	key->id = ino;
+	key->type = APFS_TYPE_DIR_REC;
+	if (!name) {
+		key->number = 0;
+		key->name = NULL;
 		return;
 	}
 
-	case_fold = apfs_is_case_insensitive(sb);
 	apfs_init_unicursor(&cursor, name);
-	hash = 0xFFFFFFFF;
 
 	while (1) {
 		unicode_t utf32;
@@ -219,5 +205,8 @@ void apfs_init_key(struct super_block *sb, int type, u64 id, const char *name,
 	}
 
 	/* APFS counts the NULL termination for the filename length */
-	key->hash = ((hash & 0x3FFFFF) << 10) | ((namelen + 1) & 0x3FF);
+	namelen = cursor.utf8curr - name;
+
+	key->number = ((hash & 0x3FFFFF) << 10) | (namelen & 0x3FF);
+	key->name = name;
 }

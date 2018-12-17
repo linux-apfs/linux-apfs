@@ -160,8 +160,7 @@ static int apfs_inode_lookup(struct inode *inode)
 	key = kmalloc(sizeof(*key), GFP_KERNEL);
 	if (!key)
 		return -ENOMEM;
-	apfs_init_key(sb, APFS_TYPE_INODE, cnid, NULL /* name */,
-		      0 /* namelen */, 0 /* offset */, key);
+	apfs_init_inode_key(cnid, key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {

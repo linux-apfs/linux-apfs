@@ -104,16 +104,73 @@ struct apfs_xattr_key {
 } __packed;
 
 /*
- * In-memory representation of a b-tree key. Many of the fields are unused for
- * any given key type, so maybe this struct should have some unions. TODO
+ * In-memory representation of a key, as relevant for a b-tree query.
  */
 struct apfs_key {
-	u64			id;
-	u64			offset;		/* Extent offset in the file */
-	const char		*name;		/* On-disk name string */
-	int			type;		/* 0 for non-catalog keys */
-	unsigned int		hash;		/* Hash of the name */
+	u64		id;
+	u64		number;	/* Extent offset or name hash */
+	const char	*name;	/* On-disk name string */
+	u8		type;	/* Record type (0 for the omap) */
 };
+
+/**
+ * apfs_init_omap_key - Initialize an in-memory key for an omap query
+ * @oid:	object id
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_omap_key(u64 oid, struct apfs_key *key)
+{
+	key->id = oid;
+	key->type = 0;
+	key->number = 0;
+	key->name = NULL;
+}
+
+/**
+ * apfs_init_inode_key - Initialize an in-memory key for an inode query
+ * @ino:	inode number
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_inode_key(u64 ino, struct apfs_key *key)
+{
+	key->id = ino;
+	key->type = APFS_TYPE_INODE;
+	key->number = 0;
+	key->name = NULL;
+}
+
+/**
+ * apfs_init_file_extent_key - Initialize an in-memory key for an extent query
+ * @id:		extent id
+ * @offset:	logical address (0 for a multiple query)
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_file_extent_key(u64 id, u64 offset,
+					     struct apfs_key *key)
+{
+	key->id = id;
+	key->type = APFS_TYPE_FILE_EXTENT;
+	key->number = offset;
+	key->name = NULL;
+}
+
+extern void apfs_init_drec_hashed_key(struct super_block *sb, u64 ino,
+				      const char *name, struct apfs_key *key);
+
+/**
+ * apfs_init_xattr_key - Initialize an in-memory key for a xattr query
+ * @ino:	inode number of the parent file
+ * @name:	xattr name (NULL for a multiple query)
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_xattr_key(u64 ino, const char *name,
+				       struct apfs_key *key)
+{
+	key->id = ino;
+	key->type = APFS_TYPE_XATTR;
+	key->number = 0; /* Maybe use the name length here, for speed? */
+	key->name = name;
+}
 
 extern int apfs_filename_cmp(struct super_block *sb,
 			     const char *name1, const char *name2);
@@ -121,8 +178,5 @@ extern int apfs_keycmp(struct super_block *sb,
 		       struct apfs_key *k1, struct apfs_key *k2);
 extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_omap_key(void *raw, int size, struct apfs_key *key);
-extern void apfs_init_key(struct super_block *sb, int type, u64 id,
-			  const char *name, int namelen, u64 offset,
-			  struct apfs_key *key);
 
 #endif	/* _APFS_KEY_H */
