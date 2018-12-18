@@ -152,22 +152,17 @@ static int apfs_inode_lookup(struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_key *key;
+	struct apfs_key key;
 	struct apfs_query *query;
 	u64 cnid = inode->i_ino;
 	int ret;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
-	apfs_init_inode_key(cnid, key);
+	apfs_init_inode_key(cnid, &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-	query->key = key;
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
 	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
 	ret = apfs_btree_query(sb, &query);
@@ -180,8 +175,6 @@ static int apfs_inode_lookup(struct inode *inode)
 
 done:
 	apfs_free_query(sb, query);
-fail:
-	kfree(key);
 	return ret;
 }
 

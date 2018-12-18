@@ -69,18 +69,13 @@ int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
 int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
 {
 	struct super_block *sb = dir->i_sb;
-	struct apfs_key *key;
+	struct apfs_key key;
 	u64 cnid = dir->i_ino;
 	int err;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
-	apfs_init_drec_hashed_key(sb, cnid, child->name, key);
+	apfs_init_drec_hashed_key(sb, cnid, child->name, &key);
 
-	err = apfs_cat_resolve(dir->i_sb, key, ino);
-
-	kfree(key);
+	err = apfs_cat_resolve(dir->i_sb, &key, ino);
 	return err;
 }
 
@@ -89,7 +84,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	struct inode *inode = file_inode(file);
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_key *key;
+	struct apfs_key key;
 	struct apfs_query *query;
 	u64 cnid = inode->i_ino;
 	loff_t pos;
@@ -106,18 +101,13 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 		ctx->pos++;
 	}
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		err = -ENOMEM;
-		goto cleanup;
-	}
+	if (!query)
+		return -ENOMEM;
 
 	/* We want all the children for the cnid, regardless of the name */
-	apfs_init_drec_hashed_key(sb, cnid, NULL /* name */, key);
-	query->key = key;
+	apfs_init_drec_hashed_key(sb, cnid, NULL /* name */, &key);
+	query->key = &key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 
 	pos = ctx->pos - 2;
@@ -158,9 +148,6 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	if (pos < 0)
 		ctx->pos -= pos;
 	apfs_free_query(sb, query);
-
-cleanup:
-	kfree(key);
 	return err;
 }
 

@@ -48,21 +48,15 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
 			   u64 id, u64 *block)
 {
 	struct apfs_query *query;
-	struct apfs_key *key;
+	struct apfs_key key;
 	int ret = 0;
 
 	query = apfs_alloc_query(tbl, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-
-	apfs_init_omap_key(id, key);
-	query->key = key;
+	apfs_init_omap_key(id, &key);
+	query->key = &key;
 	query->flags |= APFS_QUERY_OMAP | APFS_QUERY_EXACT;
 
 	ret = apfs_btree_query(sb, &query);
@@ -75,7 +69,6 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
 			   query->table->t_node.block_nr);
 
 fail:
-	kfree(key);
 	apfs_free_query(sb, query);
 	return ret;
 }
@@ -95,26 +88,15 @@ struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 				    struct apfs_query *parent)
 {
 	struct apfs_query *query;
-	struct apfs_key *curr;
 
 	query = kmalloc(sizeof(*query), GFP_KERNEL);
 	if (!query)
-		goto fail;
-
-	/*
-	 * The curr field exists because it seems wasteful to allocate a
-	 * new apfs_key struct every time we read a key from disk during
-	 * the search. Not sure it actually makes a difference.
-	 */
-	curr = kmalloc(sizeof(*curr), GFP_KERNEL);
-	if (!curr)
-		goto fail;
+		return NULL;
 
 	/* To be released by free_query. */
 	apfs_table_get(table);
 	query->table = table;
 	query->key = parent ? parent->key : NULL;
-	query->curr = curr;
 	query->flags = parent ?
 		parent->flags & ~(APFS_QUERY_DONE | APFS_QUERY_NEXT) : 0;
 	query->parent = parent;
@@ -123,10 +105,6 @@ struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 	query->depth = parent ? parent->depth + 1 : 0;
 
 	return query;
-
-fail:
-	kfree(query);
-	return NULL;
 }
 
 /**
@@ -134,16 +112,13 @@ fail:
  * @sb:		filesystem superblock
  * @query:	query to free
  *
- * Also frees the current key, the table if it's not root of a b-tree, and
- * the ancestor queries if they are kept. If a search key was allocated, the
- * caller still needs to free it.
+ * Also frees the ancestor queries, if they are kept.
  */
 void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 {
 	while (query) {
 		struct apfs_query *parent = query->parent;
 
-		kfree(query->curr);
 		apfs_table_put(query->table);
 		kfree(query);
 		query = parent;

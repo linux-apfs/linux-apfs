@@ -28,7 +28,6 @@ struct apfs_query {
 	struct apfs_table *table;	/* Table being searched */
 	struct apfs_key *key;		/* What the query is looking for */
 
-	struct apfs_key *curr;		/* Last on-disk key checked */
 	struct apfs_query *parent;	/* Query for parent table */
 	unsigned int flags;
 

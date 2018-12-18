@@ -222,7 +222,7 @@ int apfs_table_locate_data(struct apfs_table *table, int index, int *off)
 /**
  * apfs_key_from_query - Read the current key from a query structure
  * @query:	the query, with @query->key_off and @query->key_len already set
- * @key:	return parameter for the key, should be @query->curr
+ * @key:	return parameter for the key
  *
  * Reads the key into @key and performs some basic sanity checks as a
  * protection against crafted filesystems.  Returns 0 on success or a
@@ -240,7 +240,7 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 		err = apfs_read_cat_key(raw_key, query->key_len, key);
 		break;
 	case APFS_QUERY_OMAP:
-		err = apfs_read_omap_key(raw_key, query->key_len, query->curr);
+		err = apfs_read_omap_key(raw_key, query->key_len, key);
 		break;
 	default:
 		/* Not implemented yet */
@@ -272,6 +272,7 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 static int apfs_table_next(struct super_block *sb, struct apfs_query *query)
 {
 	struct apfs_table *table = query->table;
+	struct apfs_key curr_key;
 	int cmp, err;
 
 	if (query->flags & APFS_QUERY_DONE)
@@ -284,11 +285,11 @@ static int apfs_table_next(struct super_block *sb, struct apfs_query *query)
 
 	query->key_len = apfs_table_locate_key(table, query->index,
 					       &query->key_off);
-	err = apfs_key_from_query(query, query->curr);
+	err = apfs_key_from_query(query, &curr_key);
 	if (err)
 		return err;
 
-	cmp = apfs_keycmp(sb, query->curr, query->key);
+	cmp = apfs_keycmp(sb, &curr_key, query->key);
 
 	if (cmp > 0) /* Records are out of order */
 		return -EFSCORRUPTED;
@@ -349,6 +350,7 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 	cmp = 1;
 	left = 0;
 	do {
+		struct apfs_key curr_key;
 		if (cmp > 0) {
 			right = query->index - 1;
 			if (right < left)
@@ -361,11 +363,11 @@ int apfs_table_query(struct super_block *sb, struct apfs_query *query)
 
 		query->key_len = apfs_table_locate_key(table, query->index,
 						       &query->key_off);
-		err = apfs_key_from_query(query, query->curr);
+		err = apfs_key_from_query(query, &curr_key);
 		if (err)
 			return err;
 
-		cmp = apfs_keycmp(sb, query->curr, query->key);
+		cmp = apfs_keycmp(sb, &curr_key, query->key);
 		if (cmp == 0 && !(query->flags & APFS_QUERY_MULTIPLE))
 			break;
 	} while (left != right);

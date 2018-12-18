@@ -84,7 +84,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 {
 	struct super_block *sb = parent->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_key *key = NULL;
+	struct apfs_key key;
 	struct apfs_query *query;
 	struct apfs_xattr_dstream *xdata;
 	int length;
@@ -104,19 +104,13 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	if (length > size) /* xattr won't fit in the buffer */
 		return -ERANGE;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
-
 	/* We will read all the extents, starting with the last one */
-	apfs_init_file_extent_key(xdata->xattr_obj_id, 0 /* offset */, key);
+	apfs_init_file_extent_key(xdata->xattr_obj_id, 0 /* offset */, &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-	query->key = key;
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 
 	/*
@@ -173,8 +167,6 @@ static int apfs_xattr_extents_read(struct inode *parent,
 
 done:
 	apfs_free_query(sb, query);
-fail:
-	kfree(key);
 	return ret;
 }
 
@@ -223,23 +215,18 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_key *key;
+	struct apfs_key key;
 	struct apfs_query *query;
 	struct apfs_xattr xattr;
 	u64 cnid = inode->i_ino;
 	int ret;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
-	apfs_init_xattr_key(cnid, name, key);
+	apfs_init_xattr_key(cnid, name, &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-	query->key = key;
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
 	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
 	ret = apfs_btree_query(sb, &query);
@@ -259,8 +246,6 @@ int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 
 done:
 	apfs_free_query(sb, query);
-fail:
-	kfree(key);
 	return ret;
 }
 
@@ -288,24 +273,19 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	struct inode *inode = d_inode(dentry);
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_key *key;
+	struct apfs_key key;
 	struct apfs_query *query;
 	u64 cnid = inode->i_ino;
 	size_t free = size;
 	ssize_t ret;
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		ret = -ENOMEM;
-		goto cleanup;
-	}
+	if (!query)
+		return -ENOMEM;
 
 	/* We want all the xattrs for the cnid, regardless of the name */
-	apfs_init_xattr_key(cnid, NULL /* name */, key);
-	query->key = key;
+	apfs_init_xattr_key(cnid, NULL /* name */, &key);
+	query->key = &key;
 	query->flags = APFS_QUERY_CAT | APFS_QUERY_MULTIPLE | APFS_QUERY_EXACT;
 
 	while (1) {
@@ -340,9 +320,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		}
 		free -= xattr.name_len + XATTR_MAC_OSX_PREFIX_LEN + 1;
 	}
-	apfs_free_query(sb, query);
 
-cleanup:
-	kfree(key);
+	apfs_free_query(sb, query);
 	return ret;
 }

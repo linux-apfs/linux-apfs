@@ -66,7 +66,7 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_inode_info *ai = APFS_I(inode);
-	struct apfs_key *key;
+	struct apfs_key key;
 	struct apfs_query *query;
 	struct apfs_file_extent *cache = &ai->i_cached_extent;
 	u64 iaddr = iblock << inode->i_blkbits;
@@ -81,18 +81,13 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	}
 	spin_unlock(&ai->i_extent_lock);
 
-	key = kmalloc(sizeof(*key), GFP_KERNEL);
-	if (!key)
-		return -ENOMEM;
 	/* We will search for the extent that covers iblock */
-	apfs_init_file_extent_key(ai->i_extent_id, iaddr, key);
+	apfs_init_file_extent_key(ai->i_extent_id, iaddr, &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		ret = -ENOMEM;
-		goto fail;
-	}
-	query->key = key;
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
 	query->flags = APFS_QUERY_CAT;
 
 	ret = apfs_btree_query(sb, &query);
@@ -112,8 +107,6 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 
 done:
 	apfs_free_query(sb, query);
-fail:
-	kfree(key);
 	return ret;
 }
 
