@@ -379,7 +379,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	int err = 0;
 
 	/* Get the container's object map */
-	msb_omap = le32_to_cpu(msb_raw->nx_omap_oid);
+	msb_omap = le64_to_cpu(msb_raw->nx_omap_oid);
 	bh = sb_bread(sb, msb_omap);
 	if (!bh) {
 		apfs_err(sb, "unable to read container object map");
