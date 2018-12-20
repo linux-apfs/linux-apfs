@@ -53,7 +53,6 @@ const struct address_space_operations apfs_aops = {
  */
 static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 {
-	struct super_block *sb = inode->i_sb;
 	struct apfs_inode_info *ai = APFS_I(inode);
 	struct apfs_inode_val *inode_val;
 	struct apfs_dstream *dstream = NULL;
@@ -82,12 +81,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 		 * it we would have to actually count the subdirectories. The
 		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
 		 */
-		set_nlink(inode, le64_to_cpu(inode_val->nlink));
-		if (inode->i_nlink < le64_to_cpu(inode_val->nlink)) {
-			apfs_warn(sb, "hardlink count overflow in inode 0x%llx",
-				  (u64)inode->i_ino);
-			return -EOVERFLOW;
-		}
+		set_nlink(inode, le32_to_cpu(inode_val->nlink));
 	}
 
 	/* APFS stores the time as unsigned nanoseconds since the epoch */
