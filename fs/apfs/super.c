@@ -50,7 +50,8 @@ static u64 apfs_fletcher64(void *addr, size_t len)
 	return (c2 << 32) | c1;
 }
 
-int apfs_obj_verify_csum(struct super_block *sb, struct apfs_obj_phys *obj)
+static int apfs_obj_verify_csum(struct super_block *sb,
+				struct apfs_obj_phys *obj)
 {
 	return  (le64_to_cpu(obj->o_cksum) ==
 		 apfs_fletcher64((char *) obj + APFS_MAX_CKSUM_SIZE,
