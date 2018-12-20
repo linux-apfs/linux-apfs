@@ -292,8 +292,8 @@ static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)
 
 static inline bool apfs_is_case_insensitive(struct super_block *sb)
 {
-	return APFS_SB(sb)->s_vsb_raw->apfs_incompatible_features &
-	       cpu_to_le64(APFS_INCOMPAT_CASE_INSENSITIVE);
+	return (APFS_SB(sb)->s_vsb_raw->apfs_incompatible_features &
+	       cpu_to_le64(APFS_INCOMPAT_CASE_INSENSITIVE)) != 0;
 }
 
 #endif	/* _APFS_SUPER_H */
