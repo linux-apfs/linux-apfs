@@ -87,6 +87,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	struct apfs_key key;
 	struct apfs_query *query;
 	struct apfs_xattr_dstream *xdata;
+	u64 extent_id;
 	int length;
 	int ret;
 	int i;
@@ -104,8 +105,9 @@ static int apfs_xattr_extents_read(struct inode *parent,
 	if (length > size) /* xattr won't fit in the buffer */
 		return -ERANGE;
 
+	extent_id = le64_to_cpu(xdata->xattr_obj_id);
 	/* We will read all the extents, starting with the last one */
-	apfs_init_file_extent_key(xdata->xattr_obj_id, 0 /* offset */, &key);
+	apfs_init_file_extent_key(extent_id, 0 /* offset */, &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
