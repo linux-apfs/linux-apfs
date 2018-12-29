@@ -1049,6 +1049,16 @@ static void sctp_cmd_assoc_change(struct sctp_cmd_seq *commands,
 		asoc->stream.si->enqueue_event(&asoc->ulpq, ev);
 }
 
+static void sctp_cmd_peer_no_auth(struct sctp_cmd_seq *commands,
+				  struct sctp_association *asoc)
+{
+	struct sctp_ulpevent *ev;
+
+	ev = sctp_ulpevent_make_authkey(asoc, 0, SCTP_AUTH_NO_AUTH, GFP_ATOMIC);
+	if (ev)
+		asoc->stream.si->enqueue_event(&asoc->ulpq, ev);
+}
+
 /* Helper function to generate an adaptation indication event */
 static void sctp_cmd_adaptation_ind(struct sctp_cmd_seq *commands,
 				    struct sctp_association *asoc)
@@ -1755,6 +1765,9 @@ static int sctp_cmd_interpreter(enum sctp_event event_type,
 		case SCTP_CMD_ADAPTATION_IND:
 			sctp_cmd_adaptation_ind(commands, asoc);
 			break;
+		case SCTP_CMD_PEER_NO_AUTH:
+			sctp_cmd_peer_no_auth(commands, asoc);
+			break;
 
 		case SCTP_CMD_ASSOC_SHKEY:
 			error = sctp_auth_asoc_init_active_key(asoc,
@@ -1814,4 +1827,3 @@ nomem:
 	error = -ENOMEM;
 	goto out;
 }
-

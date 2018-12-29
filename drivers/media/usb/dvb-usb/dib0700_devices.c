@@ -1745,6 +1745,7 @@ static int dib809x_tuner_attach(struct dvb_usb_adapter *adap)
 		if (dvb_attach(dib0090_register, adap->fe_adap[0].fe, tun_i2c, &dib809x_dib0090_config) == NULL)
 			return -ENODEV;
 	} else {
+		/* FIXME: check if it is fe_adap[1] */
 		if (dvb_attach(dib0090_register, adap->fe_adap[0].fe, tun_i2c, &dib809x_dib0090_config) == NULL)
 			return -ENODEV;
 	}
@@ -3412,7 +3413,7 @@ static int novatd_frontend_attach(struct dvb_usb_adapter *adap)
 static struct s5h1411_config pinnacle_801e_config = {
 	.output_mode   = S5H1411_PARALLEL_OUTPUT,
 	.gpio          = S5H1411_GPIO_OFF,
-	.mpeg_timing   = S5H1411_MPEGTIMING_NONCONTINOUS_NONINVERTING_CLOCK,
+	.mpeg_timing   = S5H1411_MPEGTIMING_NONCONTINUOUS_NONINVERTING_CLOCK,
 	.qam_if        = S5H1411_IF_44000,
 	.vsb_if        = S5H1411_IF_44000,
 	.inversion     = S5H1411_INVERSION_OFF,
@@ -3762,7 +3763,7 @@ static int xbox_one_attach(struct dvb_usb_adapter *adap)
 	mn88472_config.ts_mode = PARALLEL_TS_MODE;
 	mn88472_config.ts_clock = FIXED_TS_CLOCK;
 	memset(&info, 0, sizeof(struct i2c_board_info));
-	strlcpy(info.type, "mn88472", I2C_NAME_SIZE);
+	strscpy(info.type, "mn88472", I2C_NAME_SIZE);
 	info.addr = 0x18;
 	info.platform_data = &mn88472_config;
 	request_module(info.type);
@@ -3789,7 +3790,7 @@ static int xbox_one_attach(struct dvb_usb_adapter *adap)
 	tda18250_config.fe = adap->fe_adap[0].fe;
 
 	memset(&info, 0, sizeof(struct i2c_board_info));
-	strlcpy(info.type, "tda18250", I2C_NAME_SIZE);
+	strscpy(info.type, "tda18250", I2C_NAME_SIZE);
 	info.addr = 0x60;
 	info.platform_data = &tda18250_config;
 

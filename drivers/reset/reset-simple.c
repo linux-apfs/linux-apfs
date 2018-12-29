@@ -87,6 +87,7 @@ const struct reset_control_ops reset_simple_ops = {
 	.deassert	= reset_simple_deassert,
 	.status		= reset_simple_status,
 };
+EXPORT_SYMBOL_GPL(reset_simple_ops);
 
 /**
  * struct reset_simple_devdata - simple reset controller properties
@@ -125,6 +126,8 @@ static const struct of_device_id reset_simple_dt_ids[] = {
 		.data = &reset_simple_active_low },
 	{ .compatible = "zte,zx296718-reset",
 		.data = &reset_simple_active_low },
+	{ .compatible = "aspeed,ast2400-lpc-reset" },
+	{ .compatible = "aspeed,ast2500-lpc-reset" },
 	{ /* sentinel */ },
 };
 

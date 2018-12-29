@@ -113,18 +113,20 @@ static void usage(void)
 /*
  * Print out a dependency path from a symbol name
  */
-static void print_config(const char *m, int slen)
+static void print_dep(const char *m, int slen, const char *dir)
 {
-	int c, i;
+	int c, prev_c = '/', i;
 
-	printf("    $(wildcard include/config/");
+	printf("    $(wildcard %s/", dir);
 	for (i = 0; i < slen; i++) {
 		c = m[i];
 		if (c == '_')
 			c = '/';
 		else
 			c = tolower(c);
-		putchar(c);
+		if (c != '/' || prev_c != '/')
+			putchar(c);
+		prev_c = c;
 	}
 	printf(".h) \\\n");
 }
@@ -140,7 +142,7 @@ static void do_extra_deps(void)
 			fprintf(stderr, "fixdep: bad data on stdin\n");
 			exit(1);
 		}
-		print_config(buf, len - 1);
+		print_dep(buf, len - 1, "include/ksym");
 	}
 }
 
@@ -208,7 +210,7 @@ static void use_config(const char *m, int slen)
 	    return;
 
 	define_config(m, slen, hash);
-	print_config(m, slen);
+	print_dep(m, slen, "include/config");
 }
 
 /* test if s ends in sub */

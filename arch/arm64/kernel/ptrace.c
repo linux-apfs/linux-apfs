@@ -25,6 +25,7 @@
 #include <linux/sched/signal.h>
 #include <linux/sched/task_stack.h>
 #include <linux/mm.h>
+#include <linux/nospec.h>
 #include <linux/smp.h>
 #include <linux/ptrace.h>
 #include <linux/user.h>
@@ -43,6 +44,7 @@
 #include <asm/compat.h>
 #include <asm/cpufeature.h>
 #include <asm/debug-monitors.h>
+#include <asm/fpsimd.h>
 #include <asm/pgtable.h>
 #include <asm/stacktrace.h>
 #include <asm/syscall.h>
@@ -130,7 +132,7 @@ static bool regs_within_kernel_stack(struct pt_regs *regs, unsigned long addr)
 {
 	return ((addr & ~(THREAD_SIZE - 1))  ==
 		(kernel_stack_pointer(regs) & ~(THREAD_SIZE - 1))) ||
-		on_irq_stack(addr);
+		on_irq_stack(addr, NULL);
 }
 
 /**
@@ -180,13 +182,7 @@ static void ptrace_hbptriggered(struct perf_event *bp,
 				struct pt_regs *regs)
 {
 	struct arch_hw_breakpoint *bkpt = counter_arch_bp(bp);
-	siginfo_t info;
-
-	clear_siginfo(&info);
-	info.si_signo	= SIGTRAP;
-	info.si_errno	= 0;
-	info.si_code	= TRAP_HWBKPT;
-	info.si_addr	= (void __user *)(bkpt->trigger);
+	const char *desc = "Hardware breakpoint trap (ptrace)";
 
 #ifdef CONFIG_COMPAT
 	if (is_compat_task()) {
@@ -206,10 +202,14 @@ static void ptrace_hbptriggered(struct perf_event *bp,
 				break;
 			}
 		}
-		force_sig_ptrace_errno_trap(si_errno, (void __user *)bkpt->trigger);
+		arm64_force_sig_ptrace_errno_trap(si_errno,
+						  (void __user *)bkpt->trigger,
+						  desc);
 	}
 #endif
-	force_sig_info(SIGTRAP, &info, current);
+	arm64_force_sig_fault(SIGTRAP, TRAP_HWBKPT,
+			      (void __user *)(bkpt->trigger),
+			      desc);
 }
 
 /*
@@ -249,15 +249,20 @@ static struct perf_event *ptrace_hbp_get_event(unsigned int note_type,
 
 	switch (note_type) {
 	case NT_ARM_HW_BREAK:
-		if (idx < ARM_MAX_BRP)
-			bp = tsk->thread.debug.hbp_break[idx];
+		if (idx >= ARM_MAX_BRP)
+			goto out;
+		idx = array_index_nospec(idx, ARM_MAX_BRP);
+		bp = tsk->thread.debug.hbp_break[idx];
 		break;
 	case NT_ARM_HW_WATCH:
-		if (idx < ARM_MAX_WRP)
-			bp = tsk->thread.debug.hbp_watch[idx];
+		if (idx >= ARM_MAX_WRP)
+			goto out;
+		idx = array_index_nospec(idx, ARM_MAX_WRP);
+		bp = tsk->thread.debug.hbp_watch[idx];
 		break;
 	}
 
+out:
 	return bp;
 }
 
@@ -270,19 +275,22 @@ static int ptrace_hbp_set_event(unsigned int note_type,
 
 	switch (note_type) {
 	case NT_ARM_HW_BREAK:
-		if (idx < ARM_MAX_BRP) {
-			tsk->thread.debug.hbp_break[idx] = bp;
-			err = 0;
-		}
+		if (idx >= ARM_MAX_BRP)
+			goto out;
+		idx = array_index_nospec(idx, ARM_MAX_BRP);
+		tsk->thread.debug.hbp_break[idx] = bp;
+		err = 0;
 		break;
 	case NT_ARM_HW_WATCH:
-		if (idx < ARM_MAX_WRP) {
-			tsk->thread.debug.hbp_watch[idx] = bp;
-			err = 0;
-		}
+		if (idx >= ARM_MAX_WRP)
+			goto out;
+		idx = array_index_nospec(idx, ARM_MAX_WRP);
+		tsk->thread.debug.hbp_watch[idx] = bp;
+		err = 0;
 		break;
 	}
 
+out:
 	return err;
 }
 
@@ -629,7 +637,7 @@ static int __fpr_get(struct task_struct *target,
 
 	sve_sync_to_fpsimd(target);
 
-	uregs = &target->thread.fpsimd_state.user_fpsimd;
+	uregs = &target->thread.uw.fpsimd_state;
 
 	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, uregs,
 				   start_pos, start_pos + sizeof(*uregs));
@@ -655,19 +663,19 @@ static int __fpr_set(struct task_struct *target,
 	struct user_fpsimd_state newstate;
 
 	/*
-	 * Ensure target->thread.fpsimd_state is up to date, so that a
+	 * Ensure target->thread.uw.fpsimd_state is up to date, so that a
 	 * short copyin can't resurrect stale data.
 	 */
 	sve_sync_to_fpsimd(target);
 
-	newstate = target->thread.fpsimd_state.user_fpsimd;
+	newstate = target->thread.uw.fpsimd_state;
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &newstate,
 				 start_pos, start_pos + sizeof(newstate));
 	if (ret)
 		return ret;
 
-	target->thread.fpsimd_state.user_fpsimd = newstate;
+	target->thread.uw.fpsimd_state = newstate;
 
 	return ret;
 }
@@ -692,7 +700,7 @@ static int tls_get(struct task_struct *target, const struct user_regset *regset,
 		   unsigned int pos, unsigned int count,
 		   void *kbuf, void __user *ubuf)
 {
-	unsigned long *tls = &target->thread.tp_value;
+	unsigned long *tls = &target->thread.uw.tp_value;
 
 	if (target == current)
 		tls_preserve_current_state();
@@ -705,13 +713,13 @@ static int tls_set(struct task_struct *target, const struct user_regset *regset,
 		   const void *kbuf, const void __user *ubuf)
 {
 	int ret;
-	unsigned long tls = target->thread.tp_value;
+	unsigned long tls = target->thread.uw.tp_value;
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
 	if (ret)
 		return ret;
 
-	target->thread.tp_value = tls;
+	target->thread.uw.tp_value = tls;
 	return ret;
 }
 
@@ -760,9 +768,6 @@ static void sve_init_header_from_task(struct user_sve_header *header,
 	vq = sve_vq_from_vl(header->vl);
 
 	header->max_vl = sve_max_vl;
-	if (WARN_ON(!sve_vl_valid(sve_max_vl)))
-		header->max_vl = header->vl;
-
 	header->size = SVE_PT_SIZE(vq, header->flags);
 	header->max_size = SVE_PT_SIZE(sve_vq_from_vl(header->max_vl),
 				      SVE_PT_REGS_SVE);
@@ -842,7 +847,7 @@ static int sve_get(struct task_struct *target,
 	start = end;
 	end = SVE_PT_SVE_FPCR_OFFSET(vq) + SVE_PT_SVE_FPCR_SIZE;
 	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				  &target->thread.fpsimd_state.fpsr,
+				  &target->thread.uw.fpsimd_state.fpsr,
 				  start, end);
 	if (ret)
 		return ret;
@@ -941,7 +946,7 @@ static int sve_set(struct task_struct *target,
 	start = end;
 	end = SVE_PT_SVE_FPCR_OFFSET(vq) + SVE_PT_SVE_FPCR_SIZE;
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf,
-				 &target->thread.fpsimd_state.fpsr,
+				 &target->thread.uw.fpsimd_state.fpsr,
 				 start, end);
 
 out:
@@ -1040,8 +1045,6 @@ static const struct user_regset_view user_aarch64_view = {
 };
 
 #ifdef CONFIG_COMPAT
-#include <linux/compat.h>
-
 enum compat_regset {
 	REGSET_COMPAT_GPR,
 	REGSET_COMPAT_VFP,
@@ -1074,6 +1077,7 @@ static int compat_gpr_get(struct task_struct *target,
 			break;
 		case 16:
 			reg = task_pt_regs(target)->pstate;
+			reg = pstate_to_compat_psr(reg);
 			break;
 		case 17:
 			reg = task_pt_regs(target)->orig_x0;
@@ -1141,6 +1145,7 @@ static int compat_gpr_set(struct task_struct *target,
 			newregs.pc = reg;
 			break;
 		case 16:
+			reg = compat_psr_to_pstate(reg);
 			newregs.pstate = reg;
 			break;
 		case 17:
@@ -1169,7 +1174,7 @@ static int compat_vfp_get(struct task_struct *target,
 	compat_ulong_t fpscr;
 	int ret, vregs_end_pos;
 
-	uregs = &target->thread.fpsimd_state.user_fpsimd;
+	uregs = &target->thread.uw.fpsimd_state;
 
 	if (target == current)
 		fpsimd_preserve_current_state();
@@ -1202,7 +1207,7 @@ static int compat_vfp_set(struct task_struct *target,
 	compat_ulong_t fpscr;
 	int ret, vregs_end_pos;
 
-	uregs = &target->thread.fpsimd_state.user_fpsimd;
+	uregs = &target->thread.uw.fpsimd_state;
 
 	vregs_end_pos = VFP_STATE_SIZE - sizeof(compat_ulong_t);
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, uregs, 0,
@@ -1225,7 +1230,7 @@ static int compat_tls_get(struct task_struct *target,
 			  const struct user_regset *regset, unsigned int pos,
 			  unsigned int count, void *kbuf, void __user *ubuf)
 {
-	compat_ulong_t tls = (compat_ulong_t)target->thread.tp_value;
+	compat_ulong_t tls = (compat_ulong_t)target->thread.uw.tp_value;
 	return user_regset_copyout(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
 }
 
@@ -1235,13 +1240,13 @@ static int compat_tls_set(struct task_struct *target,
 			  const void __user *ubuf)
 {
 	int ret;
-	compat_ulong_t tls = target->thread.tp_value;
+	compat_ulong_t tls = target->thread.uw.tp_value;
 
 	ret = user_regset_copyin(&pos, &count, &kbuf, &ubuf, &tls, 0, -1);
 	if (ret)
 		return ret;
 
-	target->thread.tp_value = tls;
+	target->thread.uw.tp_value = tls;
 	return ret;
 }
 
@@ -1458,9 +1463,7 @@ static int compat_ptrace_gethbpregs(struct task_struct *tsk, compat_long_t num,
 {
 	int ret;
 	u32 kdata;
-	mm_segment_t old_fs = get_fs();
 
-	set_fs(KERNEL_DS);
 	/* Watchpoint */
 	if (num < 0) {
 		ret = compat_ptrace_hbp_get(NT_ARM_HW_WATCH, tsk, num, &kdata);
@@ -1471,7 +1474,6 @@ static int compat_ptrace_gethbpregs(struct task_struct *tsk, compat_long_t num,
 	} else {
 		ret = compat_ptrace_hbp_get(NT_ARM_HW_BREAK, tsk, num, &kdata);
 	}
-	set_fs(old_fs);
 
 	if (!ret)
 		ret = put_user(kdata, data);
@@ -1484,7 +1486,6 @@ static int compat_ptrace_sethbpregs(struct task_struct *tsk, compat_long_t num,
 {
 	int ret;
 	u32 kdata = 0;
-	mm_segment_t old_fs = get_fs();
 
 	if (num == 0)
 		return 0;
@@ -1493,12 +1494,10 @@ static int compat_ptrace_sethbpregs(struct task_struct *tsk, compat_long_t num,
 	if (ret)
 		return ret;
 
-	set_fs(KERNEL_DS);
 	if (num < 0)
 		ret = compat_ptrace_hbp_set(NT_ARM_HW_WATCH, tsk, num, &kdata);
 	else
 		ret = compat_ptrace_hbp_set(NT_ARM_HW_BREAK, tsk, num, &kdata);
-	set_fs(old_fs);
 
 	return ret;
 }
@@ -1538,7 +1537,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 			break;
 
 		case COMPAT_PTRACE_GET_THREAD_AREA:
-			ret = put_user((compat_ulong_t)child->thread.tp_value,
+			ret = put_user((compat_ulong_t)child->thread.uw.tp_value,
 				       (compat_ulong_t __user *)datap);
 			break;
 
@@ -1633,7 +1632,7 @@ static void tracehook_report_syscall(struct pt_regs *regs,
 	regs->regs[regno] = saved_reg;
 }
 
-asmlinkage int syscall_trace_enter(struct pt_regs *regs)
+int syscall_trace_enter(struct pt_regs *regs)
 {
 	if (test_thread_flag(TIF_SYSCALL_TRACE))
 		tracehook_report_syscall(regs, PTRACE_SYSCALL_ENTER);
@@ -1651,7 +1650,7 @@ asmlinkage int syscall_trace_enter(struct pt_regs *regs)
 	return regs->syscallno;
 }
 
-asmlinkage void syscall_trace_exit(struct pt_regs *regs)
+void syscall_trace_exit(struct pt_regs *regs)
 {
 	audit_syscall_exit(regs);
 
@@ -1660,18 +1659,24 @@ asmlinkage void syscall_trace_exit(struct pt_regs *regs)
 
 	if (test_thread_flag(TIF_SYSCALL_TRACE))
 		tracehook_report_syscall(regs, PTRACE_SYSCALL_EXIT);
+
+	rseq_syscall(regs);
 }
 
 /*
- * Bits which are always architecturally RES0 per ARM DDI 0487A.h
+ * SPSR_ELx bits which are always architecturally RES0 per ARM DDI 0487C.a
+ * We also take into account DIT (bit 24), which is not yet documented, and
+ * treat PAN and UAO as RES0 bits, as they are meaningless at EL0, and may be
+ * allocated an EL0 meaning in future.
  * Userspace cannot use these until they have an architectural meaning.
+ * Note that this follows the SPSR_ELx format, not the AArch32 PSR format.
  * We also reserve IL for the kernel; SS is handled dynamically.
  */
 #define SPSR_EL1_AARCH64_RES0_BITS \
-	(GENMASK_ULL(63,32) | GENMASK_ULL(27, 22) | GENMASK_ULL(20, 10) | \
-	 GENMASK_ULL(5, 5))
+	(GENMASK_ULL(63,32) | GENMASK_ULL(27, 25) | GENMASK_ULL(23, 22) | \
+	 GENMASK_ULL(20, 10) | GENMASK_ULL(5, 5))
 #define SPSR_EL1_AARCH32_RES0_BITS \
-	(GENMASK_ULL(63,32) | GENMASK_ULL(24, 22) | GENMASK_ULL(20,20))
+	(GENMASK_ULL(63,32) | GENMASK_ULL(23, 22) | GENMASK_ULL(20,20))
 
 static int valid_compat_regs(struct user_pt_regs *regs)
 {
@@ -1679,15 +1684,15 @@ static int valid_compat_regs(struct user_pt_regs *regs)
 
 	if (!system_supports_mixed_endian_el0()) {
 		if (IS_ENABLED(CONFIG_CPU_BIG_ENDIAN))
-			regs->pstate |= COMPAT_PSR_E_BIT;
+			regs->pstate |= PSR_AA32_E_BIT;
 		else
-			regs->pstate &= ~COMPAT_PSR_E_BIT;
+			regs->pstate &= ~PSR_AA32_E_BIT;
 	}
 
 	if (user_mode(regs) && (regs->pstate & PSR_MODE32_BIT) &&
-	    (regs->pstate & COMPAT_PSR_A_BIT) == 0 &&
-	    (regs->pstate & COMPAT_PSR_I_BIT) == 0 &&
-	    (regs->pstate & COMPAT_PSR_F_BIT) == 0) {
+	    (regs->pstate & PSR_AA32_A_BIT) == 0 &&
+	    (regs->pstate & PSR_AA32_I_BIT) == 0 &&
+	    (regs->pstate & PSR_AA32_F_BIT) == 0) {
 		return 1;
 	}
 
@@ -1695,11 +1700,11 @@ static int valid_compat_regs(struct user_pt_regs *regs)
 	 * Force PSR to a valid 32-bit EL0t, preserving the same bits as
 	 * arch/arm.
 	 */
-	regs->pstate &= COMPAT_PSR_N_BIT | COMPAT_PSR_Z_BIT |
-			COMPAT_PSR_C_BIT | COMPAT_PSR_V_BIT |
-			COMPAT_PSR_Q_BIT | COMPAT_PSR_IT_MASK |
-			COMPAT_PSR_GE_MASK | COMPAT_PSR_E_BIT |
-			COMPAT_PSR_T_BIT;
+	regs->pstate &= PSR_AA32_N_BIT | PSR_AA32_Z_BIT |
+			PSR_AA32_C_BIT | PSR_AA32_V_BIT |
+			PSR_AA32_Q_BIT | PSR_AA32_IT_MASK |
+			PSR_AA32_GE_MASK | PSR_AA32_E_BIT |
+			PSR_AA32_T_BIT;
 	regs->pstate |= PSR_MODE32_BIT;
 
 	return 0;

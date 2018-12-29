@@ -69,7 +69,8 @@ static int ggtt_flush(struct drm_i915_private *i915)
 
 	err = i915_gem_wait_for_idle(i915,
 				     I915_WAIT_INTERRUPTIBLE |
-				     I915_WAIT_LOCKED);
+				     I915_WAIT_LOCKED,
+				     MAX_SCHEDULE_TIMEOUT);
 	if (err)
 		return err;
 
@@ -168,7 +169,7 @@ i915_gem_evict_something(struct i915_address_space *vm,
 	 * retiring.
 	 */
 	if (!(flags & PIN_NONBLOCK))
-		i915_gem_retire_requests(dev_priv);
+		i915_retire_requests(dev_priv);
 	else
 		phases[1] = NULL;
 
@@ -293,7 +294,7 @@ int i915_gem_evict_for_node(struct i915_address_space *vm,
 	 * retiring.
 	 */
 	if (!(flags & PIN_NONBLOCK))
-		i915_gem_retire_requests(vm->i915);
+		i915_retire_requests(vm->i915);
 
 	check_color = vm->mm.color_adjust;
 	if (check_color) {

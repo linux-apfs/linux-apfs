@@ -301,8 +301,12 @@ static int ad7192_setup(struct ad7192_state *st,
 	if (pdata->unipolar_en)
 		st->conf |= AD7192_CONF_UNIPOLAR;
 
-	if (pdata->burnout_curr_en)
+	if (pdata->burnout_curr_en && pdata->buf_en && !pdata->chop_en) {
 		st->conf |= AD7192_CONF_BURN;
+	} else if (pdata->burnout_curr_en) {
+		dev_warn(&st->sd.spi->dev,
+			 "Can't enable burnout currents: see CHOP or buffer\n");
+	}
 
 	ret = ad_sd_write_reg(&st->sd, AD7192_REG_MODE, 3, st->mode);
 	if (ret)
@@ -757,6 +761,6 @@ static struct spi_driver ad7192_driver = {
 };
 module_spi_driver(ad7192_driver);
 
-MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");
+MODULE_AUTHOR("Michael Hennerich <michael.hennerich@analog.com>");
 MODULE_DESCRIPTION("Analog Devices AD7190, AD7192, AD7193, AD7195 ADC");
 MODULE_LICENSE("GPL v2");

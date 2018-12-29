@@ -20,7 +20,6 @@
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
 #include <asm/smp.h>
-#include <asm/reset.h>
 #include <asm/ipl.h>
 #include <asm/diag.h>
 #include <asm/elf.h>
@@ -143,18 +142,27 @@ static noinline void __machine_kdump(void *image)
 }
 #endif
 
-/*
- * Check if kdump checksums are valid: We call purgatory with parameter "0"
- */
-static bool kdump_csum_valid(struct kimage *image)
+static unsigned long do_start_kdump(unsigned long addr)
 {
-#ifdef CONFIG_CRASH_DUMP
+	struct kimage *image = (struct kimage *) addr;
 	int (*start_kdump)(int) = (void *)image->start;
 	int rc;
 
 	__arch_local_irq_stnsm(0xfb); /* disable DAT */
 	rc = start_kdump(0);
 	__arch_local_irq_stosm(0x04); /* enable DAT */
+	return rc;
+}
+
+/*
+ * Check if kdump checksums are valid: We call purgatory with parameter "0"
+ */
+static bool kdump_csum_valid(struct kimage *image)
+{
+#ifdef CONFIG_CRASH_DUMP
+	int rc;
+
+	rc = CALL_ON_STACK(do_start_kdump, S390_lowcore.nodat_stack, 1, image);
 	return rc == 0;
 #else
 	return false;
@@ -253,6 +261,7 @@ void machine_shutdown(void)
 
 void machine_crash_shutdown(struct pt_regs *regs)
 {
+	set_os_info_reipl_block();
 }
 
 /*

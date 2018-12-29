@@ -155,6 +155,18 @@ struct v4l2_subdev *v4l2_i2c_new_subdev_board(struct v4l2_device *v4l2_dev,
 		const unsigned short *probe_addrs);
 
 /**
+ * v4l2_i2c_subdev_set_name - Set name for an I²C sub-device
+ *
+ * @sd: pointer to &struct v4l2_subdev
+ * @client: pointer to struct i2c_client
+ * @devname: the name of the device; if NULL, the I²C device's name will be used
+ * @postfix: sub-device specific string to put right after the I²C device name;
+ *	     may be NULL
+ */
+void v4l2_i2c_subdev_set_name(struct v4l2_subdev *sd, struct i2c_client *client,
+			      const char *devname, const char *postfix);
+
+/**
  * v4l2_i2c_subdev_init - Initializes a &struct v4l2_subdev with data from
  *	an i2c_client struct.
  *
@@ -283,7 +295,7 @@ struct v4l2_priv_tun_config {
  * @height:	pointer to height that will be adjusted if needed.
  * @hmin:	minimum height.
  * @hmax:	maximum height.
- * @halign:	least significant bit on width.
+ * @halign:	least significant bit on height.
  * @salign:	least significant bit for the image size (e. g.
  *		:math:`width * height`).
  *
@@ -316,21 +328,38 @@ void v4l_bound_align_image(unsigned int *width, unsigned int wmin,
 			   unsigned int salign);
 
 /**
- * v4l2_find_nearest_format - find the nearest format size among a discrete
- *	set of resolutions.
+ * v4l2_find_nearest_size - Find the nearest size among a discrete
+ *	set of resolutions contained in an array of a driver specific struct.
  *
- * @sizes: array of &struct v4l2_frmsize_discrete image sizes.
- * @num_sizes: length of @sizes array.
+ * @array: a driver specific array of image sizes
+ * @array_size: the length of the driver specific array of image sizes
+ * @width_field: the name of the width field in the driver specific struct
+ * @height_field: the name of the height field in the driver specific struct
  * @width: desired width.
  * @height: desired height.
  *
  * Finds the closest resolution to minimize the width and height differences
- * between what requested and the supported resolutions.
+ * between what requested and the supported resolutions. The size of the width
+ * and height fields in the driver specific must equal to that of u32, i.e. four
+ * bytes.
+ *
+ * Returns the best match or NULL if the length of the array is zero.
  */
-const struct v4l2_frmsize_discrete *
-v4l2_find_nearest_format(const struct v4l2_frmsize_discrete *sizes,
-			  const size_t num_sizes,
-			  s32 width, s32 height);
+#define v4l2_find_nearest_size(array, array_size, width_field, height_field, \
+			       width, height)				\
+	({								\
+		BUILD_BUG_ON(sizeof((array)->width_field) != sizeof(u32) || \
+			     sizeof((array)->height_field) != sizeof(u32)); \
+		(typeof(&(array)[0]))__v4l2_find_nearest_size(		\
+			(array), array_size, sizeof(*(array)),		\
+			offsetof(typeof(*(array)), width_field),	\
+			offsetof(typeof(*(array)), height_field),	\
+			width, height);					\
+	})
+const void *
+__v4l2_find_nearest_size(const void *array, size_t array_size,
+			 size_t entry_size, size_t width_offset,
+			 size_t height_offset, s32 width, s32 height);
 
 /**
  * v4l2_get_timestamp - helper routine to get a timestamp to be used when
@@ -340,5 +369,31 @@ v4l2_find_nearest_format(const struct v4l2_frmsize_discrete *sizes,
  * @tv: pointer to &struct timeval to be filled.
  */
 void v4l2_get_timestamp(struct timeval *tv);
+
+/**
+ * v4l2_g_parm_cap - helper routine for vidioc_g_parm to fill this in by
+ *      calling the g_frame_interval op of the given subdev. It only works
+ *      for V4L2_BUF_TYPE_VIDEO_CAPTURE(_MPLANE), hence the _cap in the
+ *      function name.
+ *
+ * @vdev: the struct video_device pointer. Used to determine the device caps.
+ * @sd: the sub-device pointer.
+ * @a: the VIDIOC_G_PARM argument.
+ */
+int v4l2_g_parm_cap(struct video_device *vdev,
+		    struct v4l2_subdev *sd, struct v4l2_streamparm *a);
+
+/**
+ * v4l2_s_parm_cap - helper routine for vidioc_s_parm to fill this in by
+ *      calling the s_frame_interval op of the given subdev. It only works
+ *      for V4L2_BUF_TYPE_VIDEO_CAPTURE(_MPLANE), hence the _cap in the
+ *      function name.
+ *
+ * @vdev: the struct video_device pointer. Used to determine the device caps.
+ * @sd: the sub-device pointer.
+ * @a: the VIDIOC_S_PARM argument.
+ */
+int v4l2_s_parm_cap(struct video_device *vdev,
+		    struct v4l2_subdev *sd, struct v4l2_streamparm *a);
 
 #endif /* V4L2_COMMON_H_ */

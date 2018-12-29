@@ -56,6 +56,35 @@ mt76_queues_read(struct seq_file *s, void *data)
 	return 0;
 }
 
+void mt76_seq_puts_array(struct seq_file *file, const char *str,
+			 s8 *val, int len)
+{
+	int i;
+
+	seq_printf(file, "%10s:", str);
+	for (i = 0; i < len; i++)
+		seq_printf(file, " %2d", val[i]);
+	seq_puts(file, "\n");
+}
+EXPORT_SYMBOL_GPL(mt76_seq_puts_array);
+
+static int mt76_read_rate_txpower(struct seq_file *s, void *data)
+{
+	struct mt76_dev *dev = dev_get_drvdata(s->private);
+
+	mt76_seq_puts_array(s, "CCK", dev->rate_power.cck,
+			    ARRAY_SIZE(dev->rate_power.cck));
+	mt76_seq_puts_array(s, "OFDM", dev->rate_power.ofdm,
+			    ARRAY_SIZE(dev->rate_power.ofdm));
+	mt76_seq_puts_array(s, "STBC", dev->rate_power.stbc,
+			    ARRAY_SIZE(dev->rate_power.stbc));
+	mt76_seq_puts_array(s, "HT", dev->rate_power.ht,
+			    ARRAY_SIZE(dev->rate_power.ht));
+	mt76_seq_puts_array(s, "VHT", dev->rate_power.vht,
+			    ARRAY_SIZE(dev->rate_power.vht));
+	return 0;
+}
+
 struct dentry *mt76_register_debugfs(struct mt76_dev *dev)
 {
 	struct dentry *dir;
@@ -64,14 +93,16 @@ struct dentry *mt76_register_debugfs(struct mt76_dev *dev)
 	if (!dir)
 		return NULL;
 
-	debugfs_create_u8("led_pin", S_IRUSR | S_IWUSR, dir, &dev->led_pin);
-	debugfs_create_u32("regidx", S_IRUSR | S_IWUSR, dir, &dev->debugfs_reg);
-	debugfs_create_file_unsafe("regval", S_IRUSR | S_IWUSR, dir, dev,
+	debugfs_create_u8("led_pin", 0600, dir, &dev->led_pin);
+	debugfs_create_u32("regidx", 0600, dir, &dev->debugfs_reg);
+	debugfs_create_file_unsafe("regval", 0600, dir, dev,
 				   &fops_regval);
-	debugfs_create_blob("eeprom", S_IRUSR, dir, &dev->eeprom);
+	debugfs_create_blob("eeprom", 0400, dir, &dev->eeprom);
 	if (dev->otp.data)
-		debugfs_create_blob("otp", S_IRUSR, dir, &dev->otp);
+		debugfs_create_blob("otp", 0400, dir, &dev->otp);
 	debugfs_create_devm_seqfile(dev->dev, "queues", dir, mt76_queues_read);
+	debugfs_create_devm_seqfile(dev->dev, "rate_txpower", dir,
+				    mt76_read_rate_txpower);
 
 	return dir;
 }

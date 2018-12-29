@@ -1497,6 +1497,192 @@ enum v4l2_mpeg_video_h264_hierarchical_coding_type -
 
 
 
+.. _v4l2-mpeg-mpeg2:
+
+``V4L2_CID_MPEG_VIDEO_MPEG2_SLICE_PARAMS (struct)``
+    Specifies the slice parameters (as extracted from the bitstream) for the
+    associated MPEG-2 slice data. This includes the necessary parameters for
+    configuring a stateless hardware decoding pipeline for MPEG-2.
+    The bitstream parameters are defined according to :ref:`mpeg2part2`.
+
+    .. note::
+
+       This compound control is not yet part of the public kernel API and
+       it is expected to change.
+
+.. c:type:: v4l2_ctrl_mpeg2_slice_params
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_mpeg2_slice_params
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u32
+      - ``bit_size``
+      - Size (in bits) of the current slice data.
+    * - __u32
+      - ``data_bit_offset``
+      - Offset (in bits) to the video data in the current slice data.
+    * - struct :c:type:`v4l2_mpeg2_sequence`
+      - ``sequence``
+      - Structure with MPEG-2 sequence metadata, merging relevant fields from
+	the sequence header and sequence extension parts of the bitstream.
+    * - struct :c:type:`v4l2_mpeg2_picture`
+      - ``picture``
+      - Structure with MPEG-2 picture metadata, merging relevant fields from
+	the picture header and picture coding extension parts of the bitstream.
+    * - __u8
+      - ``quantiser_scale_code``
+      - Code used to determine the quantization scale to use for the IDCT.
+    * - __u8
+      - ``backward_ref_index``
+      - Index for the V4L2 buffer to use as backward reference, used with
+	B-coded and P-coded frames.
+    * - __u8
+      - ``forward_ref_index``
+      - Index for the V4L2 buffer to use as forward reference, used with
+	B-coded frames.
+
+.. c:type:: v4l2_mpeg2_sequence
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_mpeg2_sequence
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u16
+      - ``horizontal_size``
+      - The width of the displayable part of the frame's luminance component.
+    * - __u16
+      - ``vertical_size``
+      - The height of the displayable part of the frame's luminance component.
+    * - __u32
+      - ``vbv_buffer_size``
+      - Used to calculate the required size of the video buffering verifier,
+	defined (in bits) as: 16 * 1024 * vbv_buffer_size.
+    * - __u8
+      - ``profile_and_level_indication``
+      - The current profile and level indication as extracted from the
+	bitstream.
+    * - __u8
+      - ``progressive_sequence``
+      - Indication that all the frames for the sequence are progressive instead
+	of interlaced.
+    * - __u8
+      - ``chroma_format``
+      - The chrominance sub-sampling format (1: 4:2:0, 2: 4:2:2, 3: 4:4:4).
+
+.. c:type:: v4l2_mpeg2_picture
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_mpeg2_picture
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u8
+      - ``picture_coding_type``
+      - Picture coding type for the frame covered by the current slice
+	(V4L2_MPEG2_PICTURE_CODING_TYPE_I, V4L2_MPEG2_PICTURE_CODING_TYPE_P or
+	V4L2_MPEG2_PICTURE_CODING_TYPE_B).
+    * - __u8
+      - ``f_code[2][2]``
+      - Motion vector codes.
+    * - __u8
+      - ``intra_dc_precision``
+      - Precision of Discrete Cosine transform (0: 8 bits precision,
+	1: 9 bits precision, 2: 10 bits precision, 3: 11 bits precision).
+    * - __u8
+      - ``picture_structure``
+      - Picture structure (1: interlaced top field, 2: interlaced bottom field,
+	3: progressive frame).
+    * - __u8
+      - ``top_field_first``
+      - If set to 1 and interlaced stream, top field is output first.
+    * - __u8
+      - ``frame_pred_frame_dct``
+      - If set to 1, only frame-DCT and frame prediction are used.
+    * - __u8
+      - ``concealment_motion_vectors``
+      -  If set to 1, motion vectors are coded for intra macroblocks.
+    * - __u8
+      - ``q_scale_type``
+      - This flag affects the inverse quantization process.
+    * - __u8
+      - ``intra_vlc_format``
+      - This flag affects the decoding of transform coefficient data.
+    * - __u8
+      - ``alternate_scan``
+      - This flag affects the decoding of transform coefficient data.
+    * - __u8
+      - ``repeat_first_field``
+      - This flag affects the decoding process of progressive frames.
+    * - __u8
+      - ``progressive_frame``
+      - Indicates whether the current frame is progressive.
+
+``V4L2_CID_MPEG_VIDEO_MPEG2_QUANTIZATION (struct)``
+    Specifies quantization matrices (as extracted from the bitstream) for the
+    associated MPEG-2 slice data.
+
+    .. note::
+
+       This compound control is not yet part of the public kernel API and
+       it is expected to change.
+
+.. c:type:: v4l2_ctrl_mpeg2_quantization
+
+.. cssclass:: longtable
+
+.. flat-table:: struct v4l2_ctrl_mpeg2_quantization
+    :header-rows:  0
+    :stub-columns: 0
+    :widths:       1 1 2
+
+    * - __u8
+      - ``load_intra_quantiser_matrix``
+      - One bit to indicate whether to load the ``intra_quantiser_matrix`` data.
+    * - __u8
+      - ``load_non_intra_quantiser_matrix``
+      - One bit to indicate whether to load the ``non_intra_quantiser_matrix``
+	data.
+    * - __u8
+      - ``load_chroma_intra_quantiser_matrix``
+      - One bit to indicate whether to load the
+	``chroma_intra_quantiser_matrix`` data, only relevant for non-4:2:0 YUV
+	formats.
+    * - __u8
+      - ``load_chroma_non_intra_quantiser_matrix``
+      - One bit to indicate whether to load the
+	``chroma_non_intra_quantiser_matrix`` data, only relevant for non-4:2:0
+	YUV formats.
+    * - __u8
+      - ``intra_quantiser_matrix[64]``
+      - The quantization matrix coefficients for intra-coded frames, in zigzag
+	scanning order. It is relevant for both luma and chroma components,
+	although it can be superseded by the chroma-specific matrix for
+	non-4:2:0 YUV formats.
+    * - __u8
+      - ``non_intra_quantiser_matrix[64]``
+      - The quantization matrix coefficients for non-intra-coded frames, in
+	zigzag scanning order. It is relevant for both luma and chroma
+	components, although it can be superseded by the chroma-specific matrix
+	for non-4:2:0 YUV formats.
+    * - __u8
+      - ``chroma_intra_quantiser_matrix[64]``
+      - The quantization matrix coefficients for the chominance component of
+	intra-coded frames, in zigzag scanning order. Only relevant for
+	non-4:2:0 YUV formats.
+    * - __u8
+      - ``chroma_non_intra_quantiser_matrix[64]``
+      - The quantization matrix coefficients for the chrominance component of
+	non-intra-coded frames, in zigzag scanning order. Only relevant for
+	non-4:2:0 YUV formats.
 
 MFC 5.1 MPEG Controls
 ---------------------
@@ -1955,9 +2141,461 @@ enum v4l2_vp8_golden_frame_sel -
 ``V4L2_CID_MPEG_VIDEO_VPX_P_FRAME_QP (integer)``
     Quantization parameter for a P frame for VP8.
 
-``V4L2_CID_MPEG_VIDEO_VPX_PROFILE (integer)``
-    Select the desired profile for VPx encoder. Acceptable values are 0,
-    1, 2 and 3 corresponding to encoder profiles 0, 1, 2 and 3.
+.. _v4l2-mpeg-video-vp8-profile:
+
+``V4L2_CID_MPEG_VIDEO_VP8_PROFILE``
+    (enum)
+
+enum v4l2_mpeg_video_vp8_profile -
+    This control allows selecting the profile for VP8 encoder.
+    This is also used to enumerate supported profiles by VP8 encoder or decoder.
+    Possible values are:
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_VP8_PROFILE_0``
+      - Profile 0
+    * - ``V4L2_MPEG_VIDEO_VP8_PROFILE_1``
+      - Profile 1
+    * - ``V4L2_MPEG_VIDEO_VP8_PROFILE_2``
+      - Profile 2
+    * - ``V4L2_MPEG_VIDEO_VP8_PROFILE_3``
+      - Profile 3
+
+.. _v4l2-mpeg-video-vp9-profile:
+
+``V4L2_CID_MPEG_VIDEO_VP9_PROFILE``
+    (enum)
+
+enum v4l2_mpeg_video_vp9_profile -
+    This control allows selecting the profile for VP9 encoder.
+    This is also used to enumerate supported profiles by VP9 encoder or decoder.
+    Possible values are:
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_VP9_PROFILE_0``
+      - Profile 0
+    * - ``V4L2_MPEG_VIDEO_VP9_PROFILE_1``
+      - Profile 1
+    * - ``V4L2_MPEG_VIDEO_VP9_PROFILE_2``
+      - Profile 2
+    * - ``V4L2_MPEG_VIDEO_VP9_PROFILE_3``
+      - Profile 3
+
+
+High Efficiency Video Coding (HEVC/H.265) Control Reference
+-----------------------------------------------------------
+
+The HEVC/H.265 controls include controls for encoding parameters of HEVC/H.265
+video codec.
+
+
+.. _hevc-control-id:
+
+HEVC/H.265 Control IDs
+^^^^^^^^^^^^^^^^^^^^^^
+
+``V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP (integer)``
+    Minimum quantization parameter for HEVC.
+    Valid range: from 0 to 51.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP (integer)``
+    Maximum quantization parameter for HEVC.
+    Valid range: from 0 to 51.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_QP (integer)``
+    Quantization parameter for an I frame for HEVC.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_P_FRAME_QP (integer)``
+    Quantization parameter for a P frame for HEVC.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_B_FRAME_QP (integer)``
+    Quantization parameter for a B frame for HEVC.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_QP (boolean)``
+    HIERARCHICAL_QP allows the host to specify the quantization parameter
+    values for each temporal layer through HIERARCHICAL_QP_LAYER. This is
+    valid only if HIERARCHICAL_CODING_LAYER is greater than 1. Setting the
+    control value to 1 enables setting of the QP values for the layers.
+
+.. _v4l2-hevc-hier-coding-type:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_TYPE``
+    (enum)
+
+enum v4l2_mpeg_video_hevc_hier_coding_type -
+    Selects the hierarchical coding type for encoding. Possible values are:
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{9.0cm}|p{8.0cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_B``
+      - Use the B frame for hierarchical coding.
+    * - ``V4L2_MPEG_VIDEO_HEVC_HIERARCHICAL_CODING_P``
+      - Use the P frame for hierarchical coding.
+
+.. raw:: latex
+
+    \normalsize
+
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_LAYER (integer)``
+    Selects the hierarchical coding layer. In normal encoding
+    (non-hierarchial coding), it should be zero. Possible values are [0, 6].
+    0 indicates HIERARCHICAL CODING LAYER 0, 1 indicates HIERARCHICAL CODING
+    LAYER 1 and so on.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L0_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 0.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L1_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 1.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L2_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 2.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L3_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 3.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L4_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 4.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L5_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 5.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L6_QP (integer)``
+    Indicates quantization parameter for hierarchical coding layer 6.
+    Valid range: [V4L2_CID_MPEG_VIDEO_HEVC_MIN_QP,
+    V4L2_CID_MPEG_VIDEO_HEVC_MAX_QP].
+
+.. _v4l2-hevc-profile:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_PROFILE``
+    (enum)
+
+enum v4l2_mpeg_video_hevc_profile -
+    Select the desired profile for HEVC encoder.
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{9.0cm}|p{8.0cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN``
+      - Main profile.
+    * - ``V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_STILL_PICTURE``
+      - Main still picture profile.
+    * - ``V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10``
+      - Main 10 profile.
+
+.. raw:: latex
+
+    \normalsize
+
+
+.. _v4l2-hevc-level:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_LEVEL``
+    (enum)
+
+enum v4l2_mpeg_video_hevc_level -
+    Selects the desired level for HEVC encoder.
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{9.0cm}|p{8.0cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_1``
+      - Level 1.0
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_2``
+      - Level 2.0
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_2_1``
+      - Level 2.1
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_3``
+      - Level 3.0
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_3_1``
+      - Level 3.1
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_4``
+      - Level 4.0
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_4_1``
+      - Level 4.1
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_5``
+      - Level 5.0
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_5_1``
+      - Level 5.1
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_5_2``
+      - Level 5.2
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_6``
+      - Level 6.0
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_6_1``
+      - Level 6.1
+    * - ``V4L2_MPEG_VIDEO_HEVC_LEVEL_6_2``
+      - Level 6.2
+
+.. raw:: latex
+
+    \normalsize
+
+
+``V4L2_CID_MPEG_VIDEO_HEVC_FRAME_RATE_RESOLUTION (integer)``
+    Indicates the number of evenly spaced subintervals, called ticks, within
+    one second. This is a 16 bit unsigned integer and has a maximum value up to
+    0xffff and a minimum value of 1.
+
+.. _v4l2-hevc-tier:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_TIER``
+    (enum)
+
+enum v4l2_mpeg_video_hevc_tier -
+    TIER_FLAG specifies tiers information of the HEVC encoded picture. Tier
+    were made to deal with applications that differ in terms of maximum bit
+    rate. Setting the flag to 0 selects HEVC tier as Main tier and setting
+    this flag to 1 indicates High tier. High tier is for applications requiring
+    high bit rates.
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{9.0cm}|p{8.0cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_TIER_MAIN``
+      - Main tier.
+    * - ``V4L2_MPEG_VIDEO_HEVC_TIER_HIGH``
+      - High tier.
+
+.. raw:: latex
+
+    \normalsize
+
+
+``V4L2_CID_MPEG_VIDEO_HEVC_MAX_PARTITION_DEPTH (integer)``
+    Selects HEVC maximum coding unit depth.
+
+.. _v4l2-hevc-loop-filter-mode:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_LOOP_FILTER_MODE``
+    (enum)
+
+enum v4l2_mpeg_video_hevc_loop_filter_mode -
+    Loop filter mode for HEVC encoder. Possible values are:
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{10.7cm}|p{6.3cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_LOOP_FILTER_MODE_DISABLED``
+      - Loop filter is disabled.
+    * - ``V4L2_MPEG_VIDEO_HEVC_LOOP_FILTER_MODE_ENABLED``
+      - Loop filter is enabled.
+    * - ``V4L2_MPEG_VIDEO_HEVC_LOOP_FILTER_MODE_DISABLED_AT_SLICE_BOUNDARY``
+      - Loop filter is disabled at the slice boundary.
+
+.. raw:: latex
+
+    \normalsize
+
+
+``V4L2_CID_MPEG_VIDEO_HEVC_LF_BETA_OFFSET_DIV2 (integer)``
+    Selects HEVC loop filter beta offset. The valid range is [-6, +6].
+
+``V4L2_CID_MPEG_VIDEO_HEVC_LF_TC_OFFSET_DIV2 (integer)``
+    Selects HEVC loop filter tc offset. The valid range is [-6, +6].
+
+.. _v4l2-hevc-refresh-type:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_REFRESH_TYPE``
+    (enum)
+
+enum v4l2_mpeg_video_hevc_hier_refresh_type -
+    Selects refresh type for HEVC encoder.
+    Host has to specify the period into
+    V4L2_CID_MPEG_VIDEO_HEVC_REFRESH_PERIOD.
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{8.0cm}|p{9.0cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_REFRESH_NONE``
+      - Use the B frame for hierarchical coding.
+    * - ``V4L2_MPEG_VIDEO_HEVC_REFRESH_CRA``
+      - Use CRA (Clean Random Access Unit) picture encoding.
+    * - ``V4L2_MPEG_VIDEO_HEVC_REFRESH_IDR``
+      - Use IDR (Instantaneous Decoding Refresh) picture encoding.
+
+.. raw:: latex
+
+    \normalsize
+
+
+``V4L2_CID_MPEG_VIDEO_HEVC_REFRESH_PERIOD (integer)``
+    Selects the refresh period for HEVC encoder.
+    This specifies the number of I pictures between two CRA/IDR pictures.
+    This is valid only if REFRESH_TYPE is not 0.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_LOSSLESS_CU (boolean)``
+    Indicates HEVC lossless encoding. Setting it to 0 disables lossless
+    encoding. Setting it to 1 enables lossless encoding.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_CONST_INTRA_PRED (boolean)``
+    Indicates constant intra prediction for HEVC encoder. Specifies the
+    constrained intra prediction in which intra largest coding unit (LCU)
+    prediction is performed by using residual data and decoded samples of
+    neighboring intra LCU only. Setting the value to 1 enables constant intra
+    prediction and setting the value to 0 disables constant intra prediction.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_WAVEFRONT (boolean)``
+    Indicates wavefront parallel processing for HEVC encoder. Setting it to 0
+    disables the feature and setting it to 1 enables the wavefront parallel
+    processing.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_GENERAL_PB (boolean)``
+    Setting the value to 1 enables combination of P and B frame for HEVC
+    encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_TEMPORAL_ID (boolean)``
+    Indicates temporal identifier for HEVC encoder which is enabled by
+    setting the value to 1.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_STRONG_SMOOTHING (boolean)``
+    Indicates bi-linear interpolation is conditionally used in the intra
+    prediction filtering process in the CVS when set to 1. Indicates bi-linear
+    interpolation is not used in the CVS when set to 0.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_MAX_NUM_MERGE_MV_MINUS1 (integer)``
+    Indicates maximum number of merge candidate motion vectors.
+    Values are from 0 to 4.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_TMV_PREDICTION (boolean)``
+    Indicates temporal motion vector prediction for HEVC encoder. Setting it to
+    1 enables the prediction. Setting it to 0 disables the prediction.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_WITHOUT_STARTCODE (boolean)``
+    Specifies if HEVC generates a stream with a size of the length field
+    instead of start code pattern. The size of the length field is configurable
+    through the V4L2_CID_MPEG_VIDEO_HEVC_SIZE_OF_LENGTH_FIELD control. Setting
+    the value to 0 disables encoding without startcode pattern. Setting the
+    value to 1 will enables encoding without startcode pattern.
+
+.. _v4l2-hevc-size-of-length-field:
+
+``V4L2_CID_MPEG_VIDEO_HEVC_SIZE_OF_LENGTH_FIELD``
+(enum)
+
+enum v4l2_mpeg_video_hevc_size_of_length_field -
+    Indicates the size of length field.
+    This is valid when encoding WITHOUT_STARTCODE_ENABLE is enabled.
+
+.. raw:: latex
+
+    \footnotesize
+
+.. tabularcolumns:: |p{6.0cm}|p{11.0cm}|
+
+.. flat-table::
+    :header-rows:  0
+    :stub-columns: 0
+
+    * - ``V4L2_MPEG_VIDEO_HEVC_SIZE_0``
+      - Generate start code pattern (Normal).
+    * - ``V4L2_MPEG_VIDEO_HEVC_SIZE_1``
+      - Generate size of length field instead of start code pattern and length is 1.
+    * - ``V4L2_MPEG_VIDEO_HEVC_SIZE_2``
+      - Generate size of length field instead of start code pattern and length is 2.
+    * - ``V4L2_MPEG_VIDEO_HEVC_SIZE_4``
+      - Generate size of length field instead of start code pattern and length is 4.
+
+.. raw:: latex
+
+    \normalsize
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L0_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 0 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L1_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 1 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L2_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 2 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L3_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 3 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L4_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 4 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L5_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 5 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_HEVC_HIER_CODING_L6_BR (integer)``
+    Indicates bit rate for hierarchical coding layer 6 for HEVC encoder.
+
+``V4L2_CID_MPEG_VIDEO_REF_NUMBER_FOR_PFRAMES (integer)``
+    Selects number of P reference pictures required for HEVC encoder.
+    P-Frame can use 1 or 2 frames for reference.
+
+``V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR (integer)``
+    Indicates whether to generate SPS and PPS at every IDR. Setting it to 0
+    disables generating SPS and PPS at every IDR. Setting it to one enables
+    generating SPS and PPS at every IDR.
 
 
 .. _camera-controls:
@@ -3155,7 +3793,7 @@ enum v4l2_dv_it_content_type -
     HDMI carries 5V on one of the pins). This is often used to power an
     eeprom which contains EDID information, such that the source can
     read the EDID even if the sink is in standby/power off. Each bit
-    corresponds to an input pad on the transmitter. If an input pad
+    corresponds to an input pad on the receiver. If an input pad
     cannot detect whether power is present, then the bit for that pad
     will be 0. This read-only control is applicable to DVI-D, HDMI and
     DisplayPort connectors.

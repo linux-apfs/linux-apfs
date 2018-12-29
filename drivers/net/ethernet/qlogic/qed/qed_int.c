@@ -228,7 +228,7 @@ static int qed_grc_attn_cb(struct qed_hwfn *p_hwfn)
 		attn_master_to_str(GET_FIELD(tmp, QED_GRC_ATTENTION_MASTER)),
 		GET_FIELD(tmp2, QED_GRC_ATTENTION_PF),
 		(GET_FIELD(tmp2, QED_GRC_ATTENTION_PRIV) ==
-		 QED_GRC_ATTENTION_PRIV_VF) ? "VF" : "(Ireelevant)",
+		 QED_GRC_ATTENTION_PRIV_VF) ? "VF" : "(Irrelevant)",
 		GET_FIELD(tmp2, QED_GRC_ATTENTION_VF));
 
 out:
@@ -321,7 +321,7 @@ static int qed_pglub_rbc_attn_cb(struct qed_hwfn *p_hwfn)
 	tmp = qed_rd(p_hwfn, p_hwfn->p_dpc_ptt,
 		     PGLUE_B_REG_TX_ERR_WR_DETAILS_ICPL);
 	if (tmp & PGLUE_ATTENTION_ICPL_VALID)
-		DP_INFO(p_hwfn, "ICPL eror - %08x\n", tmp);
+		DP_INFO(p_hwfn, "ICPL error - %08x\n", tmp);
 
 	tmp = qed_rd(p_hwfn, p_hwfn->p_dpc_ptt,
 		     PGLUE_B_REG_MASTER_ZLR_ERR_DETAILS);
@@ -992,6 +992,8 @@ static int qed_int_attentions(struct qed_hwfn *p_hwfn)
 	 */
 	do {
 		index = p_sb_attn->sb_index;
+		/* finish reading index before the loop condition */
+		dma_rmb();
 		attn_bits = le32_to_cpu(p_sb_attn->atten_bits);
 		attn_acks = le32_to_cpu(p_sb_attn->atten_ack);
 	} while (index != p_sb_attn->sb_index);

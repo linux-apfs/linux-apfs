@@ -27,6 +27,7 @@
 	 A4XX_INT0_CP_RB_INT |             \
 	 A4XX_INT0_CP_REG_PROTECT_FAULT |  \
 	 A4XX_INT0_CP_AHB_ERROR_HALT |     \
+	 A4XX_INT0_CACHE_FLUSH_TS |        \
 	 A4XX_INT0_UCHE_OOB_ACCESS)
 
 extern bool hang_debug;
@@ -274,16 +275,16 @@ static int a4xx_hw_init(struct msm_gpu *gpu)
 		return ret;
 
 	/* Load PM4: */
-	ptr = (uint32_t *)(adreno_gpu->pm4->data);
-	len = adreno_gpu->pm4->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PM4]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PM4]->size / 4;
 	DBG("loading PM4 ucode version: %u", ptr[0]);
 	gpu_write(gpu, REG_A4XX_CP_ME_RAM_WADDR, 0);
 	for (i = 1; i < len; i++)
 		gpu_write(gpu, REG_A4XX_CP_ME_RAM_DATA, ptr[i]);
 
 	/* Load PFP: */
-	ptr = (uint32_t *)(adreno_gpu->pfp->data);
-	len = adreno_gpu->pfp->size / 4;
+	ptr = (uint32_t *)(adreno_gpu->fw[ADRENO_FW_PFP]->data);
+	len = adreno_gpu->fw[ADRENO_FW_PFP]->size / 4;
 	DBG("loading PFP ucode version: %u", ptr[0]);
 
 	gpu_write(gpu, REG_A4XX_CP_PFP_UCODE_ADDR, 0);
@@ -454,15 +455,19 @@ static const unsigned int a4xx_registers[] = {
 	~0 /* sentinel */
 };
 
-#ifdef CONFIG_DEBUG_FS
-static void a4xx_show(struct msm_gpu *gpu, struct seq_file *m)
+static struct msm_gpu_state *a4xx_gpu_state_get(struct msm_gpu *gpu)
 {
-	seq_printf(m, "status:   %08x\n",
-			gpu_read(gpu, REG_A4XX_RBBM_STATUS));
-	adreno_show(gpu, m);
+	struct msm_gpu_state *state = kzalloc(sizeof(*state), GFP_KERNEL);
 
+	if (!state)
+		return ERR_PTR(-ENOMEM);
+
+	adreno_gpu_state_get(gpu, state);
+
+	state->rbbm_status = gpu_read(gpu, REG_A4XX_RBBM_STATUS);
+
+	return state;
 }
-#endif
 
 /* Register offset defines for A4XX, in order of enum adreno_regs */
 static const unsigned int a4xx_register_offsets[REG_ADRENO_REGISTER_MAX] = {
@@ -537,9 +542,11 @@ static const struct adreno_gpu_funcs funcs = {
 		.active_ring = adreno_active_ring,
 		.irq = a4xx_irq,
 		.destroy = a4xx_destroy,
-#ifdef CONFIG_DEBUG_FS
-		.show = a4xx_show,
+#if defined(CONFIG_DEBUG_FS) || defined(CONFIG_DEV_COREDUMP)
+		.show = adreno_show,
 #endif
+		.gpu_state_get = a4xx_gpu_state_get,
+		.gpu_state_put = adreno_gpu_state_put,
 	},
 	.get_timestamp = a4xx_get_timestamp,
 };

@@ -30,17 +30,6 @@ config DEBUG_PINCTRL
 	help
 	  Say Y here to add some extra checks and diagnostics to PINCTRL calls.
 
-config PINCTRL_ADI2
-	bool "ADI pin controller driver"
-	depends on (BF54x || BF60x)
-	depends on !GPIO_ADI
-	select PINMUX
-	select IRQ_DOMAIN
-	help
-	  This is the pin controller and gpio driver for ADI BF54x, BF60x and
-	  future processors. This option is selected automatically when specific
-	  machine and arch are selected to build.
-
 config PINCTRL_ARTPEC6
         bool "Axis ARTPEC-6 pin controller driver"
         depends on MACH_ARTPEC6
@@ -76,14 +65,6 @@ config PINCTRL_AXP209
 	  muxing and a GPIO driver to handle the GPIO when the GPIO function is
 	  selected.
 	  Say yes to enable pinctrl and GPIO support for the AXP209 PMIC
-
-config PINCTRL_BF54x
-	def_bool y if BF54x
-	select PINCTRL_ADI2
-
-config PINCTRL_BF60x
-	def_bool y if BF60x
-	select PINCTRL_ADI2
 
 config PINCTRL_AT91
 	bool "AT91 pinctrl driver"
@@ -180,10 +161,10 @@ config PINCTRL_MCP23S08
 	select REGMAP_SPI if SPI_MASTER
 	select GENERIC_PINCONF
 	help
-	  SPI/I2C driver for Microchip MCP23S08/MCP23S17/MCP23008/MCP23017
-	  I/O expanders.
-	  This provides a GPIO interface supporting inputs and outputs.
-	  The I2C versions of the chips can be used as interrupt-controller.
+	  SPI/I2C driver for Microchip MCP23S08 / MCP23S17 / MCP23S18 /
+	  MCP23008 / MCP23017 / MCP23018 I/O expanders.
+	  This provides a GPIO interface supporting inputs and outputs and a
+	  corresponding interrupt-controller.
 
 config PINCTRL_OXNAS
 	bool
@@ -213,6 +194,16 @@ config PINCTRL_RZA1
 	select GENERIC_PINCONF
 	help
 	  This selects pinctrl driver for Renesas RZ/A1 platforms.
+
+config PINCTRL_RZN1
+	bool "Renesas RZ/N1 pinctrl driver"
+	depends on OF
+	depends on ARCH_RZN1 || COMPILE_TEST
+	select GENERIC_PINCTRL_GROUPS
+	select GENERIC_PINMUX_FUNCTIONS
+	select GENERIC_PINCONF
+	help
+	  This selects pinctrl driver for Renesas RZ/N1 devices.
 
 config PINCTRL_SINGLE
 	tristate "One-register-per-pin type device tree based pinctrl driver"
@@ -262,18 +253,6 @@ config PINCTRL_ST
 	select PINMUX
 	select PINCONF
 	select GPIOLIB_IRQCHIP
-
-config PINCTRL_TZ1090
-	bool "Toumaz Xenif TZ1090 pin control driver"
-	depends on SOC_TZ1090
-	select PINMUX
-	select GENERIC_PINCONF
-
-config PINCTRL_TZ1090_PDC
-	bool "Toumaz Xenif TZ1090 PDC pin control driver"
-	depends on SOC_TZ1090
-	select PINMUX
-	select PINCONF
 
 config PINCTRL_U300
 	bool "U300 pin controller driver"
@@ -340,12 +319,14 @@ config PINCTRL_ZYNQ
 
 config PINCTRL_INGENIC
 	bool "Pinctrl driver for the Ingenic JZ47xx SoCs"
-	default y
+	default MACH_INGENIC
 	depends on OF
-	depends on MACH_INGENIC || COMPILE_TEST
+	depends on MIPS || COMPILE_TEST
 	select GENERIC_PINCONF
 	select GENERIC_PINCTRL_GROUPS
 	select GENERIC_PINMUX_FUNCTIONS
+	select GPIOLIB
+	select GPIOLIB_IRQCHIP
 	select REGMAP_MMIO
 
 config PINCTRL_RK805
@@ -363,11 +344,13 @@ config PINCTRL_OCELOT
 	depends on OF
 	depends on MSCC_OCELOT || COMPILE_TEST
 	select GPIOLIB
+	select GPIOLIB_IRQCHIP
 	select GENERIC_PINCONF
 	select GENERIC_PINCTRL_GROUPS
 	select GENERIC_PINMUX_FUNCTIONS
 	select REGMAP_MMIO
 
+source "drivers/pinctrl/actions/Kconfig"
 source "drivers/pinctrl/aspeed/Kconfig"
 source "drivers/pinctrl/bcm/Kconfig"
 source "drivers/pinctrl/berlin/Kconfig"
@@ -375,6 +358,7 @@ source "drivers/pinctrl/freescale/Kconfig"
 source "drivers/pinctrl/intel/Kconfig"
 source "drivers/pinctrl/mvebu/Kconfig"
 source "drivers/pinctrl/nomadik/Kconfig"
+source "drivers/pinctrl/nuvoton/Kconfig"
 source "drivers/pinctrl/pxa/Kconfig"
 source "drivers/pinctrl/qcom/Kconfig"
 source "drivers/pinctrl/samsung/Kconfig"
@@ -390,6 +374,7 @@ source "drivers/pinctrl/vt8500/Kconfig"
 source "drivers/pinctrl/mediatek/Kconfig"
 source "drivers/pinctrl/zte/Kconfig"
 source "drivers/pinctrl/meson/Kconfig"
+source "drivers/pinctrl/cirrus/Kconfig"
 
 config PINCTRL_XWAY
 	bool

@@ -367,6 +367,14 @@ void opp1_program_oppbuf(
 
 }
 
+void opp1_pipe_clock_control(struct output_pixel_processor *opp, bool enable)
+{
+	struct dcn10_opp *oppn10 = TO_DCN10_OPP(opp);
+	uint32_t regval = enable ? 1 : 0;
+
+	REG_UPDATE(OPP_PIPE_CONTROL, OPP_PIPE_CLOCK_EN, regval);
+}
+
 /*****************************************/
 /* Constructor, Destructor               */
 /*****************************************/
@@ -377,11 +385,12 @@ void opp1_destroy(struct output_pixel_processor **opp)
 	*opp = NULL;
 }
 
-static struct opp_funcs dcn10_opp_funcs = {
+static const struct opp_funcs dcn10_opp_funcs = {
 		.opp_set_dyn_expansion = opp1_set_dyn_expansion,
 		.opp_program_fmt = opp1_program_fmt,
 		.opp_program_bit_depth_reduction = opp1_program_bit_depth_reduction,
 		.opp_program_stereo = opp1_program_stereo,
+		.opp_pipe_clock_control = opp1_pipe_clock_control,
 		.opp_destroy = opp1_destroy
 };
 

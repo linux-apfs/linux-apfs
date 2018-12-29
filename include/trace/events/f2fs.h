@@ -82,7 +82,6 @@ TRACE_DEFINE_ENUM(CP_TRIMMED);
 		{ REQ_OP_WRITE,			"WRITE" },		\
 		{ REQ_OP_FLUSH,			"FLUSH" },		\
 		{ REQ_OP_DISCARD,		"DISCARD" },		\
-		{ REQ_OP_ZONE_REPORT,		"ZONE_REPORT" },	\
 		{ REQ_OP_SECURE_ERASE,		"SECURE_ERASE" },	\
 		{ REQ_OP_ZONE_RESET,		"ZONE_RESET" },		\
 		{ REQ_OP_WRITE_SAME,		"WRITE_SAME" },		\
@@ -491,7 +490,7 @@ DEFINE_EVENT(f2fs__truncate_node, f2fs_truncate_node,
 
 TRACE_EVENT(f2fs_truncate_partial_nodes,
 
-	TP_PROTO(struct inode *inode, nid_t nid[], int depth, int err),
+	TP_PROTO(struct inode *inode, nid_t *nid, int depth, int err),
 
 	TP_ARGS(inode, nid, depth, err),
 

@@ -93,17 +93,18 @@ static int als_read_raw(struct iio_dev *indio_dev,
 	int report_id = -1;
 	u32 address;
 	int ret_type;
+	s32 min;
 
 	*val = 0;
 	*val2 = 0;
 	switch (mask) {
-	case 0:
+	case IIO_CHAN_INFO_RAW:
 		switch (chan->scan_index) {
 		case  CHANNEL_SCAN_INDEX_INTENSITY:
 		case  CHANNEL_SCAN_INDEX_ILLUM:
 			report_id = als_state->als_illum.report_id;
-			address =
-			HID_USAGE_SENSOR_LIGHT_ILLUM;
+			min = als_state->als_illum.logical_minimum;
+			address = HID_USAGE_SENSOR_LIGHT_ILLUM;
 			break;
 		default:
 			report_id = -1;
@@ -116,7 +117,8 @@ static int als_read_raw(struct iio_dev *indio_dev,
 					als_state->common_attributes.hsdev,
 					HID_USAGE_SENSOR_ALS, address,
 					report_id,
-					SENSOR_HUB_SYNC);
+					SENSOR_HUB_SYNC,
+					min < 0);
 			hid_sensor_power_state(&als_state->common_attributes,
 						false);
 		} else {

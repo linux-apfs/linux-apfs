@@ -45,7 +45,7 @@ void vhost_poll_stop(struct vhost_poll *poll);
 void vhost_poll_flush(struct vhost_poll *poll);
 void vhost_poll_queue(struct vhost_poll *poll);
 void vhost_work_flush(struct vhost_dev *dev, struct vhost_work *work);
-long vhost_vring_ioctl(struct vhost_dev *d, int ioctl, void __user *argp);
+long vhost_vring_ioctl(struct vhost_dev *d, unsigned int ioctl, void __user *argp);
 
 struct vhost_log {
 	u64 addr;
@@ -132,6 +132,7 @@ struct vhost_virtqueue {
 	struct vhost_umem *iotlb;
 	void *private_data;
 	u64 acked_features;
+	u64 acked_backend_features;
 	/* Log write descriptors */
 	void __user *log_base;
 	struct vhost_log *log;
@@ -147,7 +148,10 @@ struct vhost_virtqueue {
 };
 
 struct vhost_msg_node {
-  struct vhost_msg msg;
+  union {
+	  struct vhost_msg msg;
+	  struct vhost_msg_v2 msg_v2;
+  };
   struct vhost_virtqueue *vq;
   struct list_head node;
 };
@@ -177,9 +181,9 @@ void vhost_dev_reset_owner(struct vhost_dev *, struct vhost_umem *);
 void vhost_dev_cleanup(struct vhost_dev *);
 void vhost_dev_stop(struct vhost_dev *);
 long vhost_dev_ioctl(struct vhost_dev *, unsigned int ioctl, void __user *argp);
-long vhost_vring_ioctl(struct vhost_dev *d, int ioctl, void __user *argp);
-int vhost_vq_access_ok(struct vhost_virtqueue *vq);
-int vhost_log_access_ok(struct vhost_dev *);
+long vhost_vring_ioctl(struct vhost_dev *d, unsigned int ioctl, void __user *argp);
+bool vhost_vq_access_ok(struct vhost_virtqueue *vq);
+bool vhost_log_access_ok(struct vhost_dev *);
 
 int vhost_get_vq_desc(struct vhost_virtqueue *,
 		      struct iovec iov[], unsigned int iov_count,
@@ -236,6 +240,11 @@ enum {
 static inline bool vhost_has_feature(struct vhost_virtqueue *vq, int bit)
 {
 	return vq->acked_features & (1ULL << bit);
+}
+
+static inline bool vhost_backend_has_feature(struct vhost_virtqueue *vq, int bit)
+{
+	return vq->acked_backend_features & (1ULL << bit);
 }
 
 #ifdef CONFIG_VHOST_CROSS_ENDIAN_LEGACY

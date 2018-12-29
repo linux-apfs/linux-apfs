@@ -33,19 +33,31 @@ static int afs_fill_page(struct afs_vnode *vnode, struct key *key,
 			 loff_t pos, unsigned int len, struct page *page)
 {
 	struct afs_read *req;
+	size_t p;
+	void *data;
 	int ret;
 
 	_enter(",,%llu", (unsigned long long)pos);
+
+	if (pos >= vnode->vfs_inode.i_size) {
+		p = pos & ~PAGE_MASK;
+		ASSERTCMP(p + len, <=, PAGE_SIZE);
+		data = kmap(page);
+		memset(data + p, 0, len);
+		kunmap(page);
+		return 0;
+	}
 
 	req = kzalloc(sizeof(struct afs_read) + sizeof(struct page *),
 		      GFP_KERNEL);
 	if (!req)
 		return -ENOMEM;
 
-	atomic_set(&req->usage, 1);
+	refcount_set(&req->usage, 1);
 	req->pos = pos;
 	req->len = len;
 	req->nr_pages = 1;
+	req->pages = req->array;
 	req->pages[0] = page;
 	get_page(page);
 
@@ -80,7 +92,7 @@ int afs_write_begin(struct file *file, struct address_space *mapping,
 	pgoff_t index = pos >> PAGE_SHIFT;
 	int ret;
 
-	_enter("{%x:%u},{%lx},%u,%u",
+	_enter("{%llx:%llu},{%lx},%u,%u",
 	       vnode->fid.vid, vnode->fid.vnode, index, from, to);
 
 	/* We want to store information about how much of a page is altered in
@@ -124,7 +136,12 @@ try_again:
 					     page->index, priv);
 			goto flush_conflicting_write;
 		}
-		if (to < f || from > t)
+		/* If the file is being filled locally, allow inter-write
+		 * spaces to be merged into writes.  If it's not, only write
+		 * back what the user gives us.
+		 */
+		if (!test_bit(AFS_VNODE_NEW_CONTENT, &vnode->flags) &&
+		    (to < f || from > t))
 			goto flush_conflicting_write;
 		if (from < f)
 			f = from;
@@ -175,7 +192,7 @@ int afs_write_end(struct file *file, struct address_space *mapping,
 	loff_t i_size, maybe_i_size;
 	int ret;
 
-	_enter("{%x:%u},{%lx}",
+	_enter("{%llx:%llu},{%lx}",
 	       vnode->fid.vid, vnode->fid.vnode, page->index);
 
 	maybe_i_size = pos + copied;
@@ -224,7 +241,7 @@ static void afs_kill_pages(struct address_space *mapping,
 	struct pagevec pv;
 	unsigned count, loop;
 
-	_enter("{%x:%u},%lx-%lx",
+	_enter("{%llx:%llu},%lx-%lx",
 	       vnode->fid.vid, vnode->fid.vnode, first, last);
 
 	pagevec_init(&pv);
@@ -266,7 +283,7 @@ static void afs_redirty_pages(struct writeback_control *wbc,
 	struct pagevec pv;
 	unsigned count, loop;
 
-	_enter("{%x:%u},%lx-%lx",
+	_enter("{%llx:%llu},%lx-%lx",
 	       vnode->fid.vid, vnode->fid.vnode, first, last);
 
 	pagevec_init(&pv);
@@ -308,7 +325,7 @@ static int afs_store_data(struct address_space *mapping,
 	struct list_head *p;
 	int ret = -ENOKEY, ret2;
 
-	_enter("%s{%x:%u.%u},%lx,%lx,%x,%x",
+	_enter("%s{%llx:%llu.%u},%lx,%lx,%x,%x",
 	       vnode->volume->name,
 	       vnode->fid.vid,
 	       vnode->fid.vnode,
@@ -345,7 +362,7 @@ found_key:
 	ret = -ERESTARTSYS;
 	if (afs_begin_vnode_operation(&fc, vnode, wbk->key)) {
 		while (afs_select_fileserver(&fc)) {
-			fc.cb_break = vnode->cb_break + vnode->cb_s_break;
+			fc.cb_break = afs_calc_vnode_cb_break(vnode);
 			afs_fs_store_data(&fc, mapping, first, last, offset, to);
 		}
 
@@ -355,6 +372,12 @@ found_key:
 	}
 
 	switch (ret) {
+	case 0:
+		afs_stat_v(vnode, n_stores);
+		atomic_long_add((last * PAGE_SIZE + to) -
+				(first * PAGE_SIZE + offset),
+				&afs_v2net(vnode)->n_store_bytes);
+		break;
 	case -EACCES:
 	case -EPERM:
 	case -ENOKEY:
@@ -412,7 +435,8 @@ static int afs_write_back_from_locked_page(struct address_space *mapping,
 		trace_afs_page_dirty(vnode, tracepoint_string("WARN"),
 				     primary_page->index, priv);
 
-	if (start >= final_page || to < PAGE_SIZE)
+	if (start >= final_page ||
+	    (to < PAGE_SIZE && !test_bit(AFS_VNODE_NEW_CONTENT, &vnode->flags)))
 		goto no_more;
 
 	start++;
@@ -433,9 +457,10 @@ static int afs_write_back_from_locked_page(struct address_space *mapping,
 		}
 
 		for (loop = 0; loop < n; loop++) {
-			if (to != PAGE_SIZE)
-				break;
 			page = pages[loop];
+			if (to != PAGE_SIZE &&
+			    !test_bit(AFS_VNODE_NEW_CONTENT, &vnode->flags))
+				break;
 			if (page->index > final_page)
 				break;
 			if (!trylock_page(page))
@@ -448,7 +473,8 @@ static int afs_write_back_from_locked_page(struct address_space *mapping,
 			priv = page_private(page);
 			f = priv & AFS_PRIV_MAX;
 			t = priv >> AFS_PRIV_SHIFT;
-			if (f != 0) {
+			if (f != 0 &&
+			    !test_bit(AFS_VNODE_NEW_CONTENT, &vnode->flags)) {
 				unlock_page(page);
 				break;
 			}
@@ -518,6 +544,7 @@ no_more:
 	case -ENOENT:
 	case -ENOMEDIUM:
 	case -ENXIO:
+		trace_afs_file_error(vnode, ret, afs_file_error_writeback_fail);
 		afs_kill_pages(mapping, first, last);
 		mapping_set_error(mapping, ret);
 		break;
@@ -570,10 +597,11 @@ static int afs_writepages_region(struct address_space *mapping,
 
 		_debug("wback %lx", page->index);
 
-		/* at this point we hold neither mapping->tree_lock nor lock on
-		 * the page itself: the page may be truncated or invalidated
-		 * (changing page->mapping to NULL), or even swizzled back from
-		 * swapper_space to tmpfs file mapping
+		/*
+		 * at this point we hold neither the i_pages lock nor the
+		 * page lock: the page may be truncated or invalidated
+		 * (changing page->mapping to NULL), or even swizzled
+		 * back from swapper_space to tmpfs file mapping
 		 */
 		ret = lock_page_killable(page);
 		if (ret < 0) {
@@ -659,7 +687,7 @@ void afs_pages_written_back(struct afs_vnode *vnode, struct afs_call *call)
 	unsigned count, loop;
 	pgoff_t first = call->first, last = call->last;
 
-	_enter("{%x:%u},{%lx-%lx}",
+	_enter("{%llx:%llu},{%lx-%lx}",
 	       vnode->fid.vid, vnode->fid.vnode, first, last);
 
 	pagevec_init(&pv);
@@ -698,7 +726,7 @@ ssize_t afs_file_write(struct kiocb *iocb, struct iov_iter *from)
 	ssize_t result;
 	size_t count = iov_iter_count(from);
 
-	_enter("{%x.%u},{%zu},",
+	_enter("{%llx:%llu},{%zu},",
 	       vnode->fid.vid, vnode->fid.vnode, count);
 
 	if (IS_SWAPFILE(&vnode->vfs_inode)) {
@@ -726,7 +754,7 @@ int afs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 	struct inode *inode = file_inode(file);
 	struct afs_vnode *vnode = AFS_FS_I(inode);
 
-	_enter("{%x:%u},{n=%pD},%d",
+	_enter("{%llx:%llu},{n=%pD},%d",
 	       vnode->fid.vid, vnode->fid.vnode, file,
 	       datasync);
 
@@ -734,31 +762,17 @@ int afs_fsync(struct file *file, loff_t start, loff_t end, int datasync)
 }
 
 /*
- * Flush out all outstanding writes on a file opened for writing when it is
- * closed.
- */
-int afs_flush(struct file *file, fl_owner_t id)
-{
-	_enter("");
-
-	if ((file->f_mode & FMODE_WRITE) == 0)
-		return 0;
-
-	return vfs_fsync(file, 0);
-}
-
-/*
  * notification that a previously read-only page is about to become writable
  * - if it returns an error, the caller will deliver a bus error signal
  */
-int afs_page_mkwrite(struct vm_fault *vmf)
+vm_fault_t afs_page_mkwrite(struct vm_fault *vmf)
 {
 	struct file *file = vmf->vma->vm_file;
 	struct inode *inode = file_inode(file);
 	struct afs_vnode *vnode = AFS_FS_I(inode);
 	unsigned long priv;
 
-	_enter("{{%x:%u}},{%lx}",
+	_enter("{{%llx:%llu}},{%lx}",
 	       vnode->fid.vid, vnode->fid.vnode, vmf->page->index);
 
 	sb_start_pagefault(inode->i_sb);

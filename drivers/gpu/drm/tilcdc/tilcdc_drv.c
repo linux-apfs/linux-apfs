@@ -233,10 +233,8 @@ static int tilcdc_init(struct drm_driver *ddrv, struct device *dev)
 	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
-	if (!priv) {
-		dev_err(dev, "failed to allocate private data\n");
+	if (!priv)
 		return -ENOMEM;
-	}
 
 	ddev = drm_dev_alloc(ddrv, dev);
 	if (IS_ERR(ddev))
@@ -380,7 +378,7 @@ static int tilcdc_init(struct drm_driver *ddrv, struct device *dev)
 	if (!priv->external_connector &&
 	    ((priv->num_encoders == 0) || (priv->num_connectors == 0))) {
 		dev_err(dev, "no encoders/connectors found\n");
-		ret = -ENXIO;
+		ret = -EPROBE_DEFER;
 		goto init_failed;
 	}
 
@@ -556,29 +554,23 @@ static struct drm_driver tilcdc_driver = {
 static int tilcdc_pm_suspend(struct device *dev)
 {
 	struct drm_device *ddev = dev_get_drvdata(dev);
-	struct tilcdc_drm_private *priv = ddev->dev_private;
+	int ret = 0;
 
-	priv->saved_state = drm_atomic_helper_suspend(ddev);
+	ret = drm_mode_config_helper_suspend(ddev);
 
 	/* Select sleep pin state */
 	pinctrl_pm_select_sleep_state(dev);
 
-	return 0;
+	return ret;
 }
 
 static int tilcdc_pm_resume(struct device *dev)
 {
 	struct drm_device *ddev = dev_get_drvdata(dev);
-	struct tilcdc_drm_private *priv = ddev->dev_private;
-	int ret = 0;
 
 	/* Select default pin state */
 	pinctrl_pm_select_default_state(dev);
-
-	if (priv->saved_state)
-		ret = drm_atomic_helper_resume(ddev, priv->saved_state);
-
-	return ret;
+	return  drm_mode_config_helper_resume(ddev);
 }
 #endif
 

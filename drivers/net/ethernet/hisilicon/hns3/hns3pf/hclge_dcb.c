@@ -1,11 +1,5 @@
-/*
- * Copyright (c) 2016-2017 Hisilicon Limited.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- */
+// SPDX-License-Identifier: GPL-2.0+
+// Copyright (c) 2016-2017 Hisilicon Limited.
 
 #include "hclge_main.h"
 #include "hclge_tm.h"
@@ -79,6 +73,7 @@ static int hclge_ieee_getets(struct hnae3_handle *h, struct ieee_ets *ets)
 static int hclge_ets_validate(struct hclge_dev *hdev, struct ieee_ets *ets,
 			      u8 *tc, bool *changed)
 {
+	bool has_ets_tc = false;
 	u32 total_ets_bw = 0;
 	u8 max_tc = 0;
 	u8 i;
@@ -106,13 +101,14 @@ static int hclge_ets_validate(struct hclge_dev *hdev, struct ieee_ets *ets,
 				*changed = true;
 
 			total_ets_bw += ets->tc_tx_bw[i];
-		break;
+			has_ets_tc = true;
+			break;
 		default:
 			return -EINVAL;
 		}
 	}
 
-	if (total_ets_bw != BW_PERCENT)
+	if (has_ets_tc && total_ets_bw != BW_PERCENT)
 		return -EINVAL;
 
 	*tc = max_tc + 1;
@@ -143,6 +139,8 @@ static int hclge_map_update(struct hnae3_handle *h)
 	ret = hclge_buffer_alloc(hdev);
 	if (ret)
 		return ret;
+
+	hclge_rss_indir_init_cfg(hdev);
 
 	return hclge_rss_init_hw(hdev);
 }
@@ -186,7 +184,9 @@ static int hclge_ieee_setets(struct hnae3_handle *h, struct ieee_ets *ets)
 	if (ret)
 		return ret;
 
-	hclge_tm_schd_info_update(hdev, num_tc);
+	ret = hclge_tm_schd_info_update(hdev, num_tc);
+	if (ret)
+		return ret;
 
 	ret = hclge_ieee_ets_to_tm_info(hdev, ets);
 	if (ret)
@@ -203,9 +203,11 @@ static int hclge_ieee_setets(struct hnae3_handle *h, struct ieee_ets *ets)
 
 static int hclge_ieee_getpfc(struct hnae3_handle *h, struct ieee_pfc *pfc)
 {
+	u64 requests[HNAE3_MAX_TC], indications[HNAE3_MAX_TC];
 	struct hclge_vport *vport = hclge_get_vport(h);
 	struct hclge_dev *hdev = vport->back;
 	u8 i, j, pfc_map, *prio_tc;
+	int ret;
 
 	memset(pfc, 0, sizeof(*pfc));
 	pfc->pfc_cap = hdev->pfc_max;
@@ -220,6 +222,18 @@ static int hclge_ieee_getpfc(struct hnae3_handle *h, struct ieee_pfc *pfc)
 		}
 	}
 
+	ret = hclge_pfc_tx_stats_get(hdev, requests);
+	if (ret)
+		return ret;
+
+	ret = hclge_pfc_rx_stats_get(hdev, indications);
+	if (ret)
+		return ret;
+
+	for (i = 0; i < HCLGE_MAX_TC_NUM; i++) {
+		pfc->requests[i] = requests[i];
+		pfc->indications[i] = indications[i];
+	}
 	return 0;
 }
 
@@ -298,7 +312,9 @@ static int hclge_setup_tc(struct hnae3_handle *h, u8 tc, u8 *prio_tc)
 		return -EINVAL;
 	}
 
-	hclge_tm_schd_info_update(hdev, tc);
+	ret = hclge_tm_schd_info_update(hdev, tc);
+	if (ret)
+		return ret;
 
 	ret = hclge_tm_prio_tc_info_update(hdev, prio_tc);
 	if (ret)

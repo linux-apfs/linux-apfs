@@ -2,6 +2,7 @@
 // Copyright (c) 2017, Maxim Integrated
 
 #include <linux/acpi.h>
+#include <linux/delay.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
@@ -112,12 +113,12 @@ static struct reg_default max98373_reg[] = {
 
 static int max98373_dai_set_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 {
-	struct snd_soc_codec *codec = codec_dai->codec;
-	struct max98373_priv *max98373 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = codec_dai->component;
+	struct max98373_priv *max98373 = snd_soc_component_get_drvdata(component);
 	unsigned int format = 0;
 	unsigned int invert = 0;
 
-	dev_dbg(codec->dev, "%s: fmt 0x%08X\n", __func__, fmt);
+	dev_dbg(component->dev, "%s: fmt 0x%08X\n", __func__, fmt);
 
 	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
 	case SND_SOC_DAIFMT_NB_NF:
@@ -126,7 +127,7 @@ static int max98373_dai_set_fmt(struct snd_soc_dai *codec_dai, unsigned int fmt)
 		invert = MAX98373_PCM_MODE_CFG_PCM_BCLKEDGE;
 		break;
 	default:
-		dev_err(codec->dev, "DAI invert mode unsupported\n");
+		dev_err(component->dev, "DAI invert mode unsupported\n");
 		return -EINVAL;
 	}
 
@@ -177,10 +178,10 @@ static int max98373_get_bclk_sel(int bclk)
 	return 0;
 }
 
-static int max98373_set_clock(struct snd_soc_codec *codec,
+static int max98373_set_clock(struct snd_soc_component *component,
 	struct snd_pcm_hw_params *params)
 {
-	struct max98373_priv *max98373 = snd_soc_codec_get_drvdata(codec);
+	struct max98373_priv *max98373 = snd_soc_component_get_drvdata(component);
 	/* BCLK/LRCLK ratio calculation */
 	int blr_clk_ratio = params_channels(params) * max98373->ch_size;
 	int value;
@@ -189,7 +190,7 @@ static int max98373_set_clock(struct snd_soc_codec *codec,
 		/* BCLK configuration */
 		value = max98373_get_bclk_sel(blr_clk_ratio);
 		if (!value) {
-			dev_err(codec->dev, "format unsupported %d\n",
+			dev_err(component->dev, "format unsupported %d\n",
 				params_format(params));
 			return -EINVAL;
 		}
@@ -206,8 +207,8 @@ static int max98373_dai_hw_params(struct snd_pcm_substream *substream,
 	struct snd_pcm_hw_params *params,
 	struct snd_soc_dai *dai)
 {
-	struct snd_soc_codec *codec = dai->codec;
-	struct max98373_priv *max98373 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = dai->component;
+	struct max98373_priv *max98373 = snd_soc_component_get_drvdata(component);
 	unsigned int sampling_rate = 0;
 	unsigned int chan_sz = 0;
 
@@ -223,7 +224,7 @@ static int max98373_dai_hw_params(struct snd_pcm_substream *substream,
 		chan_sz = MAX98373_PCM_MODE_CFG_CHANSZ_32;
 		break;
 	default:
-		dev_err(codec->dev, "format unsupported %d\n",
+		dev_err(component->dev, "format unsupported %d\n",
 			params_format(params));
 		goto err;
 	}
@@ -234,7 +235,7 @@ static int max98373_dai_hw_params(struct snd_pcm_substream *substream,
 		MAX98373_R2024_PCM_DATA_FMT_CFG,
 		MAX98373_PCM_MODE_CFG_CHANSZ_MASK, chan_sz);
 
-	dev_dbg(codec->dev, "format supported %d",
+	dev_dbg(component->dev, "format supported %d",
 		params_format(params));
 
 	/* sampling rate configuration */
@@ -267,7 +268,7 @@ static int max98373_dai_hw_params(struct snd_pcm_substream *substream,
 		sampling_rate = MAX98373_PCM_SR_SET1_SR_48000;
 		break;
 	default:
-		dev_err(codec->dev, "rate %d not supported\n",
+		dev_err(component->dev, "rate %d not supported\n",
 			params_rate(params));
 		goto err;
 	}
@@ -295,7 +296,7 @@ static int max98373_dai_hw_params(struct snd_pcm_substream *substream,
 			MAX98373_PCM_SR_SET2_IVADC_SR_MASK,
 			sampling_rate);
 
-	return max98373_set_clock(codec, params);
+	return max98373_set_clock(component, params);
 err:
 	return -EINVAL;
 }
@@ -304,8 +305,8 @@ static int max98373_dai_tdm_slot(struct snd_soc_dai *dai,
 	unsigned int tx_mask, unsigned int rx_mask,
 	int slots, int slot_width)
 {
-	struct snd_soc_codec *codec = dai->codec;
-	struct max98373_priv *max98373 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = dai->component;
+	struct max98373_priv *max98373 = snd_soc_component_get_drvdata(component);
 	int bsel = 0;
 	unsigned int chan_sz = 0;
 	unsigned int mask;
@@ -319,7 +320,7 @@ static int max98373_dai_tdm_slot(struct snd_soc_dai *dai,
 	/* BCLK configuration */
 	bsel = max98373_get_bclk_sel(slots * slot_width);
 	if (bsel == 0) {
-		dev_err(codec->dev, "BCLK %d not supported\n",
+		dev_err(component->dev, "BCLK %d not supported\n",
 			slots * slot_width);
 		return -EINVAL;
 	}
@@ -341,7 +342,7 @@ static int max98373_dai_tdm_slot(struct snd_soc_dai *dai,
 		chan_sz = MAX98373_PCM_MODE_CFG_CHANSZ_32;
 		break;
 	default:
-		dev_err(codec->dev, "format unsupported %d\n",
+		dev_err(component->dev, "format unsupported %d\n",
 			slot_width);
 		return -EINVAL;
 	}
@@ -394,8 +395,8 @@ static const struct snd_soc_dai_ops max98373_dai_ops = {
 static int max98373_dac_event(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *kcontrol, int event)
 {
-	struct snd_soc_codec *codec = snd_soc_dapm_to_codec(w->dapm);
-	struct max98373_priv *max98373 = snd_soc_codec_get_drvdata(codec);
+	struct snd_soc_component *component = snd_soc_dapm_to_component(w->dapm);
+	struct max98373_priv *max98373 = snd_soc_component_get_drvdata(component);
 
 	switch (event) {
 	case SND_SOC_DAPM_POST_PMU:
@@ -454,7 +455,7 @@ SND_SOC_DAPM_SIGGEN("IMON"),
 SND_SOC_DAPM_SIGGEN("FBMON"),
 };
 
-static DECLARE_TLV_DB_SCALE(max98373_digital_tlv, 0, -50, 0);
+static DECLARE_TLV_DB_SCALE(max98373_digital_tlv, -6350, 50, 1);
 static const DECLARE_TLV_DB_RANGE(max98373_spk_tlv,
 	0, 8, TLV_DB_SCALE_ITEM(0, 50, 0),
 	9, 10, TLV_DB_SCALE_ITEM(500, 100, 0),
@@ -470,24 +471,25 @@ static const DECLARE_TLV_DB_RANGE(max98373_dht_spkgain_min_tlv,
 	0, 9, TLV_DB_SCALE_ITEM(800, 100, 0),
 );
 static const DECLARE_TLV_DB_RANGE(max98373_dht_rotation_point_tlv,
-	0, 1, TLV_DB_SCALE_ITEM(-50, -50, 0),
-	2, 7, TLV_DB_SCALE_ITEM(-200, -100, 0),
-	8, 9, TLV_DB_SCALE_ITEM(-1000, -200, 0),
-	10, 11, TLV_DB_SCALE_ITEM(-1500, -300, 0),
-	12, 13, TLV_DB_SCALE_ITEM(-2000, -200, 0),
-	14, 15, TLV_DB_SCALE_ITEM(-2500, -500, 0),
+	0, 1, TLV_DB_SCALE_ITEM(-3000, 500, 0),
+	2, 4, TLV_DB_SCALE_ITEM(-2200, 200, 0),
+	5, 6, TLV_DB_SCALE_ITEM(-1500, 300, 0),
+	7, 9, TLV_DB_SCALE_ITEM(-1000, 200, 0),
+	10, 13, TLV_DB_SCALE_ITEM(-500, 100, 0),
+	14, 15, TLV_DB_SCALE_ITEM(-100, 50, 0),
 );
 static const DECLARE_TLV_DB_RANGE(max98373_limiter_thresh_tlv,
-	0, 15, TLV_DB_SCALE_ITEM(0, -100, 0),
+	0, 15, TLV_DB_SCALE_ITEM(-1500, 100, 0),
 );
 
 static const DECLARE_TLV_DB_RANGE(max98373_bde_gain_tlv,
-	0, 60, TLV_DB_SCALE_ITEM(0, -25, 0),
+	0, 60, TLV_DB_SCALE_ITEM(-1500, 25, 0),
 );
 
 static bool max98373_readable_register(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
+	case MAX98373_R2000_SW_RESET:
 	case MAX98373_R2001_INT_RAW1 ... MAX98373_R200C_INT_EN3:
 	case MAX98373_R2010_IRQ_CTRL:
 	case MAX98373_R2014_THERM_WARN_THRESH
@@ -519,6 +521,7 @@ static bool max98373_volatile_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
 	case MAX98373_R2000_SW_RESET ... MAX98373_R2009_INT_FLAG3:
+	case MAX98373_R203E_AMP_PATH_GAIN:
 	case MAX98373_R2054_MEAS_ADC_PVDD_CH_READBACK:
 	case MAX98373_R2055_MEAS_ADC_THERM_CH_READBACK:
 	case MAX98373_R20B6_BDE_CUR_STATE_READBACK:
@@ -602,7 +605,7 @@ SOC_SINGLE("Dither Switch", MAX98373_R203F_AMP_DSP_CFG,
 SOC_SINGLE("DC Blocker Switch", MAX98373_R203F_AMP_DSP_CFG,
 	MAX98373_AMP_DSP_CFG_DCBLK_SHIFT, 1, 0),
 SOC_SINGLE_TLV("Digital Volume", MAX98373_R203D_AMP_DIG_VOL_CTRL,
-	0, 0x7F, 0, max98373_digital_tlv),
+	0, 0x7F, 1, max98373_digital_tlv),
 SOC_SINGLE_TLV("Speaker Volume", MAX98373_R203E_AMP_PATH_GAIN,
 	MAX98373_SPK_DIGI_GAIN_SHIFT, 10, 0, max98373_spk_tlv),
 SOC_SINGLE_TLV("FS Max Volume", MAX98373_R203E_AMP_PATH_GAIN,
@@ -614,7 +617,7 @@ SOC_SINGLE("DHT Switch", MAX98373_R20D4_DHT_EN,
 SOC_SINGLE_TLV("DHT Min Volume", MAX98373_R20D1_DHT_CFG,
 	MAX98373_DHT_SPK_GAIN_MIN_SHIFT, 9, 0, max98373_dht_spkgain_min_tlv),
 SOC_SINGLE_TLV("DHT Rot Pnt Volume", MAX98373_R20D1_DHT_CFG,
-	MAX98373_DHT_ROT_PNT_SHIFT, 15, 0, max98373_dht_rotation_point_tlv),
+	MAX98373_DHT_ROT_PNT_SHIFT, 15, 1, max98373_dht_rotation_point_tlv),
 SOC_SINGLE_TLV("DHT Attack Step Volume", MAX98373_R20D2_DHT_ATTACK_CFG,
 	MAX98373_DHT_ATTACK_STEP_SHIFT, 4, 0, max98373_dht_step_size_tlv),
 SOC_SINGLE_TLV("DHT Release Step Volume", MAX98373_R20D3_DHT_RELEASE_CFG,
@@ -651,29 +654,29 @@ SOC_SINGLE("BDE Hold Time", MAX98373_R2090_BDE_LVL_HOLD, 0, 0xFF, 0),
 SOC_SINGLE("BDE Attack Rate", MAX98373_R2091_BDE_GAIN_ATK_REL_RATE, 4, 0xF, 0),
 SOC_SINGLE("BDE Release Rate", MAX98373_R2091_BDE_GAIN_ATK_REL_RATE, 0, 0xF, 0),
 SOC_SINGLE_TLV("BDE LVL1 Clip Thresh Volume", MAX98373_R20A9_BDE_L1_CFG_2,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL2 Clip Thresh Volume", MAX98373_R20AC_BDE_L2_CFG_2,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL3 Clip Thresh Volume", MAX98373_R20AF_BDE_L3_CFG_2,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL4 Clip Thresh Volume", MAX98373_R20B2_BDE_L4_CFG_2,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL1 Clip Reduction Volume", MAX98373_R20AA_BDE_L1_CFG_3,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL2 Clip Reduction Volume", MAX98373_R20AD_BDE_L2_CFG_3,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL3 Clip Reduction Volume", MAX98373_R20B0_BDE_L3_CFG_3,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL4 Clip Reduction Volume", MAX98373_R20B3_BDE_L4_CFG_3,
-	0, 0x3C, 0, max98373_bde_gain_tlv),
+	0, 0x3C, 1, max98373_bde_gain_tlv),
 SOC_SINGLE_TLV("BDE LVL1 Limiter Thresh Volume", MAX98373_R20A8_BDE_L1_CFG_1,
-	0, 0xF, 0, max98373_limiter_thresh_tlv),
+	0, 0xF, 1, max98373_limiter_thresh_tlv),
 SOC_SINGLE_TLV("BDE LVL2 Limiter Thresh Volume", MAX98373_R20AB_BDE_L2_CFG_1,
-	0, 0xF, 0, max98373_limiter_thresh_tlv),
+	0, 0xF, 1, max98373_limiter_thresh_tlv),
 SOC_SINGLE_TLV("BDE LVL3 Limiter Thresh Volume", MAX98373_R20AE_BDE_L3_CFG_1,
-	0, 0xF, 0, max98373_limiter_thresh_tlv),
+	0, 0xF, 1, max98373_limiter_thresh_tlv),
 SOC_SINGLE_TLV("BDE LVL4 Limiter Thresh Volume", MAX98373_R20B1_BDE_L4_CFG_1,
-	0, 0xF, 0, max98373_limiter_thresh_tlv),
+	0, 0xF, 1, max98373_limiter_thresh_tlv),
 /* Limiter */
 SOC_SINGLE("Limiter Switch", MAX98373_R20E2_LIMITER_EN,
 	MAX98373_LIMITER_EN_SHIFT, 1, 0),
@@ -721,15 +724,14 @@ static struct snd_soc_dai_driver max98373_dai[] = {
 	}
 };
 
-static int max98373_probe(struct snd_soc_codec *codec)
+static int max98373_probe(struct snd_soc_component *component)
 {
-	struct max98373_priv *max98373 = snd_soc_codec_get_drvdata(codec);
-
-	codec->control_data = max98373->regmap;
+	struct max98373_priv *max98373 = snd_soc_component_get_drvdata(component);
 
 	/* Software Reset */
 	regmap_write(max98373->regmap,
 		MAX98373_R2000_SW_RESET, MAX98373_SOFT_RESET);
+	usleep_range(10000, 11000);
 
 	/* IV default slot configuration */
 	regmap_write(max98373->regmap,
@@ -818,6 +820,7 @@ static int max98373_resume(struct device *dev)
 
 	regmap_write(max98373->regmap,
 		MAX98373_R2000_SW_RESET, MAX98373_SOFT_RESET);
+	usleep_range(10000, 11000);
 	regcache_cache_only(max98373->regmap, false);
 	regcache_sync(max98373->regmap);
 	return 0;
@@ -828,16 +831,18 @@ static const struct dev_pm_ops max98373_pm = {
 	SET_SYSTEM_SLEEP_PM_OPS(max98373_suspend, max98373_resume)
 };
 
-static const struct snd_soc_codec_driver soc_codec_dev_max98373 = {
-	.probe = max98373_probe,
-	.component_driver = {
-		.controls = max98373_snd_controls,
-		.num_controls = ARRAY_SIZE(max98373_snd_controls),
-		.dapm_widgets = max98373_dapm_widgets,
-		.num_dapm_widgets = ARRAY_SIZE(max98373_dapm_widgets),
-		.dapm_routes = max98373_audio_map,
-		.num_dapm_routes = ARRAY_SIZE(max98373_audio_map),
-	},
+static const struct snd_soc_component_driver soc_codec_dev_max98373 = {
+	.probe			= max98373_probe,
+	.controls		= max98373_snd_controls,
+	.num_controls		= ARRAY_SIZE(max98373_snd_controls),
+	.dapm_widgets		= max98373_dapm_widgets,
+	.num_dapm_widgets	= ARRAY_SIZE(max98373_dapm_widgets),
+	.dapm_routes		= max98373_audio_map,
+	.num_dapm_routes	= ARRAY_SIZE(max98373_audio_map),
+	.idle_bias_on		= 1,
+	.use_pmdown_time	= 1,
+	.endianness		= 1,
+	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config max98373_regmap = {
@@ -920,18 +925,12 @@ static int max98373_i2c_probe(struct i2c_client *i2c,
 	max98373_slot_config(i2c, max98373);
 
 	/* codec registeration */
-	ret = snd_soc_register_codec(&i2c->dev, &soc_codec_dev_max98373,
+	ret = devm_snd_soc_register_component(&i2c->dev, &soc_codec_dev_max98373,
 		max98373_dai, ARRAY_SIZE(max98373_dai));
 	if (ret < 0)
 		dev_err(&i2c->dev, "Failed to register codec: %d\n", ret);
 
 	return ret;
-}
-
-static int max98373_i2c_remove(struct i2c_client *client)
-{
-	snd_soc_unregister_codec(&client->dev);
-	return 0;
 }
 
 static const struct i2c_device_id max98373_i2c_id[] = {
@@ -965,7 +964,6 @@ static struct i2c_driver max98373_i2c_driver = {
 		.pm = &max98373_pm,
 	},
 	.probe = max98373_i2c_probe,
-	.remove = max98373_i2c_remove,
 	.id_table = max98373_i2c_id,
 };
 

@@ -375,7 +375,7 @@ static u32 flexrm_estimate_header_desc_count(u32 nhcnt)
 	return hcnt;
 }
 
-static void flexrm_flip_header_toogle(void *desc_ptr)
+static void flexrm_flip_header_toggle(void *desc_ptr)
 {
 	u64 desc = flexrm_read_desc(desc_ptr);
 
@@ -709,7 +709,7 @@ static void *flexrm_spu_write_descs(struct brcm_message *msg, u32 nhcnt,
 	wmb();
 
 	/* Flip toggle bit in header */
-	flexrm_flip_header_toogle(orig_desc_ptr);
+	flexrm_flip_header_toggle(orig_desc_ptr);
 
 	return desc_ptr;
 }
@@ -838,7 +838,7 @@ static void *flexrm_sba_write_descs(struct brcm_message *msg, u32 nhcnt,
 	wmb();
 
 	/* Flip toggle bit in header */
-	flexrm_flip_header_toogle(orig_desc_ptr);
+	flexrm_flip_header_toggle(orig_desc_ptr);
 
 	return desc_ptr;
 }
@@ -1268,7 +1268,7 @@ static int flexrm_startup(struct mbox_chan *chan)
 	}
 
 	/* Allocate completion memory */
-	ring->cmpl_base = dma_pool_alloc(ring->mbox->cmpl_pool,
+	ring->cmpl_base = dma_pool_zalloc(ring->mbox->cmpl_pool,
 					 GFP_KERNEL, &ring->cmpl_dma_base);
 	if (!ring->cmpl_base) {
 		dev_err(ring->mbox->dev,
@@ -1277,7 +1277,6 @@ static int flexrm_startup(struct mbox_chan *chan)
 		ret = -ENOMEM;
 		goto fail_free_bd_memory;
 	}
-	memset(ring->cmpl_base, 0, RING_CMPL_SIZE);
 
 	/* Request IRQ */
 	if (ring->irq == UINT_MAX) {

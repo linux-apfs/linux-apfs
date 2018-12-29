@@ -4,7 +4,7 @@
 #include <linux/compiler.h>
 #include <linux/refcount.h>
 #include <linux/types.h>
-#include <asm/barrier.h>
+#include <linux/ring_buffer.h>
 #include <stdbool.h>
 #include "auxtrace.h"
 #include "event.h"
@@ -18,8 +18,12 @@ struct perf_mmap {
 	void		 *base;
 	int		 mask;
 	int		 fd;
+	int		 cpu;
 	refcount_t	 refcnt;
 	u64		 prev;
+	u64		 start;
+	u64		 end;
+	bool		 overwrite;
 	struct auxtrace_mmap auxtrace_mmap;
 	char		 event_copy[PERF_SAMPLE_MAX_SIZE] __aligned(8);
 };
@@ -57,45 +61,33 @@ struct mmap_params {
 	struct auxtrace_mmap_params auxtrace_mp;
 };
 
-int perf_mmap__mmap(struct perf_mmap *map, struct mmap_params *mp, int fd);
+int perf_mmap__mmap(struct perf_mmap *map, struct mmap_params *mp, int fd, int cpu);
 void perf_mmap__munmap(struct perf_mmap *map);
 
 void perf_mmap__get(struct perf_mmap *map);
 void perf_mmap__put(struct perf_mmap *map);
 
-void perf_mmap__consume(struct perf_mmap *map, bool overwrite);
+void perf_mmap__consume(struct perf_mmap *map);
 
 static inline u64 perf_mmap__read_head(struct perf_mmap *mm)
 {
-	struct perf_event_mmap_page *pc = mm->base;
-	u64 head = READ_ONCE(pc->data_head);
-	rmb();
-	return head;
+	return ring_buffer_read_head(mm->base);
 }
 
 static inline void perf_mmap__write_tail(struct perf_mmap *md, u64 tail)
 {
-	struct perf_event_mmap_page *pc = md->base;
-
-	/*
-	 * ensure all reads are done before we write the tail out.
-	 */
-	mb();
-	pc->data_tail = tail;
+	ring_buffer_write_tail(md->base, tail);
 }
 
 union perf_event *perf_mmap__read_forward(struct perf_mmap *map);
 
-union perf_event *perf_mmap__read_event(struct perf_mmap *map,
-					bool overwrite,
-					u64 *startp, u64 end);
+union perf_event *perf_mmap__read_event(struct perf_mmap *map);
 
-int perf_mmap__push(struct perf_mmap *md, bool backward,
-		    void *to, int push(void *to, void *buf, size_t size));
+int perf_mmap__push(struct perf_mmap *md, void *to,
+		    int push(struct perf_mmap *map, void *to, void *buf, size_t size));
 
 size_t perf_mmap__mmap_len(struct perf_mmap *map);
 
-int perf_mmap__read_init(struct perf_mmap *md, bool overwrite,
-			 u64 *startp, u64 *endp);
+int perf_mmap__read_init(struct perf_mmap *md);
 void perf_mmap__read_done(struct perf_mmap *map);
 #endif /*__PERF_MMAP_H */

@@ -39,13 +39,20 @@
 #define IBMVNIC_RX_WEIGHT		16
 /* when changing this, update IBMVNIC_IO_ENTITLEMENT_DEFAULT */
 #define IBMVNIC_BUFFS_PER_POOL	100
-#define IBMVNIC_MAX_QUEUES	10
+#define IBMVNIC_MAX_QUEUES	16
+#define IBMVNIC_MAX_QUEUE_SZ   4096
 
 #define IBMVNIC_TSO_BUF_SZ	65536
 #define IBMVNIC_TSO_BUFS	64
+#define IBMVNIC_TSO_POOL_MASK	0x80000000
 
 #define IBMVNIC_MAX_LTB_SIZE ((1 << (MAX_ORDER - 1)) * PAGE_SIZE)
 #define IBMVNIC_BUFFER_HLEN 500
+
+static const char ibmvnic_priv_flags[][ETH_GSTRING_LEN] = {
+#define IBMVNIC_USE_SERVER_MAXES 0x1
+	"use-server-maxes"
+};
 
 struct ibmvnic_login_buffer {
 	__be32 len;
@@ -511,24 +518,6 @@ struct ibmvnic_error_indication {
 	u8 reserved2[2];
 } __packed __aligned(8);
 
-struct ibmvnic_request_error_info {
-	u8 first;
-	u8 cmd;
-	u8 reserved[2];
-	__be32 ioba;
-	__be32 len;
-	__be32 error_id;
-} __packed __aligned(8);
-
-struct ibmvnic_request_error_rsp {
-	u8 first;
-	u8 cmd;
-	u8 reserved[2];
-	__be32 error_id;
-	__be32 len;
-	struct ibmvnic_rc rc;
-} __packed __aligned(8);
-
 struct ibmvnic_link_state_indication {
 	u8 first;
 	u8 cmd;
@@ -708,8 +697,6 @@ union ibmvnic_crq {
 	struct ibmvnic_request_debug_stats request_debug_stats;
 	struct ibmvnic_request_debug_stats request_debug_stats_rsp;
 	struct ibmvnic_error_indication error_indication;
-	struct ibmvnic_request_error_info request_error_info;
-	struct ibmvnic_request_error_rsp request_error_rsp;
 	struct ibmvnic_link_state_indication link_state_indication;
 	struct ibmvnic_change_mac_addr change_mac_addr;
 	struct ibmvnic_change_mac_addr change_mac_addr_rsp;
@@ -808,8 +795,6 @@ enum ibmvnic_commands {
 	SET_PHYS_PARMS = 0x07,
 	SET_PHYS_PARMS_RSP = 0x87,
 	ERROR_INDICATION = 0x08,
-	REQUEST_ERROR_INFO = 0x09,
-	REQUEST_ERROR_RSP = 0x89,
 	LOGICAL_LINK_STATE = 0x0C,
 	LOGICAL_LINK_STATE_RSP = 0x8C,
 	REQUEST_STATISTICS = 0x0D,
@@ -864,6 +849,7 @@ struct ibmvnic_crq_queue {
 	int size, cur;
 	dma_addr_t msg_token;
 	spinlock_t lock;
+	bool active;
 };
 
 union sub_crq {
@@ -909,6 +895,7 @@ struct ibmvnic_tx_buff {
 	union sub_crq indir_arr[6];
 	u8 hdr_data[140];
 	dma_addr_t indir_dma;
+	int num_entries;
 };
 
 struct ibmvnic_tx_pool {
@@ -916,11 +903,9 @@ struct ibmvnic_tx_pool {
 	int *free_map;
 	int consumer_index;
 	int producer_index;
-	wait_queue_head_t ibmvnic_tx_comp_q;
-	struct task_struct *work_thread;
 	struct ibmvnic_long_term_buff long_term_buff;
-	struct ibmvnic_long_term_buff tso_ltb;
-	int tso_index;
+	int num_buffers;
+	int buf_size;
 };
 
 struct ibmvnic_rx_buff {
@@ -942,14 +927,6 @@ struct ibmvnic_rx_pool {
 	int next_alloc;
 	int active;
 	struct ibmvnic_long_term_buff long_term_buff;
-};
-
-struct ibmvnic_error_buff {
-	char *buff;
-	dma_addr_t dma;
-	int len;
-	struct list_head list;
-	__be32 error_id;
 };
 
 struct ibmvnic_vpd {
@@ -998,6 +975,7 @@ struct ibmvnic_adapter {
 	struct ibmvnic_control_ip_offload_buffer ip_offload_ctrl;
 	dma_addr_t ip_offload_ctrl_tok;
 	u32 msg_enable;
+	u32 priv_flags;
 
 	/* Vital Product Data (VPD) */
 	struct ibmvnic_vpd *vpd;
@@ -1035,7 +1013,6 @@ struct ibmvnic_adapter {
 
 	struct ibmvnic_sub_crq_queue **tx_scrq;
 	struct ibmvnic_sub_crq_queue **rx_scrq;
-	bool renegotiate;
 
 	/* rx structs */
 	struct napi_struct *napi;
@@ -1043,11 +1020,9 @@ struct ibmvnic_adapter {
 	u64 promisc;
 
 	struct ibmvnic_tx_pool *tx_pool;
+	struct ibmvnic_tx_pool *tso_pool;
 	struct completion init_done;
 	int init_done_rc;
-
-	struct list_head errors;
-	spinlock_t error_list_lock;
 
 	struct completion fw_done;
 	int fw_done_rc;
@@ -1091,19 +1066,24 @@ struct ibmvnic_adapter {
 	u64 opt_rxba_entries_per_subcrq;
 	__be64 tx_rx_desc_req;
 	u8 map_id;
-	u64 num_active_rx_pools;
-	u64 num_active_tx_pools;
+	u32 num_active_rx_scrqs;
+	u32 num_active_rx_pools;
+	u32 num_active_rx_napi;
+	u32 num_active_tx_scrqs;
+	u32 num_active_tx_pools;
 
 	struct tasklet_struct tasklet;
 	enum vnic_state state;
 	enum ibmvnic_reset_reason reset_reason;
-	struct mutex reset_lock, rwi_lock;
+	spinlock_t rwi_lock;
 	struct list_head rwi_list;
 	struct work_struct ibmvnic_reset;
 	bool resetting;
 	bool napi_enabled, from_passive_init;
 
 	bool mac_change_pending;
+	bool failover_pending;
+	bool force_reset_recovery;
 
 	struct ibmvnic_tunables desired;
 	struct ibmvnic_tunables fallback;

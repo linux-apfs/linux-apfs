@@ -45,29 +45,36 @@
 
 struct omap_drm_usergart;
 
-struct omap_drm_private {
-	uint32_t omaprev;
+struct omap_drm_pipeline {
+	struct drm_crtc *crtc;
+	struct drm_encoder *encoder;
+	struct drm_connector *connector;
+	struct omap_dss_device *output;
+	struct omap_dss_device *display;
+};
 
+struct omap_drm_private {
+	struct drm_device *ddev;
+	struct device *dev;
+	u32 omaprev;
+
+	struct dss_device *dss;
+	struct dispc_device *dispc;
 	const struct dispc_ops *dispc_ops;
 
-	unsigned int num_crtcs;
-	struct drm_crtc *crtcs[8];
+	unsigned int num_pipes;
+	struct omap_drm_pipeline pipes[8];
+	struct omap_drm_pipeline *channels[8];
 
 	unsigned int num_planes;
 	struct drm_plane *planes[8];
-
-	unsigned int num_encoders;
-	struct drm_encoder *encoders[8];
-
-	unsigned int num_connectors;
-	struct drm_connector *connectors[8];
 
 	struct drm_fb_helper *fbdev;
 
 	struct workqueue_struct *wq;
 
 	/* lock for obj_list below */
-	spinlock_t list_lock;
+	struct mutex list_lock;
 
 	/* list of GEM objects: */
 	struct list_head obj_list;
@@ -81,7 +88,7 @@ struct omap_drm_private {
 	/* irq handling: */
 	spinlock_t wait_lock;		/* protects the wait_list */
 	struct list_head wait_list;	/* list of omap_irq_wait */
-	uint32_t irq_mask;		/* enabled irqs in addition to wait_list */
+	u32 irq_mask;			/* enabled irqs in addition to wait_list */
 
 	/* memory bandwidth limit if it is needed on the platform */
 	unsigned int max_bandwidth;

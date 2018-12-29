@@ -29,6 +29,7 @@
 #include <linux/dmi.h>
 #include <linux/hid.h>
 #include <linux/module.h>
+#include <linux/platform_data/x86/asus-wmi.h>
 #include <linux/input/mt.h>
 #include <linux/usb.h> /* For to_usb_interface for T100 touchpad intf check */
 
@@ -349,6 +350,27 @@ static void asus_kbd_backlight_work(struct work_struct *work)
 		hid_err(led->hdev, "Asus failed to set keyboard backlight: %d\n", ret);
 }
 
+/* WMI-based keyboard backlight LED control (via asus-wmi driver) takes
+ * precedence. We only activate HID-based backlight control when the
+ * WMI control is not available.
+ */
+static bool asus_kbd_wmi_led_control_present(struct hid_device *hdev)
+{
+	u32 value;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_ASUS_WMI))
+		return false;
+
+	ret = asus_wmi_evaluate_method(ASUS_WMI_METHODID_DSTS2,
+				       ASUS_WMI_DEVID_KBD_BACKLIGHT, 0, &value);
+	hid_dbg(hdev, "WMI backlight check: rc %d value %x", ret, value);
+	if (ret)
+		return false;
+
+	return !!(value & ASUS_WMI_DSTS_PRESENCE_BIT);
+}
+
 static int asus_kbd_register_leds(struct hid_device *hdev)
 {
 	struct asus_drvdata *drvdata = hid_get_drvdata(hdev);
@@ -436,7 +458,9 @@ static int asus_input_configured(struct hid_device *hdev, struct hid_input *hi)
 
 	drvdata->input = input;
 
-	if (drvdata->enable_backlight && asus_kbd_register_leds(hdev))
+	if (drvdata->enable_backlight &&
+	    !asus_kbd_wmi_led_control_present(hdev) &&
+	    asus_kbd_register_leds(hdev))
 		hid_warn(hdev, "Failed to initialize backlight.\n");
 
 	return 0;
@@ -570,7 +594,9 @@ static int asus_input_mapping(struct hid_device *hdev,
 static int asus_start_multitouch(struct hid_device *hdev)
 {
 	int ret;
-	const unsigned char buf[] = { FEATURE_REPORT_ID, 0x00, 0x03, 0x01, 0x00 };
+	static const unsigned char buf[] = {
+		FEATURE_REPORT_ID, 0x00, 0x03, 0x01, 0x00
+	};
 	unsigned char *dmabuf = kmemdup(buf, sizeof(buf), GFP_KERNEL);
 
 	if (!dmabuf) {
@@ -644,8 +670,7 @@ static int asus_probe(struct hid_device *hdev, const struct hid_device_id *id)
 		 * All functionality is on a single HID interface and for
 		 * userspace the touchpad must be a separate input_dev.
 		 */
-		hdev->quirks |= HID_QUIRK_MULTI_INPUT |
-				HID_QUIRK_NO_EMPTY_INPUT;
+		hdev->quirks |= HID_QUIRK_MULTI_INPUT;
 		drvdata->tp = &asus_t100chi_tp;
 	}
 

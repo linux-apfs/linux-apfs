@@ -86,7 +86,7 @@ static void prom_sync_me(void)
 	show_free_areas(0, NULL);
 	if (!is_idle_task(current)) {
 		local_irq_enable();
-		sys_sync();
+		ksys_sync();
 		local_irq_disable();
 	}
 	prom_printf("Returning to prom\n");
@@ -310,25 +310,24 @@ void __init setup_arch(char **cmdline_p)
 
 	register_console(&prom_early_console);
 
-	printk("ARCH: ");
 	switch(sparc_cpu_model) {
 	case sun4m:
-		printk("SUN4M\n");
+		pr_info("ARCH: SUN4M\n");
 		break;
 	case sun4d:
-		printk("SUN4D\n");
+		pr_info("ARCH: SUN4D\n");
 		break;
 	case sun4e:
-		printk("SUN4E\n");
+		pr_info("ARCH: SUN4E\n");
 		break;
 	case sun4u:
-		printk("SUN4U\n");
+		pr_info("ARCH: SUN4U\n");
 		break;
 	case sparc_leon:
-		printk("LEON\n");
+		pr_info("ARCH: LEON\n");
 		break;
 	default:
-		printk("UNKNOWN!\n");
+		pr_info("ARCH: UNKNOWN!\n");
 		break;
 	}
 

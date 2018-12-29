@@ -54,12 +54,13 @@
 #include <net/netfilter/nf_conntrack_expect.h>
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <linux/netfilter/nf_conntrack_snmp.h>
-#include "nf_nat_snmp_basic-asn1.h"
+#include "nf_nat_snmp_basic.asn1.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("James Morris <jmorris@intercode.com.au>");
 MODULE_DESCRIPTION("Basic SNMP Application Layer Gateway");
 MODULE_ALIAS("ip_nat_snmp_basic");
+MODULE_ALIAS_NFCT_HELPER("snmp_trap");
 
 #define SNMP_PORT 161
 #define SNMP_TRAP_PORT 162

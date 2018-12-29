@@ -19,11 +19,10 @@
 #include <linux/of_mdio.h>
 #include <linux/of_platform.h>
 #include <linux/of_net.h>
-#include <linux/of_gpio.h>
 #include <linux/netdevice.h>
 #include <linux/sysfs.h>
 #include <linux/phy_fixed.h>
-#include <linux/gpio/consumer.h>
+#include <linux/ptp_classify.h>
 #include <linux/etherdevice.h>
 
 #include "dsa_priv.h"
@@ -53,6 +52,9 @@ const struct dsa_device_ops *dsa_device_ops[DSA_TAG_LAST] = {
 #ifdef CONFIG_NET_DSA_TAG_EDSA
 	[DSA_TAG_PROTO_EDSA] = &edsa_netdev_ops,
 #endif
+#ifdef CONFIG_NET_DSA_TAG_GSWIP
+	[DSA_TAG_PROTO_GSWIP] = &gswip_netdev_ops,
+#endif
 #ifdef CONFIG_NET_DSA_TAG_KSZ
 	[DSA_TAG_PROTO_KSZ] = &ksz_netdev_ops,
 #endif
@@ -69,6 +71,52 @@ const struct dsa_device_ops *dsa_device_ops[DSA_TAG_LAST] = {
 	[DSA_TAG_PROTO_TRAILER] = &trailer_netdev_ops,
 #endif
 	[DSA_TAG_PROTO_NONE] = &none_ops,
+};
+
+const char *dsa_tag_protocol_to_str(const struct dsa_device_ops *ops)
+{
+	const char *protocol_name[DSA_TAG_LAST] = {
+#ifdef CONFIG_NET_DSA_TAG_BRCM
+		[DSA_TAG_PROTO_BRCM] = "brcm",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_BRCM_PREPEND
+		[DSA_TAG_PROTO_BRCM_PREPEND] = "brcm-prepend",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_DSA
+		[DSA_TAG_PROTO_DSA] = "dsa",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_EDSA
+		[DSA_TAG_PROTO_EDSA] = "edsa",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_GSWIP
+		[DSA_TAG_PROTO_GSWIP] = "gswip",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_KSZ
+		[DSA_TAG_PROTO_KSZ] = "ksz",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_LAN9303
+		[DSA_TAG_PROTO_LAN9303] = "lan9303",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_MTK
+		[DSA_TAG_PROTO_MTK] = "mtk",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_QCA
+		[DSA_TAG_PROTO_QCA] = "qca",
+#endif
+#ifdef CONFIG_NET_DSA_TAG_TRAILER
+		[DSA_TAG_PROTO_TRAILER] = "trailer",
+#endif
+		[DSA_TAG_PROTO_NONE] = "none",
+	};
+	unsigned int i;
+
+	BUILD_BUG_ON(ARRAY_SIZE(protocol_name) != DSA_TAG_LAST);
+
+	for (i = 0; i < ARRAY_SIZE(dsa_device_ops); i++)
+		if (ops == dsa_device_ops[i])
+			return protocol_name[i];
+
+	return protocol_name[DSA_TAG_PROTO_NONE];
 };
 
 const struct dsa_device_ops *dsa_resolve_tag_protocol(int tag_protocol)
@@ -122,6 +170,38 @@ struct net_device *dsa_dev_to_net_device(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(dsa_dev_to_net_device);
 
+/* Determine if we should defer delivery of skb until we have a rx timestamp.
+ *
+ * Called from dsa_switch_rcv. For now, this will only work if tagging is
+ * enabled on the switch. Normally the MAC driver would retrieve the hardware
+ * timestamp when it reads the packet out of the hardware. However in a DSA
+ * switch, the DSA driver owning the interface to which the packet is
+ * delivered is never notified unless we do so here.
+ */
+static bool dsa_skb_defer_rx_timestamp(struct dsa_slave_priv *p,
+				       struct sk_buff *skb)
+{
+	struct dsa_switch *ds = p->dp->ds;
+	unsigned int type;
+
+	if (skb_headroom(skb) < ETH_HLEN)
+		return false;
+
+	__skb_push(skb, ETH_HLEN);
+
+	type = ptp_classify_raw(skb);
+
+	__skb_pull(skb, ETH_HLEN);
+
+	if (type == PTP_CLASS_NONE)
+		return false;
+
+	if (likely(ds->ops->port_rxtstamp))
+		return ds->ops->port_rxtstamp(ds, p->dp->index, skb, type);
+
+	return false;
+}
+
 static int dsa_switch_rcv(struct sk_buff *skb, struct net_device *dev,
 			  struct packet_type *pt, struct net_device *unused)
 {
@@ -156,6 +236,9 @@ static int dsa_switch_rcv(struct sk_buff *skb, struct net_device *dev,
 	s->rx_packets++;
 	s->rx_bytes += skb->len;
 	u64_stats_update_end(&s->syncp);
+
+	if (dsa_skb_defer_rx_timestamp(p, skb))
+		return 0;
 
 	netif_receive_skb(skb);
 

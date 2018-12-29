@@ -67,8 +67,8 @@ connlimit_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		key[1] = zone->id;
 	}
 
-	connections = nf_conncount_count(net, info->data, key,
-					 xt_family(par), tuple_ptr, zone);
+	connections = nf_conncount_count(net, info->data, key, tuple_ptr,
+					 zone);
 	if (connections == 0)
 		/* kmalloc failed, drop it entirely */
 		goto hotdrop;
@@ -93,10 +93,8 @@ static int connlimit_mt_check(const struct xt_mtchk_param *par)
 
 	/* init private data */
 	info->data = nf_conncount_init(par->net, par->family, keylen);
-	if (IS_ERR(info->data))
-		return PTR_ERR(info->data);
 
-	return 0;
+	return PTR_ERR_OR_ZERO(info->data);
 }
 
 static void connlimit_mt_destroy(const struct xt_mtdtor_param *par)

@@ -28,6 +28,7 @@
 #include <sound/core.h>
 #include <sound/minors.h>
 #include <sound/pcm.h>
+#include <sound/timer.h>
 #include <sound/control.h>
 #include <sound/info.h>
 
@@ -491,13 +492,8 @@ static void snd_pcm_xrun_injection_write(struct snd_info_entry *entry,
 					 struct snd_info_buffer *buffer)
 {
 	struct snd_pcm_substream *substream = entry->private_data;
-	struct snd_pcm_runtime *runtime;
 
-	snd_pcm_stream_lock_irq(substream);
-	runtime = substream->runtime;
-	if (runtime && runtime->status->state == SNDRV_PCM_STATE_RUNNING)
-		snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
-	snd_pcm_stream_unlock_irq(substream);
+	snd_pcm_stop_xrun(substream);
 }
 
 static void snd_pcm_xrun_debug_read(struct snd_info_entry *entry,
@@ -529,7 +525,7 @@ static int snd_pcm_stream_proc_init(struct snd_pcm_str *pstr)
 					   pcm->card->proc_root);
 	if (!entry)
 		return -ENOMEM;
-	entry->mode = S_IFDIR | S_IRUGO | S_IXUGO;
+	entry->mode = S_IFDIR | 0555;
 	if (snd_info_register(entry) < 0) {
 		snd_info_free_entry(entry);
 		return -ENOMEM;
@@ -551,7 +547,7 @@ static int snd_pcm_stream_proc_init(struct snd_pcm_str *pstr)
 	if (entry) {
 		entry->c.text.read = snd_pcm_xrun_debug_read;
 		entry->c.text.write = snd_pcm_xrun_debug_write;
-		entry->mode |= S_IWUSR;
+		entry->mode |= 0200;
 		entry->private_data = pstr;
 		if (snd_info_register(entry) < 0) {
 			snd_info_free_entry(entry);
@@ -589,7 +585,7 @@ static int snd_pcm_substream_proc_init(struct snd_pcm_substream *substream)
 					   substream->pstr->proc_root);
 	if (!entry)
 		return -ENOMEM;
-	entry->mode = S_IFDIR | S_IRUGO | S_IXUGO;
+	entry->mode = S_IFDIR | 0555;
 	if (snd_info_register(entry) < 0) {
 		snd_info_free_entry(entry);
 		return -ENOMEM;
@@ -646,7 +642,7 @@ static int snd_pcm_substream_proc_init(struct snd_pcm_substream *substream)
 		entry->private_data = substream;
 		entry->c.text.read = NULL;
 		entry->c.text.write = snd_pcm_xrun_injection_write;
-		entry->mode = S_IFREG | S_IWUSR;
+		entry->mode = S_IFREG | 0200;
 		if (snd_info_register(entry) < 0) {
 			snd_info_free_entry(entry);
 			entry = NULL;
@@ -1054,8 +1050,13 @@ void snd_pcm_detach_substream(struct snd_pcm_substream *substream)
 	snd_free_pages((void*)runtime->control,
 		       PAGE_ALIGN(sizeof(struct snd_pcm_mmap_control)));
 	kfree(runtime->hw_constraints.rules);
-	kfree(runtime);
+	/* Avoid concurrent access to runtime via PCM timer interface */
+	if (substream->timer)
+		spin_lock_irq(&substream->timer->lock);
 	substream->runtime = NULL;
+	if (substream->timer)
+		spin_unlock_irq(&substream->timer->lock);
+	kfree(runtime);
 	put_pid(substream->pid);
 	substream->pid = NULL;
 	substream->pstr->substream_opened--;
@@ -1081,7 +1082,7 @@ static ssize_t show_pcm_class(struct device *dev,
         return snprintf(buf, PAGE_SIZE, "%s\n", str);
 }
 
-static DEVICE_ATTR(pcm_class, S_IRUGO, show_pcm_class, NULL);
+static DEVICE_ATTR(pcm_class, 0444, show_pcm_class, NULL);
 static struct attribute *pcm_dev_attrs[] = {
 	&dev_attr_pcm_class.attr,
 	NULL

@@ -20,6 +20,8 @@
 //
 //	RF Gain set/get is not implemented.
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/videodev2.h>
 #include <linux/mutex.h>
 #include <linux/slab.h>
@@ -2295,9 +2297,9 @@ static void r820t_release(struct dvb_frontend *fe)
 
 static const struct dvb_tuner_ops r820t_tuner_ops = {
 	.info = {
-		.name           = "Rafael Micro R820T",
-		.frequency_min  =   42000000,
-		.frequency_max  = 1002000000,
+		.name             = "Rafael Micro R820T",
+		.frequency_min_hz =   42 * MHz,
+		.frequency_max_hz = 1002 * MHz,
 	},
 	.init = r820t_init,
 	.release = r820t_release,
@@ -2371,7 +2373,7 @@ err:
 err_no_gate:
 	mutex_unlock(&r820t_list_mutex);
 
-	tuner_info("%s: failed=%d\n", __func__, rc);
+	pr_info("%s: failed=%d\n", __func__, rc);
 	r820t_release(fe);
 	return NULL;
 }

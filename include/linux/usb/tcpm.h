@@ -36,6 +36,7 @@ enum typec_cc_polarity {
 /* Time to wait for TCPC to complete transmit */
 #define PD_T_TCPC_TX_TIMEOUT	100		/* in ms	*/
 #define PD_ROLE_SWAP_TIMEOUT	(MSEC_PER_SEC * 10)
+#define PD_PPS_CTRL_TIMEOUT	(MSEC_PER_SEC * 10)
 
 enum tcpm_transmit_status {
 	TCPC_TX_SUCCESS = 0,
@@ -62,9 +63,6 @@ enum tcpm_transmit_type {
  * @snk_pdo:	PDO parameters sent to partner as response to
  *		PD_CTRL_GET_SINK_CAP message
  * @nr_snk_pdo:	Number of entries in @snk_pdo
- * @max_snk_mv:	Maximum acceptable sink voltage in mV
- * @max_snk_ma:	Maximum sink current in mA
- * @max_snk_mw:	Maximum required sink power in mW
  * @operating_snk_mw:
  *		Required operating sink power in mW
  * @type:	Port type (TYPEC_PORT_DFP, TYPEC_PORT_UFP, or
@@ -85,21 +83,14 @@ struct tcpc_config {
 	const u32 *snk_vdo;
 	unsigned int nr_snk_vdo;
 
-	unsigned int max_snk_mv;
-	unsigned int max_snk_ma;
-	unsigned int max_snk_mw;
 	unsigned int operating_snk_mw;
 
 	enum typec_port_type type;
+	enum typec_port_data data;
 	enum typec_role default_role;
 	bool try_role_hw;	/* try.{src,snk} implemented in hardware */
 
 	const struct typec_altmode_desc *alt_modes;
-};
-
-enum tcpc_usb_switch {
-	TCPC_USB_SWITCH_CONNECT,
-	TCPC_USB_SWITCH_DISCONNECT,
 };
 
 /* Mux state attributes */
@@ -107,26 +98,10 @@ enum tcpc_usb_switch {
 #define TCPC_MUX_DP_ENABLED		BIT(1)	/* DP enabled */
 #define TCPC_MUX_POLARITY_INVERTED	BIT(2)	/* Polarity inverted */
 
-/* Mux modes, decoded to attributes */
-enum tcpc_mux_mode {
-	TYPEC_MUX_NONE	= 0,				/* Open switch */
-	TYPEC_MUX_USB	= TCPC_MUX_USB_ENABLED,		/* USB only */
-	TYPEC_MUX_DP	= TCPC_MUX_DP_ENABLED,		/* DP only */
-	TYPEC_MUX_DOCK	= TCPC_MUX_USB_ENABLED |	/* Both USB and DP */
-			  TCPC_MUX_DP_ENABLED,
-};
-
-struct tcpc_mux_dev {
-	int (*set)(struct tcpc_mux_dev *dev, enum tcpc_mux_mode mux_mode,
-		   enum tcpc_usb_switch usb_config,
-		   enum typec_cc_polarity polarity);
-	bool dfp_only;
-	void *priv_data;
-};
-
 /**
  * struct tcpc_dev - Port configuration and callback functions
  * @config:	Pointer to port configuration
+ * @fwnode:	Pointer to port fwnode
  * @get_vbus:	Called to read current VBUS state
  * @get_current_limit:
  *		Optional; called by the tcpm core when configured as a snk
@@ -155,6 +130,7 @@ struct tcpc_mux_dev {
  */
 struct tcpc_dev {
 	const struct tcpc_config *config;
+	struct fwnode_handle *fwnode;
 
 	int (*init)(struct tcpc_dev *dev);
 	int (*get_vbus)(struct tcpc_dev *dev);
@@ -175,7 +151,6 @@ struct tcpc_dev {
 	int (*try_role)(struct tcpc_dev *dev, int role);
 	int (*pd_transmit)(struct tcpc_dev *dev, enum tcpm_transmit_type type,
 			   const struct pd_message *msg);
-	struct tcpc_mux_dev *mux;
 };
 
 struct tcpm_port;
@@ -187,9 +162,6 @@ int tcpm_update_source_capabilities(struct tcpm_port *port, const u32 *pdo,
 				    unsigned int nr_pdo);
 int tcpm_update_sink_capabilities(struct tcpm_port *port, const u32 *pdo,
 				  unsigned int nr_pdo,
-				  unsigned int max_snk_mv,
-				  unsigned int max_snk_ma,
-				  unsigned int max_snk_mw,
 				  unsigned int operating_snk_mw);
 
 void tcpm_vbus_change(struct tcpm_port *port);

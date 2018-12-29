@@ -31,6 +31,7 @@
 #include "soc15_common.h"
 #include "psp_v3_1.h"
 #include "psp_v10_0.h"
+#include "psp_v11_0.h"
 
 static void psp_set_funcs(struct amdgpu_device *adev);
 
@@ -51,35 +52,23 @@ static int psp_sw_init(void *handle)
 
 	switch (adev->asic_type) {
 	case CHIP_VEGA10:
-		psp->init_microcode = psp_v3_1_init_microcode;
-		psp->bootloader_load_sysdrv = psp_v3_1_bootloader_load_sysdrv;
-		psp->bootloader_load_sos = psp_v3_1_bootloader_load_sos;
-		psp->prep_cmd_buf = psp_v3_1_prep_cmd_buf;
-		psp->ring_init = psp_v3_1_ring_init;
-		psp->ring_create = psp_v3_1_ring_create;
-		psp->ring_stop = psp_v3_1_ring_stop;
-		psp->ring_destroy = psp_v3_1_ring_destroy;
-		psp->cmd_submit = psp_v3_1_cmd_submit;
-		psp->compare_sram_data = psp_v3_1_compare_sram_data;
-		psp->smu_reload_quirk = psp_v3_1_smu_reload_quirk;
-		psp->mode1_reset = psp_v3_1_mode1_reset;
+	case CHIP_VEGA12:
+		psp_v3_1_set_psp_funcs(psp);
 		break;
 	case CHIP_RAVEN:
-		psp->init_microcode = psp_v10_0_init_microcode;
-		psp->prep_cmd_buf = psp_v10_0_prep_cmd_buf;
-		psp->ring_init = psp_v10_0_ring_init;
-		psp->ring_create = psp_v10_0_ring_create;
-		psp->ring_stop = psp_v10_0_ring_stop;
-		psp->ring_destroy = psp_v10_0_ring_destroy;
-		psp->cmd_submit = psp_v10_0_cmd_submit;
-		psp->compare_sram_data = psp_v10_0_compare_sram_data;
-		psp->mode1_reset = psp_v10_0_mode1_reset;
+		psp_v10_0_set_psp_funcs(psp);
+		break;
+	case CHIP_VEGA20:
+		psp_v11_0_set_psp_funcs(psp);
 		break;
 	default:
 		return -EINVAL;
 	}
 
 	psp->adev = adev;
+
+	if (adev->firmware.load_type != AMDGPU_FW_LOAD_PSP)
+		return 0;
 
 	ret = psp_init_microcode(psp);
 	if (ret) {
@@ -93,6 +82,9 @@ static int psp_sw_init(void *handle)
 static int psp_sw_fini(void *handle)
 {
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+
+	if (adev->firmware.load_type != AMDGPU_FW_LOAD_PSP)
+		return 0;
 
 	release_firmware(adev->psp.sos_fw);
 	adev->psp.sos_fw = NULL;
@@ -142,6 +134,18 @@ psp_cmd_submit_buf(struct psp_context *psp,
 		msleep(1);
 	}
 
+	/* the status field must be 0 after FW is loaded */
+	if (ucode && psp->cmd_buf_mem->resp.status) {
+		DRM_ERROR("failed loading with status (%d) and ucode id (%d)\n",
+			  psp->cmd_buf_mem->resp.status, ucode->ucode_id);
+		return -EINVAL;
+	}
+
+	if (ucode) {
+		ucode->tmr_mc_addr_lo = psp->cmd_buf_mem->resp.fw_addr_lo;
+		ucode->tmr_mc_addr_hi = psp->cmd_buf_mem->resp.fw_addr_hi;
+	}
+
 	return ret;
 }
 
@@ -166,7 +170,7 @@ static int psp_tmr_init(struct psp_context *psp)
 	 * Note: this memory need be reserved till the driver
 	 * uninitializes.
 	 */
-	ret = amdgpu_bo_create_kernel(psp->adev, 0x300000, 0x100000,
+	ret = amdgpu_bo_create_kernel(psp->adev, PSP_TMR_SIZE, 0x100000,
 				      AMDGPU_GEM_DOMAIN_VRAM,
 				      &psp->tmr_bo, &psp->tmr_mc_addr, &psp->tmr_buf);
 
@@ -182,7 +186,9 @@ static int psp_tmr_load(struct psp_context *psp)
 	if (!cmd)
 		return -ENOMEM;
 
-	psp_prep_tmr_cmd_buf(cmd, psp->tmr_mc_addr, 0x300000);
+	psp_prep_tmr_cmd_buf(cmd, psp->tmr_mc_addr, PSP_TMR_SIZE);
+	DRM_INFO("reserve 0x%x from 0x%llx for PSP TMR SIZE\n",
+			PSP_TMR_SIZE, psp->tmr_mc_addr);
 
 	ret = psp_cmd_submit_buf(psp, NULL, cmd,
 				 psp->fence_buf_mc_addr, 1);
@@ -446,8 +452,6 @@ static int psp_hw_fini(void *handle)
 	if (adev->firmware.load_type != AMDGPU_FW_LOAD_PSP)
 		return 0;
 
-	amdgpu_ucode_fini_bo(adev);
-
 	psp_ring_destroy(psp, PSP_RING_TYPE__KM);
 
 	amdgpu_bo_free_kernel(&psp->tmr_bo, &psp->tmr_mc_addr, &psp->tmr_buf);
@@ -471,6 +475,9 @@ static int psp_suspend(void *handle)
 	int ret;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 	struct psp_context *psp = &adev->psp;
+
+	if (adev->firmware.load_type != AMDGPU_FW_LOAD_PSP)
+		return 0;
 
 	ret = psp_ring_stop(psp, PSP_RING_TYPE__KM);
 	if (ret) {
@@ -512,19 +519,11 @@ failed:
 	return ret;
 }
 
-static bool psp_check_reset(void* handle)
+int psp_gpu_reset(struct amdgpu_device *adev)
 {
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
+	if (adev->firmware.load_type != AMDGPU_FW_LOAD_PSP)
+		return 0;
 
-	if (adev->flags & AMD_IS_APU)
-		return true;
-
-	return false;
-}
-
-static int psp_reset(void* handle)
-{
-	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 	return psp_mode1_reset(&adev->psp);
 }
 
@@ -571,9 +570,9 @@ const struct amd_ip_funcs psp_ip_funcs = {
 	.suspend = psp_suspend,
 	.resume = psp_resume,
 	.is_idle = NULL,
-	.check_soft_reset = psp_check_reset,
+	.check_soft_reset = NULL,
 	.wait_for_idle = NULL,
-	.soft_reset = psp_reset,
+	.soft_reset = NULL,
 	.set_clockgating_state = psp_set_clockgating_state,
 	.set_powergating_state = psp_set_powergating_state,
 };
@@ -601,6 +600,15 @@ const struct amdgpu_ip_block_version psp_v10_0_ip_block =
 {
 	.type = AMD_IP_BLOCK_TYPE_PSP,
 	.major = 10,
+	.minor = 0,
+	.rev = 0,
+	.funcs = &psp_ip_funcs,
+};
+
+const struct amdgpu_ip_block_version psp_v11_0_ip_block =
+{
+	.type = AMD_IP_BLOCK_TYPE_PSP,
+	.major = 11,
 	.minor = 0,
 	.rev = 0,
 	.funcs = &psp_ip_funcs,

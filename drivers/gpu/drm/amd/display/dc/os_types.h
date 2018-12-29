@@ -32,7 +32,7 @@
 
 #include <linux/kref.h>
 
-#include "cgs_linux.h"
+#include "cgs_common.h"
 
 #if defined(__BIG_ENDIAN) && !defined(BIGENDIAN_CPU)
 #define BIGENDIAN_CPU
@@ -40,8 +40,6 @@
 #define LITTLEENDIAN_CPU
 #endif
 
-#undef READ
-#undef WRITE
 #undef FRAME_SIZE
 
 #define dm_output_to_console(fmt, ...) DRM_DEBUG_KMS(fmt, ##__VA_ARGS__)

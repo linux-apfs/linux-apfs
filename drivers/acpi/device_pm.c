@@ -126,6 +126,7 @@ int acpi_device_get_power(struct acpi_device *device, int *state)
 
 	return 0;
 }
+EXPORT_SYMBOL(acpi_device_get_power);
 
 static int acpi_dev_pm_explicit_set(struct acpi_device *adev, int state)
 {
@@ -543,6 +544,7 @@ static int acpi_dev_pm_get_state(struct device *dev, struct acpi_device *adev,
 	unsigned long long ret;
 	int d_min, d_max;
 	bool wakeup = false;
+	bool has_sxd = false;
 	acpi_status status;
 
 	/*
@@ -581,6 +583,10 @@ static int acpi_dev_pm_get_state(struct device *dev, struct acpi_device *adev,
 			else
 				return -ENODATA;
 		}
+
+		if (status == AE_OK)
+			has_sxd = true;
+
 		d_min = ret;
 		wakeup = device_may_wakeup(dev) && adev->wakeup.flags.valid
 			&& adev->wakeup.sleep_state >= target_state;
@@ -599,7 +605,11 @@ static int acpi_dev_pm_get_state(struct device *dev, struct acpi_device *adev,
 		method[3] = 'W';
 		status = acpi_evaluate_integer(handle, method, NULL, &ret);
 		if (status == AE_NOT_FOUND) {
-			if (target_state > ACPI_STATE_S0)
+			/* No _SxW. In this case, the ACPI spec says that we
+			 * must not go into any power state deeper than the
+			 * value returned from _SxD.
+			 */
+			if (has_sxd && target_state > ACPI_STATE_S0)
 				d_max = d_min;
 		} else if (ACPI_SUCCESS(status) && ret <= ACPI_STATE_D3_COLD) {
 			/* Fall back to D3cold if ret is not a valid state. */
@@ -1248,10 +1258,7 @@ int acpi_dev_pm_attach(struct device *dev, bool power_on)
 	struct acpi_device *adev = ACPI_COMPANION(dev);
 
 	if (!adev)
-		return -ENODEV;
-
-	if (dev->pm_domain)
-		return -EEXIST;
+		return 0;
 
 	/*
 	 * Only attach the power domain to the first device if the
@@ -1259,7 +1266,7 @@ int acpi_dev_pm_attach(struct device *dev, bool power_on)
 	 * management twice.
 	 */
 	if (!acpi_device_is_first_physical_node(adev, dev))
-		return -EBUSY;
+		return 0;
 
 	acpi_add_pm_notifier(adev, dev, acpi_pm_notify_work_func);
 	dev_pm_domain_set(dev, &acpi_general_pm_domain);
@@ -1269,7 +1276,7 @@ int acpi_dev_pm_attach(struct device *dev, bool power_on)
 	}
 
 	dev->pm_domain->detach = acpi_dev_pm_detach;
-	return 0;
+	return 1;
 }
 EXPORT_SYMBOL_GPL(acpi_dev_pm_attach);
 #endif /* CONFIG_PM */

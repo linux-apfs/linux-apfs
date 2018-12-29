@@ -47,6 +47,8 @@
 #include <net/addrconf.h>
 #include <linux/tipc_netlink.h>
 #include "core.h"
+#include "addr.h"
+#include "net.h"
 #include "bearer.h"
 #include "netlink.h"
 #include "msg.h"
@@ -243,10 +245,8 @@ static int tipc_udp_send_msg(struct net *net, struct sk_buff *skb,
 		}
 
 		err = tipc_udp_xmit(net, _skb, ub, src, &rcast->addr);
-		if (err) {
-			kfree_skb(_skb);
+		if (err)
 			goto out;
-		}
 	}
 	err = 0;
 out:
@@ -647,6 +647,8 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 	struct udp_port_cfg udp_conf = {0};
 	struct udp_tunnel_sock_cfg tuncfg = {NULL};
 	struct nlattr *opts[TIPC_NLA_UDP_MAX + 1];
+	u8 node_id[NODE_ID_LEN] = {0,};
+	int rmcast = 0;
 
 	ub = kzalloc(sizeof(*ub), GFP_ATOMIC);
 	if (!ub)
@@ -677,6 +679,25 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 	if (err)
 		goto err;
 
+	if (remote.proto != local.proto) {
+		err = -EINVAL;
+		goto err;
+	}
+
+	/* Checking remote ip address */
+	rmcast = tipc_udp_is_mcast_addr(&remote);
+
+	/* Autoconfigure own node identity if needed */
+	if (!tipc_own_id(net)) {
+		memcpy(node_id, local.ipv6.in6_u.u6_addr8, 16);
+		tipc_net_init(net, node_id, 0);
+	}
+	if (!tipc_own_id(net)) {
+		pr_warn("Failed to set node id, please configure manually\n");
+		err = -EINVAL;
+		goto err;
+	}
+
 	b->bcast_addr.media_id = TIPC_MEDIA_TYPE_UDP;
 	b->bcast_addr.broadcast = TIPC_BROADCAST_SUPPORT;
 	rcu_assign_pointer(b->media_ptr, ub);
@@ -691,7 +712,12 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 			goto err;
 		}
 		udp_conf.family = AF_INET;
-		udp_conf.local_ip.s_addr = htonl(INADDR_ANY);
+
+		/* Switch to use ANY to receive packets from group */
+		if (rmcast)
+			udp_conf.local_ip.s_addr = htonl(INADDR_ANY);
+		else
+			udp_conf.local_ip.s_addr = local.ipv4.s_addr;
 		udp_conf.use_udp_checksums = false;
 		ub->ifindex = dev->ifindex;
 		if (tipc_mtu_bad(dev, sizeof(struct iphdr) +
@@ -699,14 +725,16 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 			err = -EINVAL;
 			goto err;
 		}
-		b->mtu = dev->mtu - sizeof(struct iphdr)
-			- sizeof(struct udphdr);
+		b->mtu = b->media->mtu;
 #if IS_ENABLED(CONFIG_IPV6)
 	} else if (local.proto == htons(ETH_P_IPV6)) {
 		udp_conf.family = AF_INET6;
 		udp_conf.use_udp6_tx_checksums = true;
 		udp_conf.use_udp6_rx_checksums = true;
-		udp_conf.local_ip6 = in6addr_any;
+		if (rmcast)
+			udp_conf.local_ip6 = in6addr_any;
+		else
+			udp_conf.local_ip6 = local.ipv6;
 		b->mtu = 1280;
 #endif
 	} else {
@@ -728,7 +756,7 @@ static int tipc_udp_enable(struct net *net, struct tipc_bearer *b,
 	 * is used if it's a multicast address.
 	 */
 	memcpy(&b->bcast_addr.value, &remote, sizeof(remote));
-	if (tipc_udp_is_mcast_addr(&remote))
+	if (rmcast)
 		err = enable_mcast(ub, &remote);
 	else
 		err = tipc_udp_rcast_add(b, &remote);
@@ -789,6 +817,7 @@ struct tipc_media udp_media_info = {
 	.priority	= TIPC_DEF_LINK_PRI,
 	.tolerance	= TIPC_DEF_LINK_TOL,
 	.window		= TIPC_DEF_LINK_WIN,
+	.mtu		= TIPC_DEF_LINK_UDP_MTU,
 	.type_id	= TIPC_MEDIA_TYPE_UDP,
 	.hwaddr_len	= 0,
 	.name		= "udp"

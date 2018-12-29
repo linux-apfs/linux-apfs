@@ -126,7 +126,7 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key,
 	bool changed = false;
 	int i, j;
 
-	_enter("{%x:%u},%x,%x",
+	_enter("{%llx:%llu},%x,%x",
 	       vnode->fid.vid, vnode->fid.vnode, key_serial(key), caller_access);
 
 	rcu_read_lock();
@@ -147,8 +147,8 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key,
 					break;
 				}
 
-				if (cb_break != (vnode->cb_break +
-						 vnode->cb_interest->server->cb_s_break)) {
+				if (afs_cb_is_broken(cb_break, vnode,
+						     vnode->cb_interest)) {
 					changed = true;
 					break;
 				}
@@ -178,18 +178,14 @@ void afs_cache_permit(struct afs_vnode *vnode, struct key *key,
 		}
 	}
 
-	if (cb_break != (vnode->cb_break + vnode->cb_interest->server->cb_s_break)) {
-		rcu_read_unlock();
+	if (afs_cb_is_broken(cb_break, vnode, vnode->cb_interest))
 		goto someone_else_changed_it;
-	}
 
 	/* We need a ref on any permits list we want to copy as we'll have to
 	 * drop the lock to do memory allocation.
 	 */
-	if (permits && !refcount_inc_not_zero(&permits->usage)) {
-		rcu_read_unlock();
+	if (permits && !refcount_inc_not_zero(&permits->usage))
 		goto someone_else_changed_it;
-	}
 
 	rcu_read_unlock();
 
@@ -261,7 +257,7 @@ found:
 
 	spin_lock(&vnode->lock);
 	zap = rcu_access_pointer(vnode->permit_cache);
-	if (cb_break == (vnode->cb_break + vnode->cb_interest->server->cb_s_break) &&
+	if (!afs_cb_is_broken(cb_break, vnode, vnode->cb_interest) &&
 	    zap == permits)
 		rcu_assign_pointer(vnode->permit_cache, replacement);
 	else
@@ -278,6 +274,7 @@ someone_else_changed_it:
 	/* Someone else changed the cache under us - don't recheck at this
 	 * time.
 	 */
+	rcu_read_unlock();
 	return;
 }
 
@@ -293,10 +290,8 @@ int afs_check_permit(struct afs_vnode *vnode, struct key *key,
 	bool valid = false;
 	int i, ret;
 
-	_enter("{%x:%u},%x",
+	_enter("{%llx:%llu},%x",
 	       vnode->fid.vid, vnode->fid.vnode, key_serial(key));
-
-	permits = vnode->permit_cache;
 
 	/* check the permits to see if we've got one yet */
 	if (key == vnode->volume->cell->anonymous_key) {
@@ -327,7 +322,7 @@ int afs_check_permit(struct afs_vnode *vnode, struct key *key,
 		 */
 		_debug("no valid permit");
 
-		ret = afs_fetch_status(vnode, key);
+		ret = afs_fetch_status(vnode, key, false);
 		if (ret < 0) {
 			*_access = 0;
 			_leave(" = %d", ret);
@@ -355,7 +350,7 @@ int afs_permission(struct inode *inode, int mask)
 	if (mask & MAY_NOT_BLOCK)
 		return -ECHILD;
 
-	_enter("{{%x:%u},%lx},%x,",
+	_enter("{{%llx:%llu},%lx},%x,",
 	       vnode->fid.vid, vnode->fid.vnode, vnode->flags, mask);
 
 	key = afs_request_key(vnode->volume->cell);
@@ -378,18 +373,14 @@ int afs_permission(struct inode *inode, int mask)
 	       mask, access, S_ISDIR(inode->i_mode) ? "dir" : "file");
 
 	if (S_ISDIR(inode->i_mode)) {
-		if (mask & MAY_EXEC) {
+		if (mask & (MAY_EXEC | MAY_READ | MAY_CHDIR)) {
 			if (!(access & AFS_ACE_LOOKUP))
 				goto permission_denied;
-		} else if (mask & MAY_READ) {
-			if (!(access & AFS_ACE_LOOKUP))
-				goto permission_denied;
-		} else if (mask & MAY_WRITE) {
+		}
+		if (mask & MAY_WRITE) {
 			if (!(access & (AFS_ACE_DELETE | /* rmdir, unlink, rename from */
 					AFS_ACE_INSERT))) /* create, mkdir, symlink, rename to */
 				goto permission_denied;
-		} else {
-			BUG();
 		}
 	} else {
 		if (!(access & AFS_ACE_LOOKUP))

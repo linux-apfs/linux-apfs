@@ -7,7 +7,7 @@
 
 #include <linux/pci.h>
 #include <linux/init.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/gfp.h>
 #include <linux/capability.h>
 #include <linux/mm.h>
@@ -15,6 +15,7 @@
 #include <linux/sched.h>
 #include <linux/dma-mapping.h>
 #include <linux/scatterlist.h>
+#include <linux/syscalls.h>
 
 #include "proto.h"
 
@@ -32,7 +33,7 @@ alloc_pci_controller(void)
 {
 	struct pci_controller *hose;
 
-	hose = alloc_bootmem(sizeof(*hose));
+	hose = memblock_alloc(sizeof(*hose), SMP_CACHE_BYTES);
 
 	*hose_tail = hose;
 	hose_tail = &hose->next;
@@ -43,11 +44,11 @@ alloc_pci_controller(void)
 struct resource * __init
 alloc_resource(void)
 {
-	return alloc_bootmem(sizeof(struct resource));
+	return memblock_alloc(sizeof(struct resource), SMP_CACHE_BYTES);
 }
 
-asmlinkage long
-sys_pciconfig_iobase(long which, unsigned long bus, unsigned long dfn)
+SYSCALL_DEFINE3(pciconfig_iobase, long, which, unsigned long, bus,
+		unsigned long, dfn)
 {
 	struct pci_controller *hose;
 
@@ -84,9 +85,8 @@ sys_pciconfig_iobase(long which, unsigned long bus, unsigned long dfn)
 	return -EOPNOTSUPP;
 }
 
-asmlinkage long
-sys_pciconfig_read(unsigned long bus, unsigned long dfn,
-		   unsigned long off, unsigned long len, void *buf)
+SYSCALL_DEFINE5(pciconfig_read, unsigned long, bus, unsigned long, dfn,
+		unsigned long, off, unsigned long, len, void __user *, buf)
 {
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -94,45 +94,11 @@ sys_pciconfig_read(unsigned long bus, unsigned long dfn,
 		return -ENODEV;
 }
 
-asmlinkage long
-sys_pciconfig_write(unsigned long bus, unsigned long dfn,
-		    unsigned long off, unsigned long len, void *buf)
+SYSCALL_DEFINE5(pciconfig_write, unsigned long, bus, unsigned long, dfn,
+		unsigned long, off, unsigned long, len, void __user *, buf)
 {
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
 	else
 		return -ENODEV;
 }
-
-static void *alpha_noop_alloc_coherent(struct device *dev, size_t size,
-				       dma_addr_t *dma_handle, gfp_t gfp,
-				       unsigned long attrs)
-{
-	void *ret;
-
-	if (!dev || *dev->dma_mask >= 0xffffffffUL)
-		gfp &= ~GFP_DMA;
-	ret = (void *)__get_free_pages(gfp, get_order(size));
-	if (ret) {
-		memset(ret, 0, size);
-		*dma_handle = virt_to_phys(ret);
-	}
-	return ret;
-}
-
-static int alpha_noop_supported(struct device *dev, u64 mask)
-{
-	return mask < 0x00ffffffUL ? 0 : 1;
-}
-
-const struct dma_map_ops alpha_noop_ops = {
-	.alloc			= alpha_noop_alloc_coherent,
-	.free			= dma_noop_free_coherent,
-	.map_page		= dma_noop_map_page,
-	.map_sg			= dma_noop_map_sg,
-	.mapping_error		= dma_noop_mapping_error,
-	.dma_supported		= alpha_noop_supported,
-};
-
-const struct dma_map_ops *dma_ops = &alpha_noop_ops;
-EXPORT_SYMBOL(dma_ops);

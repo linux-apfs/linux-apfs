@@ -41,12 +41,16 @@ Required properties:
                 "nxp",
                 "ramtron",
                 "renesas",
+                "rohm",
                 "st",
 
                 Some vendors use different model names for chips which are just
                 variants of the above. Known such exceptions are listed below:
 
+                "nxp,se97b" - the fallback is "atmel,24c02",
                 "renesas,r1ex24002" - the fallback is "atmel,24c02"
+                "renesas,r1ex24128" - the fallback is "atmel,24c128"
+                "rohm,br24t01" - the fallback is "atmel,24c01"
 
   - reg: The I2C address of the EEPROM.
 
@@ -67,6 +71,8 @@ Optional properties:
                       manual of your device.
 
   - wp-gpios: GPIO to which the write-protect pin of the chip is connected.
+
+  - address-width: number of address bits (one of 8, 16).
 
 Example:
 

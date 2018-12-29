@@ -118,17 +118,21 @@ void unregister_vlan_dev(struct net_device *dev, struct list_head *head)
 }
 
 int vlan_check_real_dev(struct net_device *real_dev,
-			__be16 protocol, u16 vlan_id)
+			__be16 protocol, u16 vlan_id,
+			struct netlink_ext_ack *extack)
 {
 	const char *name = real_dev->name;
 
 	if (real_dev->features & NETIF_F_VLAN_CHALLENGED) {
 		pr_info("VLANs not supported on %s\n", name);
+		NL_SET_ERR_MSG_MOD(extack, "VLANs not supported on device");
 		return -EOPNOTSUPP;
 	}
 
-	if (vlan_find_dev(real_dev, protocol, vlan_id) != NULL)
+	if (vlan_find_dev(real_dev, protocol, vlan_id) != NULL) {
+		NL_SET_ERR_MSG_MOD(extack, "VLAN device already exists");
 		return -EEXIST;
+	}
 
 	return 0;
 }
@@ -215,7 +219,8 @@ static int register_vlan_device(struct net_device *real_dev, u16 vlan_id)
 	if (vlan_id >= VLAN_VID_MASK)
 		return -ERANGE;
 
-	err = vlan_check_real_dev(real_dev, htons(ETH_P_8021Q), vlan_id);
+	err = vlan_check_real_dev(real_dev, htons(ETH_P_8021Q), vlan_id,
+				  NULL);
 	if (err < 0)
 		return err;
 
@@ -360,6 +365,7 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 	struct vlan_dev_priv *vlan;
 	bool last = false;
 	LIST_HEAD(list);
+	int err;
 
 	if (is_vlan_dev(dev)) {
 		int err = __vlan_device_event(dev, event);
@@ -488,6 +494,26 @@ static int vlan_device_event(struct notifier_block *unused, unsigned long event,
 		/* Propagate to vlan devices */
 		vlan_group_for_each_dev(grp, i, vlandev)
 			call_netdevice_notifiers(event, vlandev);
+		break;
+
+	case NETDEV_CVLAN_FILTER_PUSH_INFO:
+		err = vlan_filter_push_vids(vlan_info, htons(ETH_P_8021Q));
+		if (err)
+			return notifier_from_errno(err);
+		break;
+
+	case NETDEV_CVLAN_FILTER_DROP_INFO:
+		vlan_filter_drop_vids(vlan_info, htons(ETH_P_8021Q));
+		break;
+
+	case NETDEV_SVLAN_FILTER_PUSH_INFO:
+		err = vlan_filter_push_vids(vlan_info, htons(ETH_P_8021AD));
+		if (err)
+			return notifier_from_errno(err);
+		break;
+
+	case NETDEV_SVLAN_FILTER_DROP_INFO:
+		vlan_filter_drop_vids(vlan_info, htons(ETH_P_8021AD));
 		break;
 	}
 
@@ -621,13 +647,14 @@ out:
 	return err;
 }
 
-static struct sk_buff **vlan_gro_receive(struct sk_buff **head,
-					 struct sk_buff *skb)
+static struct sk_buff *vlan_gro_receive(struct list_head *head,
+					struct sk_buff *skb)
 {
-	struct sk_buff *p, **pp = NULL;
-	struct vlan_hdr *vhdr;
-	unsigned int hlen, off_vlan;
 	const struct packet_offload *ptype;
+	unsigned int hlen, off_vlan;
+	struct sk_buff *pp = NULL;
+	struct vlan_hdr *vhdr;
+	struct sk_buff *p;
 	__be16 type;
 	int flush = 1;
 
@@ -649,7 +676,7 @@ static struct sk_buff **vlan_gro_receive(struct sk_buff **head,
 
 	flush = 0;
 
-	for (p = *head; p; p = p->next) {
+	list_for_each_entry(p, head, list) {
 		struct vlan_hdr *vhdr2;
 
 		if (!NAPI_GRO_CB(p)->same_flow)
@@ -667,7 +694,7 @@ static struct sk_buff **vlan_gro_receive(struct sk_buff **head,
 out_unlock:
 	rcu_read_unlock();
 out:
-	NAPI_GRO_CB(skb)->flush |= flush;
+	skb_gro_flush_final(skb, pp, flush);
 
 	return pp;
 }

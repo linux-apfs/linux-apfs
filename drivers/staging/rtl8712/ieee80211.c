@@ -1,17 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0
 /******************************************************************************
  * ieee80211.c
  *
  * Copyright(c) 2007 - 2010 Realtek Corporation. All rights reserved.
  * Linux device driver for RTL8192SU
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of version 2 of the GNU General Public License as
- * published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
  *
  * Modifications for inclusion into the Linux staging tree are
  * Copyright(c) 2010 Larry Finger. All rights reserved.
@@ -107,7 +99,7 @@ u8 *r8712_set_ie(u8 *pbuf, sint index, uint len, u8 *source, uint *frlen)
  * index: the information element id index, limit is the limit for search
  * ---------------------------------------------------------------------------
  */
-u8 *r8712_get_ie(u8 *pbuf, sint index, sint *len, sint limit)
+u8 *r8712_get_ie(u8 *pbuf, sint index, uint *len, sint limit)
 {
 	sint tmp, i;
 	u8 *p;
@@ -166,7 +158,8 @@ static uint r8712_get_rateset_len(u8 *rateset)
 
 int r8712_generate_ie(struct registry_priv *pregistrypriv)
 {
-	int sz = 0, rate_len;
+	int rate_len;
+	uint sz = 0;
 	struct wlan_bssid_ex *pdev_network = &pregistrypriv->dev_network;
 	u8 *ie = pdev_network->IEs;
 	u16 beaconPeriod = (u16)pdev_network->Configuration.BeaconPeriod;
@@ -211,9 +204,9 @@ int r8712_generate_ie(struct registry_priv *pregistrypriv)
 	return sz;
 }
 
-unsigned char *r8712_get_wpa_ie(unsigned char *pie, int *wpa_ie_len, int limit)
+unsigned char *r8712_get_wpa_ie(unsigned char *pie, uint *wpa_ie_len, int limit)
 {
-	int len;
+	u32 len;
 	u16 val16;
 	unsigned char wpa_oui_type[] = {0x00, 0x50, 0xf2, 0x01};
 	u8 *pbuf = pie;
@@ -245,7 +238,7 @@ check_next_ie:
 	return NULL;
 }
 
-unsigned char *r8712_get_wpa2_ie(unsigned char *pie, int *rsn_ie_len, int limit)
+unsigned char *r8712_get_wpa2_ie(unsigned char *pie, uint *rsn_ie_len, int limit)
 {
 	return r8712_get_ie(pie, _WPA2_IE_ID_, rsn_ie_len, limit);
 }

@@ -192,37 +192,6 @@ unsigned int generic_reg_wait(const struct dc_context *ctx,
  * Power Play (PP) interfaces
  **************************************/
 
-/* DAL calls this function to notify PP about clocks it needs for the Mode Set.
- * This is done *before* it changes DCE clock.
- *
- * If required clock is higher than current, then PP will increase the voltage.
- *
- * If required clock is lower than current, then PP will defer reduction of
- * voltage until the call to dc_service_pp_post_dce_clock_change().
- *
- * \input - Contains clocks needed for Mode Set.
- *
- * \output - Contains clocks adjusted by PP which DAL should use for Mode Set.
- *		Valid only if function returns zero.
- *
- * \returns	true - call is successful
- *		false - call failed
- */
-bool dm_pp_pre_dce_clock_change(
-	struct dc_context *ctx,
-	struct dm_pp_gpu_clock_range *requested_state,
-	struct dm_pp_gpu_clock_range *actual_state);
-
-/* The returned clocks range are 'static' system clocks which will be used for
- * mode validation purposes.
- *
- * \returns	true - call is successful
- *		false - call failed
- */
-bool dc_service_get_system_clocks_range(
-	const struct dc_context *ctx,
-	struct dm_pp_gpu_clock_range *sys_clks);
-
 /* Gets valid clocks levels from pplib
  *
  * input: clk_type - display clk / sclk / mem clk
@@ -370,7 +339,14 @@ bool dm_dmcu_set_pipe(struct dc_context *ctx, unsigned int controller_id);
 #define dm_log_to_buffer(buffer, size, fmt, args)\
 	vsnprintf(buffer, size, fmt, args)
 
-unsigned long long dm_get_timestamp(struct dc_context *ctx);
+static inline unsigned long long dm_get_timestamp(struct dc_context *ctx)
+{
+	return ktime_get_raw_ns();
+}
+
+unsigned long long dm_get_elapse_time_in_ns(struct dc_context *ctx,
+		unsigned long long current_time_stamp,
+		unsigned long long last_time_stamp);
 
 /*
  * performance tracing
@@ -382,13 +358,13 @@ void dm_perf_trace_timestamp(const char *func_name, unsigned int line);
 /*
  * Debug and verification hooks
  */
-bool dm_helpers_dc_conn_log(
-		struct dc_context *ctx,
-		struct log_entry *entry,
-		enum dc_log_type event);
 
-void dm_dtn_log_begin(struct dc_context *ctx);
-void dm_dtn_log_append_v(struct dc_context *ctx, const char *msg, ...);
-void dm_dtn_log_end(struct dc_context *ctx);
+void dm_dtn_log_begin(struct dc_context *ctx,
+	struct dc_log_buffer_ctx *log_ctx);
+void dm_dtn_log_append_v(struct dc_context *ctx,
+	struct dc_log_buffer_ctx *log_ctx,
+	const char *msg, ...);
+void dm_dtn_log_end(struct dc_context *ctx,
+	struct dc_log_buffer_ctx *log_ctx);
 
 #endif /* __DM_SERVICES_H__ */

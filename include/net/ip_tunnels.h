@@ -144,25 +144,6 @@ struct ip_tunnel {
 	bool			ignore_df;
 };
 
-#define TUNNEL_CSUM		__cpu_to_be16(0x01)
-#define TUNNEL_ROUTING		__cpu_to_be16(0x02)
-#define TUNNEL_KEY		__cpu_to_be16(0x04)
-#define TUNNEL_SEQ		__cpu_to_be16(0x08)
-#define TUNNEL_STRICT		__cpu_to_be16(0x10)
-#define TUNNEL_REC		__cpu_to_be16(0x20)
-#define TUNNEL_VERSION		__cpu_to_be16(0x40)
-#define TUNNEL_NO_KEY		__cpu_to_be16(0x80)
-#define TUNNEL_DONT_FRAGMENT    __cpu_to_be16(0x0100)
-#define TUNNEL_OAM		__cpu_to_be16(0x0200)
-#define TUNNEL_CRIT_OPT		__cpu_to_be16(0x0400)
-#define TUNNEL_GENEVE_OPT	__cpu_to_be16(0x0800)
-#define TUNNEL_VXLAN_OPT	__cpu_to_be16(0x1000)
-#define TUNNEL_NOCACHE		__cpu_to_be16(0x2000)
-#define TUNNEL_ERSPAN_OPT	__cpu_to_be16(0x4000)
-
-#define TUNNEL_OPTIONS_PRESENT \
-		(TUNNEL_GENEVE_OPT | TUNNEL_VXLAN_OPT | TUNNEL_ERSPAN_OPT)
-
 struct tnl_ptk_info {
 	__be16 flags;
 	__be16 proto;
@@ -180,8 +161,10 @@ struct tnl_ptk_info {
 
 struct ip_tunnel_net {
 	struct net_device *fb_tunnel_dev;
+	struct rtnl_link_ops *rtnl_link_ops;
 	struct hlist_head tunnels[IP_TNL_HASH_SIZE];
 	struct ip_tunnel __rcu *collect_md_tun;
+	int type;
 };
 
 static inline void ip_tunnel_key_init(struct ip_tunnel_key *key,
@@ -253,6 +236,22 @@ static inline __be32 tunnel_id_to_key32(__be64 tun_id)
 }
 
 #ifdef CONFIG_INET
+
+static inline void ip_tunnel_init_flow(struct flowi4 *fl4,
+				       int proto,
+				       __be32 daddr, __be32 saddr,
+				       __be32 key, __u8 tos, int oif,
+				       __u32 mark)
+{
+	memset(fl4, 0, sizeof(*fl4));
+	fl4->flowi4_oif = oif;
+	fl4->daddr = daddr;
+	fl4->saddr = saddr;
+	fl4->flowi4_tos = tos;
+	fl4->flowi4_proto = proto;
+	fl4->fl4_gre_key = key;
+	fl4->flowi4_mark = mark;
+}
 
 int ip_tunnel_init(struct net_device *dev);
 void ip_tunnel_uninit(struct net_device *dev);
@@ -361,6 +360,17 @@ static inline u8 ip_tunnel_get_dsfield(const struct iphdr *iph,
 		return 0;
 }
 
+static inline u8 ip_tunnel_get_ttl(const struct iphdr *iph,
+				       const struct sk_buff *skb)
+{
+	if (skb->protocol == htons(ETH_P_IP))
+		return iph->ttl;
+	else if (skb->protocol == htons(ETH_P_IPV6))
+		return ((const struct ipv6hdr *)iph)->hop_limit;
+	else
+		return 0;
+}
+
 /* Propogate ECN bits out */
 static inline u8 ip_tunnel_ecn_encap(u8 tos, const struct iphdr *iph,
 				     const struct sk_buff *skb)
@@ -437,10 +447,12 @@ static inline void ip_tunnel_info_opts_get(void *to,
 }
 
 static inline void ip_tunnel_info_opts_set(struct ip_tunnel_info *info,
-					   const void *from, int len)
+					   const void *from, int len,
+					   __be16 flags)
 {
 	memcpy(ip_tunnel_info_opts(info), from, len);
 	info->options_len = len;
+	info->key.tun_flags |= flags;
 }
 
 static inline struct ip_tunnel_info *lwt_tun_info(struct lwtunnel_state *lwtstate)
@@ -448,12 +460,12 @@ static inline struct ip_tunnel_info *lwt_tun_info(struct lwtunnel_state *lwtstat
 	return (struct ip_tunnel_info *)lwtstate->data;
 }
 
-extern struct static_key ip_tunnel_metadata_cnt;
+DECLARE_STATIC_KEY_FALSE(ip_tunnel_metadata_cnt);
 
 /* Returns > 0 if metadata should be collected */
 static inline int ip_tunnel_collect_metadata(void)
 {
-	return static_key_false(&ip_tunnel_metadata_cnt);
+	return static_branch_unlikely(&ip_tunnel_metadata_cnt);
 }
 
 void __init ip_tunnel_core_init(void);
@@ -482,9 +494,11 @@ static inline void ip_tunnel_info_opts_get(void *to,
 }
 
 static inline void ip_tunnel_info_opts_set(struct ip_tunnel_info *info,
-					   const void *from, int len)
+					   const void *from, int len,
+					   __be16 flags)
 {
 	info->options_len = 0;
+	info->key.tun_flags |= flags;
 }
 
 #endif /* CONFIG_INET */

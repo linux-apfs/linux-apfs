@@ -55,7 +55,9 @@ Default is to monitor all CPUS.
 
 -F <freq>::
 --freq=<freq>::
-	Profile at this frequency.
+	Profile at this frequency. Use 'max' to use the currently maximum
+	allowed frequency, i.e. the value in the kernel.perf_event_max_sample_rate
+	sysctl.
 
 -i::
 --inherit::
@@ -64,6 +66,9 @@ Default is to monitor all CPUS.
 -k <path>::
 --vmlinux=<path>::
 	Path to vmlinux.  Required for annotation functionality.
+
+--ignore-vmlinux::
+	Ignore vmlinux files.
 
 -m <pages>::
 --mmap-pages=<pages>::
@@ -236,6 +241,16 @@ Default is to monitor all CPUS.
 
 --hierarchy::
 	Enable hierarchy output.
+
+--overwrite::
+	Enable this to use just the most recent records, which helps in high core count
+	machines such as Knights Landing/Mill, but right now is disabled by default as
+	the pausing used in this technique is leading to loss of metadata events such
+	as PERF_RECORD_MMAP which makes 'perf top' unable to resolve samples, leading
+	to lots of unknown samples appearing on the UI. Enable this if you are in such
+	machines and profiling a workload that doesn't creates short lived threads and/or
+	doesn't uses many executable mmap operations. Work is being planed to solve
+	this situation, till then, this will remain disabled by default.
 
 --force::
 	Don't do ownership validation.

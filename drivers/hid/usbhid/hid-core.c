@@ -56,6 +56,10 @@ static unsigned int hid_jspoll_interval;
 module_param_named(jspoll, hid_jspoll_interval, uint, 0644);
 MODULE_PARM_DESC(jspoll, "Polling interval of joysticks");
 
+static unsigned int hid_kbpoll_interval;
+module_param_named(kbpoll, hid_kbpoll_interval, uint, 0644);
+MODULE_PARM_DESC(kbpoll, "Polling interval of keyboards");
+
 static unsigned int ignoreled;
 module_param_named(ignoreled, ignoreled, uint, 0644);
 MODULE_PARM_DESC(ignoreled, "Autosuspend with active leds");
@@ -476,6 +480,7 @@ static void hid_ctrl(struct urb *urb)
 {
 	struct hid_device *hid = urb->context;
 	struct usbhid_device *usbhid = hid->driver_data;
+	unsigned long flags;
 	int unplug = 0, status = urb->status;
 
 	switch (status) {
@@ -497,7 +502,7 @@ static void hid_ctrl(struct urb *urb)
 		hid_warn(urb->dev, "ctrl urb status %d received\n", status);
 	}
 
-	spin_lock(&usbhid->lock);
+	spin_lock_irqsave(&usbhid->lock, flags);
 
 	if (unplug) {
 		usbhid->ctrltail = usbhid->ctrlhead;
@@ -507,13 +512,13 @@ static void hid_ctrl(struct urb *urb)
 		if (usbhid->ctrlhead != usbhid->ctrltail &&
 				hid_submit_ctrl(hid) == 0) {
 			/* Successfully submitted next urb in queue */
-			spin_unlock(&usbhid->lock);
+			spin_unlock_irqrestore(&usbhid->lock, flags);
 			return;
 		}
 	}
 
 	clear_bit(HID_CTRL_RUNNING, &usbhid->iofl);
-	spin_unlock(&usbhid->lock);
+	spin_unlock_irqrestore(&usbhid->lock, flags);
 	usb_autopm_put_interface_async(usbhid->intf);
 	wake_up(&usbhid->wait);
 }
@@ -1094,7 +1099,9 @@ static int usbhid_start(struct hid_device *hid)
 				hid->name, endpoint->bInterval, interval);
 		}
 
-		/* Change the polling interval of mice and joysticks. */
+		/* Change the polling interval of mice, joysticks
+		 * and keyboards.
+		 */
 		switch (hid->collection->usage) {
 		case HID_GD_MOUSE:
 			if (hid_mousepoll_interval > 0)
@@ -1103,6 +1110,10 @@ static int usbhid_start(struct hid_device *hid)
 		case HID_GD_JOYSTICK:
 			if (hid_jspoll_interval > 0)
 				interval = hid_jspoll_interval;
+			break;
+		case HID_GD_KEYBOARD:
+			if (hid_kbpoll_interval > 0)
+				interval = hid_kbpoll_interval;
 			break;
 		}
 

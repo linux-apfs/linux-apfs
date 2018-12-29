@@ -23,8 +23,10 @@
 #include <drm/drm_of.h>
 
 #include "sun4i_drv.h"
+#include "sun4i_frontend.h"
 #include "sun4i_framebuffer.h"
 #include "sun4i_tcon.h"
+#include "sun8i_tcon_top.h"
 
 DEFINE_DRM_GEM_CMA_FOPS(sun4i_drv_fops);
 
@@ -59,22 +61,6 @@ static struct drm_driver sun4i_drv_driver = {
 	/* Frame Buffer Operations */
 };
 
-static void sun4i_remove_framebuffers(void)
-{
-	struct apertures_struct *ap;
-
-	ap = alloc_apertures(1);
-	if (!ap)
-		return;
-
-	/* The framebuffer can be located anywhere in RAM */
-	ap->ranges[0].base = 0;
-	ap->ranges[0].size = ~0;
-
-	drm_fb_helper_remove_conflicting_framebuffers(ap, "sun4i-drm-fb", false);
-	kfree(ap);
-}
-
 static int sun4i_drv_bind(struct device *dev)
 {
 	struct drm_device *drm;
@@ -91,6 +77,7 @@ static int sun4i_drv_bind(struct device *dev)
 		goto free_drm;
 	}
 	drm->dev_private = drv;
+	INIT_LIST_HEAD(&drv->frontend_list);
 	INIT_LIST_HEAD(&drv->engine_list);
 	INIT_LIST_HEAD(&drv->tcon_list);
 
@@ -116,7 +103,7 @@ static int sun4i_drv_bind(struct device *dev)
 	drm->irq_enabled = true;
 
 	/* Remove early framebuffers (ie. simplefb) */
-	sun4i_remove_framebuffers();
+	drm_fb_helper_remove_conflicting_framebuffers(NULL, "sun4i-drm-fb", false);
 
 	/* Create our framebuffer */
 	ret = sun4i_framebuffer_init(drm);
@@ -141,7 +128,7 @@ cleanup_mode_config:
 	drm_mode_config_cleanup(drm);
 	of_reserved_mem_device_release(dev);
 free_drm:
-	drm_dev_unref(drm);
+	drm_dev_put(drm);
 	return ret;
 }
 
@@ -154,7 +141,7 @@ static void sun4i_drv_unbind(struct device *dev)
 	sun4i_framebuffer_free(drm);
 	drm_mode_config_cleanup(drm);
 	of_reserved_mem_device_release(dev);
-	drm_dev_unref(drm);
+	drm_dev_put(drm);
 }
 
 static const struct component_master_ops sun4i_drv_master_ops = {
@@ -173,12 +160,48 @@ static bool sun4i_drv_node_is_frontend(struct device_node *node)
 		of_device_is_compatible(node, "allwinner,sun5i-a13-display-frontend") ||
 		of_device_is_compatible(node, "allwinner,sun6i-a31-display-frontend") ||
 		of_device_is_compatible(node, "allwinner,sun7i-a20-display-frontend") ||
-		of_device_is_compatible(node, "allwinner,sun8i-a33-display-frontend");
+		of_device_is_compatible(node, "allwinner,sun8i-a33-display-frontend") ||
+		of_device_is_compatible(node, "allwinner,sun9i-a80-display-frontend");
+}
+
+static bool sun4i_drv_node_is_deu(struct device_node *node)
+{
+	return of_device_is_compatible(node, "allwinner,sun9i-a80-deu");
+}
+
+static bool sun4i_drv_node_is_supported_frontend(struct device_node *node)
+{
+	if (IS_ENABLED(CONFIG_DRM_SUN4I_BACKEND))
+		return !!of_match_node(sun4i_frontend_of_table, node);
+
+	return false;
 }
 
 static bool sun4i_drv_node_is_tcon(struct device_node *node)
 {
 	return !!of_match_node(sun4i_tcon_of_table, node);
+}
+
+static bool sun4i_drv_node_is_tcon_with_ch0(struct device_node *node)
+{
+	const struct of_device_id *match;
+
+	match = of_match_node(sun4i_tcon_of_table, node);
+	if (match) {
+		struct sun4i_tcon_quirks *quirks;
+
+		quirks = (struct sun4i_tcon_quirks *)match->data;
+
+		return quirks->has_channel_0;
+	}
+
+	return false;
+}
+
+static bool sun4i_drv_node_is_tcon_top(struct device_node *node)
+{
+	return IS_ENABLED(CONFIG_DRM_SUN8I_TCON_TOP) &&
+		!!of_match_node(sun8i_tcon_top_of_table, node);
 }
 
 static int compare_of(struct device *dev, void *data)
@@ -215,18 +238,77 @@ struct endpoint_list {
 	DECLARE_KFIFO(fifo, struct device_node *, 16);
 };
 
+static void sun4i_drv_traverse_endpoints(struct endpoint_list *list,
+					 struct device_node *node,
+					 int port_id)
+{
+	struct device_node *ep, *remote, *port;
+
+	port = of_graph_get_port_by_id(node, port_id);
+	if (!port) {
+		DRM_DEBUG_DRIVER("No output to bind on port %d\n", port_id);
+		return;
+	}
+
+	for_each_available_child_of_node(port, ep) {
+		remote = of_graph_get_remote_port_parent(ep);
+		if (!remote) {
+			DRM_DEBUG_DRIVER("Error retrieving the output node\n");
+			continue;
+		}
+
+		if (sun4i_drv_node_is_tcon(node)) {
+			/*
+			 * TCON TOP is always probed before TCON. However, TCON
+			 * points back to TCON TOP when it is source for HDMI.
+			 * We have to skip it here to prevent infinite looping
+			 * between TCON TOP and TCON.
+			 */
+			if (sun4i_drv_node_is_tcon_top(remote)) {
+				DRM_DEBUG_DRIVER("TCON output endpoint is TCON TOP... skipping\n");
+				of_node_put(remote);
+				continue;
+			}
+
+			/*
+			 * If the node is our TCON with channel 0, the first
+			 * port is used for panel or bridges, and will not be
+			 * part of the component framework.
+			 */
+			if (sun4i_drv_node_is_tcon_with_ch0(node)) {
+				struct of_endpoint endpoint;
+
+				if (of_graph_parse_endpoint(ep, &endpoint)) {
+					DRM_DEBUG_DRIVER("Couldn't parse endpoint\n");
+					of_node_put(remote);
+					continue;
+				}
+
+				if (!endpoint.id) {
+					DRM_DEBUG_DRIVER("Endpoint is our panel... skipping\n");
+					of_node_put(remote);
+					continue;
+				}
+			}
+		}
+
+		kfifo_put(&list->fifo, remote);
+	}
+}
+
 static int sun4i_drv_add_endpoints(struct device *dev,
 				   struct endpoint_list *list,
 				   struct component_match **match,
 				   struct device_node *node)
 {
-	struct device_node *port, *ep, *remote;
 	int count = 0;
 
 	/*
-	 * We don't support the frontend for now, so we will never
-	 * have a device bound. Just skip over it, but we still want
-	 * the rest our pipeline to be added.
+	 * The frontend has been disabled in some of our old device
+	 * trees. If we find a node that is the frontend and is
+	 * disabled, we should just follow through and parse its
+	 * child, but without adding it to the component list.
+	 * Otherwise, we obviously want to add it to the list.
 	 */
 	if (!sun4i_drv_node_is_frontend(node) &&
 	    !of_device_is_available(node))
@@ -239,48 +321,28 @@ static int sun4i_drv_add_endpoints(struct device *dev,
 	if (sun4i_drv_node_is_connector(node))
 		return 0;
 
-	if (!sun4i_drv_node_is_frontend(node)) {
+	/*
+	 * If the device is either just a regular device, or an
+	 * enabled frontend supported by the driver, we add it to our
+	 * component list.
+	 */
+	if (!(sun4i_drv_node_is_frontend(node) ||
+	      sun4i_drv_node_is_deu(node)) ||
+	    (sun4i_drv_node_is_supported_frontend(node) &&
+	     of_device_is_available(node))) {
 		/* Add current component */
 		DRM_DEBUG_DRIVER("Adding component %pOF\n", node);
 		drm_of_component_match_add(dev, match, compare_of, node);
 		count++;
 	}
 
-	/* Inputs are listed first, then outputs */
-	port = of_graph_get_port_by_id(node, 1);
-	if (!port) {
-		DRM_DEBUG_DRIVER("No output to bind\n");
-		return count;
-	}
+	/* each node has at least one output */
+	sun4i_drv_traverse_endpoints(list, node, 1);
 
-	for_each_available_child_of_node(port, ep) {
-		remote = of_graph_get_remote_port_parent(ep);
-		if (!remote) {
-			DRM_DEBUG_DRIVER("Error retrieving the output node\n");
-			of_node_put(remote);
-			continue;
-		}
-
-		/*
-		 * If the node is our TCON, the first port is used for
-		 * panel or bridges, and will not be part of the
-		 * component framework.
-		 */
-		if (sun4i_drv_node_is_tcon(node)) {
-			struct of_endpoint endpoint;
-
-			if (of_graph_parse_endpoint(ep, &endpoint)) {
-				DRM_DEBUG_DRIVER("Couldn't parse endpoint\n");
-				continue;
-			}
-
-			if (!endpoint.id) {
-				DRM_DEBUG_DRIVER("Endpoint is our panel... skipping\n");
-				continue;
-			}
-		}
-
-		kfifo_put(&list->fifo, remote);
+	/* TCON TOP has second and third output */
+	if (sun4i_drv_node_is_tcon_top(node)) {
+		sun4i_drv_traverse_endpoints(list, node, 3);
+		sun4i_drv_traverse_endpoints(list, node, 5);
 	}
 
 	return count;
@@ -339,7 +401,11 @@ static const struct of_device_id sun4i_drv_of_table[] = {
 	{ .compatible = "allwinner,sun7i-a20-display-engine" },
 	{ .compatible = "allwinner,sun8i-a33-display-engine" },
 	{ .compatible = "allwinner,sun8i-a83t-display-engine" },
+	{ .compatible = "allwinner,sun8i-h3-display-engine" },
+	{ .compatible = "allwinner,sun8i-r40-display-engine" },
 	{ .compatible = "allwinner,sun8i-v3s-display-engine" },
+	{ .compatible = "allwinner,sun9i-a80-display-engine" },
+	{ .compatible = "allwinner,sun50i-a64-display-engine" },
 	{ }
 };
 MODULE_DEVICE_TABLE(of, sun4i_drv_of_table);

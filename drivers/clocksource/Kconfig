@@ -21,6 +21,9 @@ config CLKEVT_I8253
 config I8253_LOCK
 	bool
 
+config OMAP_DM_TIMER
+	bool
+
 config CLKBLD_I8253
 	def_bool y if CLKSRC_I8253 || CLKEVT_I8253 || I8253_LOCK
 
@@ -129,6 +132,14 @@ config VT8500_TIMER
 	depends on HAS_IOMEM
 	help
 	  Enables support for the VT8500 driver.
+
+config NPCM7XX_TIMER
+	bool "NPCM7xx timer driver" if COMPILE_TEST
+	depends on HAS_IOMEM
+	select CLKSRC_MMIO
+	help
+	  Enable 24-bit TIMER0 and TIMER1 counters in the NPCM7xx architecture,
+	  While TIMER0 serves as clockevent and TIMER1 serves as clocksource.
 
 config CADENCE_TTC_TIMER
 	bool "Cadence TTC timer driver" if COMPILE_TEST
@@ -392,11 +403,6 @@ config ATMEL_ST
 	help
 	  Support for the Atmel ST timer.
 
-config CLKSRC_METAG_GENERIC
-	def_bool y if METAG
-	help
-	  This option enables support for the Meta per-thread timers.
-
 config CLKSRC_EXYNOS_MCT
 	bool "Exynos multi core timer driver" if COMPILE_TEST
 	depends on ARM || ARM64
@@ -444,8 +450,10 @@ config MTK_TIMER
 	  Support for Mediatek timer driver.
 
 config SPRD_TIMER
-	bool "Spreadtrum timer driver" if COMPILE_TEST
+	bool "Spreadtrum timer driver" if EXPERT
 	depends on HAS_IOMEM
+	depends on (ARCH_SPRD || COMPILE_TEST)
+	default ARCH_SPRD
 	select TIMER_OF
 	help
 	  Enables support for the Spreadtrum timer driver.
@@ -591,5 +599,43 @@ config CLKSRC_ST_LPC
 	help
 	  Enable this option to use the Low Power controller timer
 	  as clocksource.
+
+config ATCPIT100_TIMER
+	bool "ATCPIT100 timer driver"
+	depends on NDS32 || COMPILE_TEST
+	depends on HAS_IOMEM
+	select TIMER_OF
+	default NDS32
+	help
+	  This option enables support for the Andestech ATCPIT100 timers.
+
+config RISCV_TIMER
+	bool "Timer for the RISC-V platform"
+	depends on RISCV
+	default y
+	select TIMER_PROBE
+	select TIMER_OF
+	help
+	  This enables the per-hart timer built into all RISC-V systems, which
+	  is accessed via both the SBI and the rdcycle instruction.  This is
+	  required for all RISC-V systems.
+
+config CSKY_MP_TIMER
+	bool "SMP Timer for the C-SKY platform" if COMPILE_TEST
+	depends on CSKY
+	select TIMER_OF
+	help
+	  Say yes here to enable C-SKY SMP timer driver used for C-SKY SMP
+	  system.
+	  csky,mptimer is not only used in SMP system, it also could be used
+	  single core system. It's not a mmio reg and it use mtcr/mfcr instruction.
+
+config GX6605S_TIMER
+	bool "Gx6605s SOC system timer driver" if COMPILE_TEST
+	depends on CSKY
+	select CLKSRC_MMIO
+	select TIMER_OF
+	help
+	  This option enables support for gx6605s SOC's timer.
 
 endmenu

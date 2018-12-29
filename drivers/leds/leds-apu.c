@@ -102,6 +102,13 @@ static const struct apu_led_profile apu2_led_profile[] = {
 	{ "apu2:green:3", LED_OFF, APU2_FCH_GPIO_BASE + 70 * APU2_IOSIZE },
 };
 
+/* Same as apu2_led_profile, but with "3" in the LED names. */
+static const struct apu_led_profile apu3_led_profile[] = {
+	{ "apu3:green:1", LED_ON,  APU2_FCH_GPIO_BASE + 68 * APU2_IOSIZE },
+	{ "apu3:green:2", LED_OFF, APU2_FCH_GPIO_BASE + 69 * APU2_IOSIZE },
+	{ "apu3:green:3", LED_OFF, APU2_FCH_GPIO_BASE + 70 * APU2_IOSIZE },
+};
+
 static const struct dmi_system_id apu_led_dmi_table[] __initconst = {
 	{
 		.ident = "apu",
@@ -110,11 +117,52 @@ static const struct dmi_system_id apu_led_dmi_table[] __initconst = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "APU")
 		}
 	},
+	/* PC Engines APU2 with "Legacy" bios < 4.0.8 */
 	{
 		.ident = "apu2",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "PC Engines"),
 			DMI_MATCH(DMI_BOARD_NAME, "APU2")
+		}
+	},
+	/* PC Engines APU2 with "Legacy" bios >= 4.0.8 */
+	{
+		.ident = "apu2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "PC Engines"),
+			DMI_MATCH(DMI_BOARD_NAME, "apu2")
+		}
+	},
+	/* PC Engines APU2 with "Mainline" bios */
+	{
+		.ident = "apu2",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "PC Engines"),
+			DMI_MATCH(DMI_BOARD_NAME, "PC Engines apu2")
+		}
+	},
+	/* PC Engines APU3 with "Legacy" bios < 4.0.8 */
+	{
+		.ident = "apu3",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "PC Engines"),
+			DMI_MATCH(DMI_BOARD_NAME, "APU3")
+		}
+	},
+	/* PC Engines APU3 with "Legacy" bios >= 4.0.8 */
+	{
+		.ident = "apu3",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "PC Engines"),
+			DMI_MATCH(DMI_BOARD_NAME, "apu3")
+		}
+	},
+	/* PC Engines APU2 with "Mainline" bios */
+	{
+		.ident = "apu3",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "PC Engines"),
+			DMI_MATCH(DMI_BOARD_NAME, "PC Engines apu3")
 		}
 	},
 	{}
@@ -154,8 +202,8 @@ static int apu_led_config(struct device *dev, struct apu_led_pdata *apuld)
 	int i;
 	int err;
 
-	apu_led->pled = devm_kzalloc(dev,
-		sizeof(struct apu_led_priv) * apu_led->num_led_instances,
+	apu_led->pled = devm_kcalloc(dev,
+		apu_led->num_led_instances, sizeof(struct apu_led_priv),
 		GFP_KERNEL);
 
 	if (!apu_led->pled)
@@ -206,15 +254,25 @@ static int __init apu_led_probe(struct platform_device *pdev)
 
 	apu_led->pdev = pdev;
 
-	if (dmi_match(DMI_BOARD_NAME, "APU")) {
+	if (dmi_match(DMI_PRODUCT_NAME, "APU")) {
 		apu_led->profile = apu1_led_profile;
 		apu_led->platform = APU1_LED_PLATFORM;
 		apu_led->num_led_instances = ARRAY_SIZE(apu1_led_profile);
 		apu_led->iosize = APU1_IOSIZE;
-	} else if (dmi_match(DMI_BOARD_NAME, "APU2")) {
+	} else if (dmi_match(DMI_BOARD_NAME, "APU2") ||
+		   dmi_match(DMI_BOARD_NAME, "apu2") ||
+		   dmi_match(DMI_BOARD_NAME, "PC Engines apu2")) {
 		apu_led->profile = apu2_led_profile;
 		apu_led->platform = APU2_LED_PLATFORM;
 		apu_led->num_led_instances = ARRAY_SIZE(apu2_led_profile);
+		apu_led->iosize = APU2_IOSIZE;
+	} else if (dmi_match(DMI_BOARD_NAME, "APU3") ||
+		   dmi_match(DMI_BOARD_NAME, "apu3") ||
+		   dmi_match(DMI_BOARD_NAME, "PC Engines apu3")) {
+		apu_led->profile = apu3_led_profile;
+		/* Otherwise identical to APU2. */
+		apu_led->platform = APU2_LED_PLATFORM;
+		apu_led->num_led_instances = ARRAY_SIZE(apu3_led_profile);
 		apu_led->iosize = APU2_IOSIZE;
 	}
 
@@ -237,7 +295,13 @@ static int __init apu_led_init(void)
 		pr_err("No PC Engines board detected\n");
 		return -ENODEV;
 	}
-	if (!(dmi_match(DMI_PRODUCT_NAME, "APU") || dmi_match(DMI_PRODUCT_NAME, "APU2"))) {
+	if (!(dmi_match(DMI_PRODUCT_NAME, "APU") ||
+	      dmi_match(DMI_PRODUCT_NAME, "APU2") ||
+	      dmi_match(DMI_PRODUCT_NAME, "apu2") ||
+	      dmi_match(DMI_PRODUCT_NAME, "PC Engines apu2") ||
+	      dmi_match(DMI_PRODUCT_NAME, "APU3") ||
+	      dmi_match(DMI_PRODUCT_NAME, "apu3") ||
+	      dmi_match(DMI_PRODUCT_NAME, "PC Engines apu3"))) {
 		pr_err("Unknown PC Engines board: %s\n",
 				dmi_get_system_info(DMI_PRODUCT_NAME));
 		return -ENODEV;

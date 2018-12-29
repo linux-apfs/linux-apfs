@@ -348,7 +348,7 @@ static void send_sig_all(int sig)
 		if (is_global_init(p))
 			continue;
 
-		do_send_sig_info(sig, SEND_SIG_FORCED, p, true);
+		do_send_sig_info(sig, SEND_SIG_PRIV, p, PIDTYPE_MAX);
 	}
 	read_unlock(&tasklist_lock);
 }
@@ -660,7 +660,7 @@ static void sysrq_do_reset(struct timer_list *t)
 
 	state->reset_requested = true;
 
-	sys_sync();
+	ksys_sync();
 	kernel_restart(NULL);
 }
 

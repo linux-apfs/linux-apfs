@@ -48,6 +48,8 @@
 /*
  * This unit
  */
+#define DC_LOGGER \
+		hw_engine->base.base.base.ctx->logger
 
 enum dc_i2c_status {
 	DC_I2C_STATUS__DC_I2C_STATUS_IDLE,
@@ -60,12 +62,7 @@ enum dc_i2c_arbitration {
 	DC_I2C_ARBITRATION__DC_I2C_SW_PRIORITY_HIGH
 };
 
-enum {
-	/* No timeout in HW
-	 * (timeout implemented in SW by querying status) */
-	I2C_SETUP_TIME_LIMIT = 255,
-	I2C_HW_BUFFER_SIZE = 538
-};
+
 
 /*
  * @brief
@@ -150,6 +147,11 @@ static bool setup_engine(
 	struct i2c_engine *i2c_engine)
 {
 	struct i2c_hw_engine_dce110 *hw_engine = FROM_I2C_ENGINE(i2c_engine);
+	uint32_t i2c_setup_limit = I2C_SETUP_TIME_LIMIT_DCE;
+	uint32_t  reset_length = 0;
+
+	if (hw_engine->base.base.setup_limit != 0)
+		i2c_setup_limit = hw_engine->base.base.setup_limit;
 
 	/* Program pin select */
 	REG_UPDATE_6(
@@ -162,11 +164,15 @@ static bool setup_engine(
 			DC_I2C_DDC_SELECT, hw_engine->engine_id);
 
 	/* Program time limit */
-	REG_UPDATE_N(
-			SETUP, 2,
-			FN(DC_I2C_DDC1_SETUP, DC_I2C_DDC1_TIME_LIMIT), I2C_SETUP_TIME_LIMIT,
-			FN(DC_I2C_DDC1_SETUP, DC_I2C_DDC1_ENABLE), 1);
-
+	if (hw_engine->base.base.send_reset_length == 0) {
+		/*pre-dcn*/
+		REG_UPDATE_N(
+				SETUP, 2,
+				FN(DC_I2C_DDC1_SETUP, DC_I2C_DDC1_TIME_LIMIT), i2c_setup_limit,
+				FN(DC_I2C_DDC1_SETUP, DC_I2C_DDC1_ENABLE), 1);
+	} else {
+		reset_length = hw_engine->base.base.send_reset_length;
+	}
 	/* Program HW priority
 	 * set to High - interrupt software I2C at any time
 	 * Enable restart of SW I2C that was interrupted by HW
@@ -525,9 +531,7 @@ static void construct(
 	REG_GET(MICROSECOND_TIME_BASE_DIV, XTAL_REF_DIV, &xtal_ref_div);
 
 	if (xtal_ref_div == 0) {
-		dm_logger_write(
-				hw_engine->base.base.base.ctx->logger, LOG_WARNING,
-				"Invalid base timer divider\n",
+		DC_LOG_WARNING("Invalid base timer divider [%s]\n",
 				__func__);
 		xtal_ref_div = 2;
 	}

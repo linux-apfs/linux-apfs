@@ -36,24 +36,15 @@
  * Private declarations.
  *****************************************************************************/
 
-struct handler_common_data {
+struct amdgpu_dm_irq_handler_data {
 	struct list_head list;
 	interrupt_handler handler;
 	void *handler_arg;
 
 	/* DM which this handler belongs to */
 	struct amdgpu_display_manager *dm;
-};
-
-struct amdgpu_dm_irq_handler_data {
-	struct handler_common_data hcd;
 	/* DAL irq source which registered for this interrupt. */
 	enum dc_irq_source irq_source;
-};
-
-struct amdgpu_dm_timer_handler_data {
-	struct handler_common_data hcd;
-	struct delayed_work d_work;
 };
 
 #define DM_IRQ_TABLE_LOCK(adev, flags) \
@@ -66,7 +57,7 @@ struct amdgpu_dm_timer_handler_data {
  * Private functions.
  *****************************************************************************/
 
-static void init_handler_common_data(struct handler_common_data *hcd,
+static void init_handler_common_data(struct amdgpu_dm_irq_handler_data *hcd,
 				     void (*ih)(void *),
 				     void *args,
 				     struct amdgpu_display_manager *dm)
@@ -90,11 +81,9 @@ static void dm_irq_work_func(struct work_struct *work)
 	struct amdgpu_dm_irq_handler_data *handler_data;
 
 	list_for_each(entry, handler_list) {
-		handler_data =
-			list_entry(
-				entry,
-				struct amdgpu_dm_irq_handler_data,
-				hcd.list);
+		handler_data = list_entry(entry,
+					  struct amdgpu_dm_irq_handler_data,
+					  list);
 
 		DRM_DEBUG_KMS("DM_IRQ: work_func: for dal_src=%d\n",
 				handler_data->irq_source);
@@ -102,7 +91,7 @@ static void dm_irq_work_func(struct work_struct *work)
 		DRM_DEBUG_KMS("DM_IRQ: schedule_work: for dal_src=%d\n",
 			handler_data->irq_source);
 
-		handler_data->hcd.handler(handler_data->hcd.handler_arg);
+		handler_data->handler(handler_data->handler_arg);
 	}
 
 	/* Call a DAL subcomponent which registered for interrupt notification
@@ -142,11 +131,11 @@ static struct list_head *remove_irq_handler(struct amdgpu_device *adev,
 	list_for_each_safe(entry, tmp, hnd_list) {
 
 		handler = list_entry(entry, struct amdgpu_dm_irq_handler_data,
-				hcd.list);
+				     list);
 
 		if (ih == handler) {
 			/* Found our handler. Remove it from the list. */
-			list_del(&handler->hcd.list);
+			list_del(&handler->list);
 			handler_removed = true;
 			break;
 		}
@@ -167,62 +156,6 @@ static struct list_head *remove_irq_handler(struct amdgpu_device *adev,
 		ih, int_params->irq_source, int_params->int_context);
 
 	return hnd_list;
-}
-
-/* If 'handler_in == NULL' then remove ALL handlers. */
-static void remove_timer_handler(struct amdgpu_device *adev,
-				 struct amdgpu_dm_timer_handler_data *handler_in)
-{
-	struct amdgpu_dm_timer_handler_data *handler_temp;
-	struct list_head *handler_list;
-	struct list_head *entry, *tmp;
-	unsigned long irq_table_flags;
-	bool handler_removed = false;
-
-	DM_IRQ_TABLE_LOCK(adev, irq_table_flags);
-
-	handler_list = &adev->dm.timer_handler_list;
-
-	list_for_each_safe(entry, tmp, handler_list) {
-		/* Note that list_for_each_safe() guarantees that
-		 * handler_temp is NOT null. */
-		handler_temp = list_entry(entry,
-				struct amdgpu_dm_timer_handler_data, hcd.list);
-
-		if (handler_in == NULL || handler_in == handler_temp) {
-			list_del(&handler_temp->hcd.list);
-			DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
-
-			DRM_DEBUG_KMS("DM_IRQ: removing timer handler: %p\n",
-					handler_temp);
-
-			if (handler_in == NULL) {
-				/* Since it is still in the queue, it must
-				 * be cancelled. */
-				cancel_delayed_work_sync(&handler_temp->d_work);
-			}
-
-			kfree(handler_temp);
-			handler_removed = true;
-
-			DM_IRQ_TABLE_LOCK(adev, irq_table_flags);
-		}
-
-		/* Remove ALL handlers. */
-		if (handler_in == NULL)
-			continue;
-
-		/* Remove a SPECIFIC handler.
-		 * Found our handler - we can stop here. */
-		if (handler_in == handler_temp)
-			break;
-	}
-
-	DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
-
-	if (handler_in != NULL && handler_removed == false)
-		DRM_ERROR("DM_IRQ: handler: %p is not in the list!\n",
-				handler_in);
 }
 
 static bool
@@ -291,8 +224,7 @@ void *amdgpu_dm_irq_register_interrupt(struct amdgpu_device *adev,
 
 	memset(handler_data, 0, sizeof(*handler_data));
 
-	init_handler_common_data(&handler_data->hcd, ih, handler_args,
-			&adev->dm);
+	init_handler_common_data(handler_data, ih, handler_args, &adev->dm);
 
 	irq_source = int_params->irq_source;
 
@@ -311,7 +243,7 @@ void *amdgpu_dm_irq_register_interrupt(struct amdgpu_device *adev,
 		break;
 	}
 
-	list_add_tail(&handler_data->hcd.list, hnd_list);
+	list_add_tail(&handler_data->list, hnd_list);
 
 	DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
 
@@ -382,16 +314,6 @@ int amdgpu_dm_irq_init(struct amdgpu_device *adev)
 		INIT_LIST_HEAD(&adev->dm.irq_handler_list_high_tab[src]);
 	}
 
-	INIT_LIST_HEAD(&adev->dm.timer_handler_list);
-
-	/* allocate and initialize the workqueue for DM timer */
-	adev->dm.timer_workqueue = create_singlethread_workqueue(
-			"dm_timer_queue");
-	if (adev->dm.timer_workqueue == NULL) {
-		DRM_ERROR("DM_IRQ: unable to create timer queue!\n");
-		return -1;
-	}
-
 	return 0;
 }
 
@@ -400,21 +322,17 @@ void amdgpu_dm_irq_fini(struct amdgpu_device *adev)
 {
 	int src;
 	struct irq_list_head *lh;
+	unsigned long irq_table_flags;
 	DRM_DEBUG_KMS("DM_IRQ: releasing resources.\n");
-
 	for (src = 0; src < DAL_IRQ_SOURCES_NUMBER; src++) {
-
+		DM_IRQ_TABLE_LOCK(adev, irq_table_flags);
 		/* The handler was removed from the table,
 		 * it means it is safe to flush all the 'work'
 		 * (because no code can schedule a new one). */
 		lh = &adev->dm.irq_handler_list_low_tab[src];
+		DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
 		flush_work(&lh->work);
 	}
-
-	/* Cancel ALL timers and release handlers (if any). */
-	remove_timer_handler(adev, NULL);
-	/* Release the queue itself. */
-	destroy_workqueue(adev->dm.timer_workqueue);
 }
 
 int amdgpu_dm_irq_suspend(struct amdgpu_device *adev)
@@ -537,15 +455,13 @@ static void amdgpu_dm_irq_immediate_work(struct amdgpu_device *adev,
 		entry,
 		&adev->dm.irq_handler_list_high_tab[irq_source]) {
 
-		handler_data =
-			list_entry(
-				entry,
-				struct amdgpu_dm_irq_handler_data,
-				hcd.list);
+		handler_data = list_entry(entry,
+					  struct amdgpu_dm_irq_handler_data,
+					  list);
 
 		/* Call a subcomponent which registered for immediate
 		 * interrupt notification */
-		handler_data->hcd.handler(handler_data->hcd.handler_arg);
+		handler_data->handler(handler_data->handler_arg);
 	}
 
 	DM_IRQ_TABLE_UNLOCK(adev, irq_table_flags);
@@ -629,6 +545,9 @@ static inline int dm_irq_state(struct amdgpu_device *adev,
 			crtc_id);
 		return 0;
 	}
+
+	if (acrtc->otg_inst == -1)
+		return 0;
 
 	irq_source = dal_irq_type + acrtc->otg_inst;
 

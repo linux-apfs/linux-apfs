@@ -45,11 +45,6 @@ static const char *i915_clflush_get_timeline_name(struct dma_fence *fence)
 	return "clflush";
 }
 
-static bool i915_clflush_enable_signaling(struct dma_fence *fence)
-{
-	return true;
-}
-
 static void i915_clflush_release(struct dma_fence *fence)
 {
 	struct clflush *clflush = container_of(fence, typeof(*clflush), dma);
@@ -63,8 +58,6 @@ static void i915_clflush_release(struct dma_fence *fence)
 static const struct dma_fence_ops i915_clflush_ops = {
 	.get_driver_name = i915_clflush_get_driver_name,
 	.get_timeline_name = i915_clflush_get_timeline_name,
-	.enable_signaling = i915_clflush_enable_signaling,
-	.wait = dma_fence_default_wait,
 	.release = i915_clflush_release,
 };
 
@@ -177,7 +170,7 @@ bool i915_gem_clflush_object(struct drm_i915_gem_object *obj,
 	} else if (obj->mm.pages) {
 		__i915_do_clflush(obj);
 	} else {
-		GEM_BUG_ON(obj->base.write_domain != I915_GEM_DOMAIN_CPU);
+		GEM_BUG_ON(obj->write_domain != I915_GEM_DOMAIN_CPU);
 	}
 
 	obj->cache_dirty = false;

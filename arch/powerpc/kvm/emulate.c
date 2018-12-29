@@ -45,12 +45,6 @@ void kvmppc_emulate_dec(struct kvm_vcpu *vcpu)
 #ifdef CONFIG_PPC_BOOK3S
 	/* mtdec lowers the interrupt line when positive. */
 	kvmppc_core_dequeue_dec(vcpu);
-
-	/* POWER4+ triggers a dec interrupt if the value is < 0 */
-	if (vcpu->arch.dec & 0x80000000) {
-		kvmppc_core_queue_dec(vcpu);
-		return;
-	}
 #endif
 
 #ifdef CONFIG_BOOKE
@@ -67,11 +61,10 @@ void kvmppc_emulate_dec(struct kvm_vcpu *vcpu)
 
 	dec_time = vcpu->arch.dec;
 	/*
-	 * Guest timebase ticks at the same frequency as host decrementer.
-	 * So use the host decrementer calculations for decrementer emulation.
+	 * Guest timebase ticks at the same frequency as host timebase.
+	 * So use the host timebase calculations for decrementer emulation.
 	 */
-	dec_time = dec_time << decrementer_clockevent.shift;
-	do_div(dec_time, decrementer_clockevent.mult);
+	dec_time = tb_to_ns(dec_time);
 	dec_nsec = do_div(dec_time, NSEC_PER_SEC);
 	hrtimer_start(&vcpu->arch.dec_timer,
 		ktime_set(dec_time, dec_nsec), HRTIMER_MODE_REL);

@@ -134,6 +134,12 @@
 #define LIRC_SET_WIDEBAND_RECEIVER     _IOW('i', 0x00000023, __u32)
 
 /*
+ * Return the recording timeout, which is either set by
+ * the ioctl LIRC_SET_REC_TIMEOUT or by the kernel after setting the protocols.
+ */
+#define LIRC_GET_REC_TIMEOUT	       _IOR('i', 0x00000024, __u32)
+
+/*
  * struct lirc_scancode - decoded scancode with protocol for use with
  *	LIRC_MODE_SCANCODE
  *
@@ -185,6 +191,7 @@ struct lirc_scancode {
  * @RC_PROTO_SHARP: Sharp protocol
  * @RC_PROTO_XMP: XMP protocol
  * @RC_PROTO_CEC: CEC protocol
+ * @RC_PROTO_IMON: iMon Pad protocol
  */
 enum rc_proto {
 	RC_PROTO_UNKNOWN	= 0,
@@ -210,6 +217,7 @@ enum rc_proto {
 	RC_PROTO_SHARP		= 20,
 	RC_PROTO_XMP		= 21,
 	RC_PROTO_CEC		= 22,
+	RC_PROTO_IMON		= 23,
 };
 
 #endif

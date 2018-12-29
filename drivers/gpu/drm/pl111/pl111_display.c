@@ -50,6 +50,41 @@ irqreturn_t pl111_irq(int irq, void *data)
 	return status;
 }
 
+static enum drm_mode_status
+pl111_mode_valid(struct drm_crtc *crtc,
+		 const struct drm_display_mode *mode)
+{
+	struct drm_device *drm = crtc->dev;
+	struct pl111_drm_dev_private *priv = drm->dev_private;
+	u32 cpp = priv->variant->fb_bpp / 8;
+	u64 bw;
+
+	/*
+	 * We use the pixelclock to also account for interlaced modes, the
+	 * resulting bandwidth is in bytes per second.
+	 */
+	bw = mode->clock * 1000ULL; /* In Hz */
+	bw = bw * mode->hdisplay * mode->vdisplay * cpp;
+	bw = div_u64(bw, mode->htotal * mode->vtotal);
+
+	/*
+	 * If no bandwidth constraints, anything goes, else
+	 * check if we are too fast.
+	 */
+	if (priv->memory_bw && (bw > priv->memory_bw)) {
+		DRM_DEBUG_KMS("%d x %d @ %d Hz, %d cpp, bw %llu too fast\n",
+			      mode->hdisplay, mode->vdisplay,
+			      mode->clock * 1000, cpp, bw);
+
+		return MODE_BAD;
+	}
+	DRM_DEBUG_KMS("%d x %d @ %d Hz, %d cpp, bw %llu bytes/s OK\n",
+		      mode->hdisplay, mode->vdisplay,
+		      mode->clock * 1000, cpp, bw);
+
+	return MODE_OK;
+}
+
 static int pl111_display_check(struct drm_simple_display_pipe *pipe,
 			       struct drm_plane_state *pstate,
 			       struct drm_crtc_state *cstate)
@@ -85,7 +120,8 @@ static int pl111_display_check(struct drm_simple_display_pipe *pipe,
 }
 
 static void pl111_display_enable(struct drm_simple_display_pipe *pipe,
-				 struct drm_crtc_state *cstate)
+				 struct drm_crtc_state *cstate,
+				 struct drm_plane_state *plane_state)
 {
 	struct drm_crtc *crtc = &pipe->crtc;
 	struct drm_plane *plane = &pipe->plane;
@@ -94,6 +130,7 @@ static void pl111_display_enable(struct drm_simple_display_pipe *pipe,
 	const struct drm_display_mode *mode = &cstate->mode;
 	struct drm_framebuffer *fb = plane->state->fb;
 	struct drm_connector *connector = priv->connector;
+	struct drm_bridge *bridge = priv->bridge;
 	u32 cntl;
 	u32 ppl, hsw, hfp, hbp;
 	u32 lpp, vsw, vfp, vbp;
@@ -137,17 +174,46 @@ static void pl111_display_enable(struct drm_simple_display_pipe *pipe,
 	tim2 = readl(priv->regs + CLCD_TIM2);
 	tim2 &= (TIM2_BCD | TIM2_PCD_LO_MASK | TIM2_PCD_HI_MASK);
 
+	if (priv->variant->broken_clockdivider)
+		tim2 |= TIM2_BCD;
+
 	if (mode->flags & DRM_MODE_FLAG_NHSYNC)
 		tim2 |= TIM2_IHS;
 
 	if (mode->flags & DRM_MODE_FLAG_NVSYNC)
 		tim2 |= TIM2_IVS;
 
-	if (connector->display_info.bus_flags & DRM_BUS_FLAG_DE_LOW)
-		tim2 |= TIM2_IOE;
+	if (connector) {
+		if (connector->display_info.bus_flags & DRM_BUS_FLAG_DE_LOW)
+			tim2 |= TIM2_IOE;
 
-	if (connector->display_info.bus_flags & DRM_BUS_FLAG_PIXDATA_NEGEDGE)
-		tim2 |= TIM2_IPC;
+		if (connector->display_info.bus_flags &
+		    DRM_BUS_FLAG_PIXDATA_NEGEDGE)
+			tim2 |= TIM2_IPC;
+	}
+
+	if (bridge) {
+		const struct drm_bridge_timings *btimings = bridge->timings;
+
+		/*
+		 * Here is when things get really fun. Sometimes the bridge
+		 * timings are such that the signal out from PL11x is not
+		 * stable before the receiving bridge (such as a dumb VGA DAC
+		 * or similar) samples it. If that happens, we compensate by
+		 * the only method we have: output the data on the opposite
+		 * edge of the clock so it is for sure stable when it gets
+		 * sampled.
+		 *
+		 * The PL111 manual does not contain proper timining diagrams
+		 * or data for these details, but we know from experiments
+		 * that the setup time is more than 3000 picoseconds (3 ns).
+		 * If we have a bridge that requires the signal to be stable
+		 * earlier than 3000 ps before the clock pulse, we have to
+		 * output the data on the opposite edge to avoid flicker.
+		 */
+		if (btimings && btimings->setup_time_ps >= 3000)
+			tim2 ^= TIM2_IPC;
+	}
 
 	tim2 |= cpl << 16;
 	writel(tim2, priv->regs + CLCD_TIM2);
@@ -157,47 +223,94 @@ static void pl111_display_enable(struct drm_simple_display_pipe *pipe,
 
 	/* Hard-code TFT panel */
 	cntl = CNTL_LCDEN | CNTL_LCDTFT | CNTL_LCDVCOMP(1);
+	/* On the ST Micro variant, assume all 24 bits are connected */
+	if (priv->variant->st_bitmux_control)
+		cntl |= CNTL_ST_CDWID_24;
 
-	/* Note that the the hardware's format reader takes 'r' from
+	/*
+	 * Note that the the ARM hardware's format reader takes 'r' from
 	 * the low bit, while DRM formats list channels from high bit
-	 * to low bit as you read left to right.
+	 * to low bit as you read left to right. The ST Micro version of
+	 * the PL110 (LCDC) however uses the standard DRM format.
 	 */
 	switch (fb->format->format) {
+	case DRM_FORMAT_BGR888:
+		/* Only supported on the ST Micro variant */
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_ST_LCDBPP24_PACKED | CNTL_BGR;
+		break;
+	case DRM_FORMAT_RGB888:
+		/* Only supported on the ST Micro variant */
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_ST_LCDBPP24_PACKED;
+		break;
 	case DRM_FORMAT_ABGR8888:
 	case DRM_FORMAT_XBGR8888:
-		cntl |= CNTL_LCDBPP24;
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_LCDBPP24 | CNTL_BGR;
+		else
+			cntl |= CNTL_LCDBPP24;
 		break;
 	case DRM_FORMAT_ARGB8888:
 	case DRM_FORMAT_XRGB8888:
-		cntl |= CNTL_LCDBPP24 | CNTL_BGR;
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_LCDBPP24;
+		else
+			cntl |= CNTL_LCDBPP24 | CNTL_BGR;
 		break;
 	case DRM_FORMAT_BGR565:
-		cntl |= CNTL_LCDBPP16_565;
+		if (priv->variant->is_pl110)
+			cntl |= CNTL_LCDBPP16;
+		else if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_LCDBPP16 | CNTL_ST_1XBPP_565 | CNTL_BGR;
+		else
+			cntl |= CNTL_LCDBPP16_565;
 		break;
 	case DRM_FORMAT_RGB565:
-		cntl |= CNTL_LCDBPP16_565 | CNTL_BGR;
+		if (priv->variant->is_pl110)
+			cntl |= CNTL_LCDBPP16 | CNTL_BGR;
+		else if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_LCDBPP16 | CNTL_ST_1XBPP_565;
+		else
+			cntl |= CNTL_LCDBPP16_565 | CNTL_BGR;
 		break;
 	case DRM_FORMAT_ABGR1555:
 	case DRM_FORMAT_XBGR1555:
 		cntl |= CNTL_LCDBPP16;
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_ST_1XBPP_5551 | CNTL_BGR;
 		break;
 	case DRM_FORMAT_ARGB1555:
 	case DRM_FORMAT_XRGB1555:
-		cntl |= CNTL_LCDBPP16 | CNTL_BGR;
+		cntl |= CNTL_LCDBPP16;
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_ST_1XBPP_5551;
+		else
+			cntl |= CNTL_BGR;
 		break;
 	case DRM_FORMAT_ABGR4444:
 	case DRM_FORMAT_XBGR4444:
 		cntl |= CNTL_LCDBPP16_444;
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_ST_1XBPP_444 | CNTL_BGR;
 		break;
 	case DRM_FORMAT_ARGB4444:
 	case DRM_FORMAT_XRGB4444:
-		cntl |= CNTL_LCDBPP16_444 | CNTL_BGR;
+		cntl |= CNTL_LCDBPP16_444;
+		if (priv->variant->st_bitmux_control)
+			cntl |= CNTL_ST_1XBPP_444;
+		else
+			cntl |= CNTL_BGR;
 		break;
 	default:
 		WARN_ONCE(true, "Unknown FB format 0x%08x\n",
 			  fb->format->format);
 		break;
 	}
+
+	/* The PL110 in Integrator/Versatile does the BGR routing externally */
+	if (priv->variant->external_bgr)
+		cntl &= ~CNTL_BGR;
 
 	/* Power sequence: first enable and chill */
 	writel(cntl, priv->regs + priv->ctrl);
@@ -215,7 +328,8 @@ static void pl111_display_enable(struct drm_simple_display_pipe *pipe,
 	cntl |= CNTL_LCDPWR;
 	writel(cntl, priv->regs + priv->ctrl);
 
-	drm_crtc_vblank_on(crtc);
+	if (!priv->variant->broken_vblank)
+		drm_crtc_vblank_on(crtc);
 }
 
 void pl111_display_disable(struct drm_simple_display_pipe *pipe)
@@ -225,7 +339,8 @@ void pl111_display_disable(struct drm_simple_display_pipe *pipe)
 	struct pl111_drm_dev_private *priv = drm->dev_private;
 	u32 cntl;
 
-	drm_crtc_vblank_off(crtc);
+	if (!priv->variant->broken_vblank)
+		drm_crtc_vblank_off(crtc);
 
 	/* Power Down */
 	cntl = readl(priv->regs + priv->ctrl);
@@ -278,8 +393,10 @@ static void pl111_display_update(struct drm_simple_display_pipe *pipe,
 	}
 }
 
-int pl111_enable_vblank(struct drm_device *drm, unsigned int crtc)
+static int pl111_display_enable_vblank(struct drm_simple_display_pipe *pipe)
 {
+	struct drm_crtc *crtc = &pipe->crtc;
+	struct drm_device *drm = crtc->dev;
 	struct pl111_drm_dev_private *priv = drm->dev_private;
 
 	writel(CLCD_IRQ_NEXTBASE_UPDATE, priv->regs + priv->ienb);
@@ -287,25 +404,22 @@ int pl111_enable_vblank(struct drm_device *drm, unsigned int crtc)
 	return 0;
 }
 
-void pl111_disable_vblank(struct drm_device *drm, unsigned int crtc)
+static void pl111_display_disable_vblank(struct drm_simple_display_pipe *pipe)
 {
+	struct drm_crtc *crtc = &pipe->crtc;
+	struct drm_device *drm = crtc->dev;
 	struct pl111_drm_dev_private *priv = drm->dev_private;
 
 	writel(0, priv->regs + priv->ienb);
 }
 
-static int pl111_display_prepare_fb(struct drm_simple_display_pipe *pipe,
-				    struct drm_plane_state *plane_state)
-{
-	return drm_gem_fb_prepare_fb(&pipe->plane, plane_state);
-}
-
-static const struct drm_simple_display_pipe_funcs pl111_display_funcs = {
+static struct drm_simple_display_pipe_funcs pl111_display_funcs = {
+	.mode_valid = pl111_mode_valid,
 	.check = pl111_display_check,
 	.enable = pl111_display_enable,
 	.disable = pl111_display_disable,
 	.update = pl111_display_update,
-	.prepare_fb = pl111_display_prepare_fb,
+	.prepare_fb = drm_gem_fb_simple_display_pipe_prepare_fb,
 };
 
 static int pl111_clk_div_choose_div(struct clk_hw *hw, unsigned long rate,
@@ -417,6 +531,11 @@ pl111_init_clock_divider(struct drm_device *drm)
 		dev_err(drm->dev, "CLCD: unable to get clcdclk.\n");
 		return PTR_ERR(parent);
 	}
+	/* If the clock divider is broken, use the parent directly */
+	if (priv->variant->broken_clockdivider) {
+		priv->clk = parent;
+		return 0;
+	}
 	parent_name = __clk_get_name(parent);
 
 	spin_lock_init(&priv->tim2_lock);
@@ -453,6 +572,11 @@ int pl111_display_init(struct drm_device *drm)
 	ret = pl111_init_clock_divider(drm);
 	if (ret)
 		return ret;
+
+	if (!priv->variant->broken_vblank) {
+		pl111_display_funcs.enable_vblank = pl111_display_enable_vblank;
+		pl111_display_funcs.disable_vblank = pl111_display_disable_vblank;
+	}
 
 	ret = drm_simple_display_pipe_init(drm, &priv->pipe,
 					   &pl111_display_funcs,

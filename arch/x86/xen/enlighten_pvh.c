@@ -6,24 +6,31 @@
 #include <asm/io_apic.h>
 #include <asm/hypervisor.h>
 #include <asm/e820/api.h>
+#include <asm/x86_init.h>
 
 #include <asm/xen/interface.h>
 #include <asm/xen/hypercall.h>
 
+#include <xen/xen.h>
 #include <xen/interface/memory.h>
 #include <xen/interface/hvm/start_info.h>
 
 /*
  * PVH variables.
  *
- * xen_pvh and pvh_bootparams need to live in data segment since they
- * are used after startup_{32|64}, which clear .bss, are invoked.
+ * xen_pvh pvh_bootparams and pvh_start_info need to live in data segment
+ * since they are used after startup_{32|64}, which clear .bss, are invoked.
  */
 bool xen_pvh __attribute__((section(".data"))) = 0;
 struct boot_params pvh_bootparams __attribute__((section(".data")));
+struct hvm_start_info pvh_start_info __attribute__((section(".data")));
 
-struct hvm_start_info pvh_start_info;
 unsigned int pvh_start_info_sz = sizeof(pvh_start_info);
+
+static u64 pvh_get_root_pointer(void)
+{
+	return pvh_start_info.rsdp_paddr;
+}
 
 static void __init init_pvh_bootparams(void)
 {
@@ -69,8 +76,10 @@ static void __init init_pvh_bootparams(void)
 	 * Version 2.12 supports Xen entry point but we will use default x86/PC
 	 * environment (i.e. hardware_subarch 0).
 	 */
-	pvh_bootparams.hdr.version = 0x212;
+	pvh_bootparams.hdr.version = (2 << 8) | 12;
 	pvh_bootparams.hdr.type_of_loader = (9 << 4) | 0; /* Xen loader */
+
+	x86_init.acpi.get_root_pointer = pvh_get_root_pointer;
 }
 
 /*
@@ -89,6 +98,7 @@ void __init xen_prepare_pvh(void)
 	}
 
 	xen_pvh = 1;
+	xen_start_flags = pvh_start_info.flags;
 
 	msr = cpuid_ebx(xen_cpuid_base() + 2);
 	pfn = __pa(hypercall_page);

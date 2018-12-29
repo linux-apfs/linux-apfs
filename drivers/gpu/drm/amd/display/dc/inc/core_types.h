@@ -92,13 +92,9 @@ struct resource_context;
 
 struct resource_funcs {
 	void (*destroy)(struct resource_pool **pool);
+	void (*link_init)(struct dc_link *link);
 	struct link_encoder *(*link_enc_create)(
 			const struct encoder_init_data *init);
-
-	enum dc_status (*validate_guaranteed)(
-					struct dc *dc,
-					struct dc_stream_state *stream,
-					struct dc_state *context);
 
 	bool (*validate_bandwidth)(
 					struct dc *dc,
@@ -119,6 +115,14 @@ struct resource_funcs {
 			struct dc *dc,
 			struct dc_state *new_ctx,
 			struct dc_stream_state *dc_stream);
+
+	enum dc_status (*remove_stream_from_ctx)(
+				struct dc *dc,
+				struct dc_state *new_ctx,
+				struct dc_stream_state *stream);
+	enum dc_status (*get_default_swizzle_mode)(
+			struct dc_plane_state *plane_state);
+
 };
 
 struct audio_support{
@@ -138,16 +142,20 @@ struct resource_pool {
 	struct output_pixel_processor *opps[MAX_PIPES];
 	struct timing_generator *timing_generators[MAX_PIPES];
 	struct stream_encoder *stream_enc[MAX_PIPES * 2];
-
 	struct hubbub *hubbub;
 	struct mpc *mpc;
 	struct pp_smu_funcs_rv *pp_smu;
 	struct pp_smu_display_requirement_rv pp_smu_req;
+	struct aux_engine *engines[MAX_PIPES];
+	struct dce_i2c_hw *hw_i2cs[MAX_PIPES];
+	struct dce_i2c_sw *sw_i2cs[MAX_PIPES];
+	bool i2c_hw_buffer_in_use;
 
 	unsigned int pipe_count;
 	unsigned int underlay_pipe_index;
 	unsigned int stream_enc_count;
 	unsigned int ref_clock_inKhz;
+	unsigned int timing_generator_count;
 
 	/*
 	 * reserved clock source for DP
@@ -161,7 +169,7 @@ struct resource_pool {
 	unsigned int audio_count;
 	struct audio_support audio_support;
 
-	struct display_clock *display_clock;
+	struct dccg *dccg;
 	struct irq_service *irqs;
 
 	struct abm *abm;
@@ -169,6 +177,15 @@ struct resource_pool {
 
 	const struct resource_funcs *funcs;
 	const struct resource_caps *res_cap;
+};
+
+struct dcn_fe_clocks {
+	int dppclk_khz;
+};
+
+struct dcn_fe_bandwidth {
+	struct dcn_fe_clocks calc;
+	struct dcn_fe_clocks cur;
 };
 
 struct stream_resource {
@@ -179,6 +196,8 @@ struct stream_resource {
 
 	struct pixel_clk_params pix_clk_params;
 	struct encoder_info_frame encoder_info_frame;
+
+	struct abm *abm;
 };
 
 struct plane_resource {
@@ -188,6 +207,9 @@ struct plane_resource {
 	struct input_pixel_processor *ipp;
 	struct transform *xfm;
 	struct dpp *dpp;
+	uint8_t mpcc_inst;
+
+	struct dcn_fe_bandwidth bw;
 };
 
 struct pipe_ctx {
@@ -230,6 +252,7 @@ struct dce_bw_output {
 	bool all_displays_in_sync;
 	struct dce_watermarks urgent_wm_ns[MAX_PIPES];
 	struct dce_watermarks stutter_exit_wm_ns[MAX_PIPES];
+	struct dce_watermarks stutter_entry_wm_ns[MAX_PIPES];
 	struct dce_watermarks nbp_state_change_wm_ns[MAX_PIPES];
 	int sclk_khz;
 	int sclk_deep_sleep_khz;
@@ -238,20 +261,8 @@ struct dce_bw_output {
 	int blackout_recovery_time_us;
 };
 
-struct dcn_bw_clocks {
-	int dispclk_khz;
-	int dppclk_khz;
-	bool dppclk_div;
-	int dcfclk_khz;
-	int dcfclk_deep_sleep_khz;
-	int fclk_khz;
-	int dram_ccm_us;
-	int min_active_dram_ccm_us;
-};
-
 struct dcn_bw_output {
-	struct dcn_bw_clocks cur_clk;
-	struct dcn_bw_clocks calc_clk;
+	struct dc_clocks clk;
 	struct dcn_watermark_set watermarks;
 };
 
@@ -276,7 +287,7 @@ struct dc_state {
 	struct dcn_bw_internal_vars dcn_bw_vars;
 #endif
 
-	struct display_clock *dis_clk;
+	struct dccg *dis_clk;
 
 	struct kref refcount;
 };

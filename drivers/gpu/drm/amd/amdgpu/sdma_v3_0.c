@@ -44,6 +44,8 @@
 
 #include "tonga_sdma_pkt_open.h"
 
+#include "ivsrcid/ivsrcid_vislands30.h"
+
 static void sdma_v3_0_set_ring_funcs(struct amdgpu_device *adev);
 static void sdma_v3_0_set_buffer_funcs(struct amdgpu_device *adev);
 static void sdma_v3_0_set_vm_pte_funcs(struct amdgpu_device *adev);
@@ -62,6 +64,8 @@ MODULE_FIRMWARE("amdgpu/polaris11_sdma.bin");
 MODULE_FIRMWARE("amdgpu/polaris11_sdma1.bin");
 MODULE_FIRMWARE("amdgpu/polaris12_sdma.bin");
 MODULE_FIRMWARE("amdgpu/polaris12_sdma1.bin");
+MODULE_FIRMWARE("amdgpu/vegam_sdma.bin");
+MODULE_FIRMWARE("amdgpu/vegam_sdma1.bin");
 
 
 static const u32 sdma_offsets[SDMA_MAX_INSTANCE] =
@@ -209,6 +213,7 @@ static void sdma_v3_0_init_golden_registers(struct amdgpu_device *adev)
 		break;
 	case CHIP_POLARIS11:
 	case CHIP_POLARIS12:
+	case CHIP_VEGAM:
 		amdgpu_device_program_register_sequence(adev,
 							golden_settings_polaris11_a11,
 							ARRAY_SIZE(golden_settings_polaris11_a11));
@@ -275,14 +280,17 @@ static int sdma_v3_0_init_microcode(struct amdgpu_device *adev)
 	case CHIP_FIJI:
 		chip_name = "fiji";
 		break;
-	case CHIP_POLARIS11:
-		chip_name = "polaris11";
-		break;
 	case CHIP_POLARIS10:
 		chip_name = "polaris10";
 		break;
+	case CHIP_POLARIS11:
+		chip_name = "polaris11";
+		break;
 	case CHIP_POLARIS12:
 		chip_name = "polaris12";
+		break;
+	case CHIP_VEGAM:
+		chip_name = "vegam";
 		break;
 	case CHIP_CARRIZO:
 		chip_name = "carrizo";
@@ -310,14 +318,13 @@ static int sdma_v3_0_init_microcode(struct amdgpu_device *adev)
 		if (adev->sdma.instance[i].feature_version >= 20)
 			adev->sdma.instance[i].burst_nop = true;
 
-		if (adev->firmware.load_type == AMDGPU_FW_LOAD_SMU) {
-			info = &adev->firmware.ucode[AMDGPU_UCODE_ID_SDMA0 + i];
-			info->ucode_id = AMDGPU_UCODE_ID_SDMA0 + i;
-			info->fw = adev->sdma.instance[i].fw;
-			header = (const struct common_firmware_header *)info->fw->data;
-			adev->firmware.fw_size +=
-				ALIGN(le32_to_cpu(header->ucode_size_bytes), PAGE_SIZE);
-		}
+		info = &adev->firmware.ucode[AMDGPU_UCODE_ID_SDMA0 + i];
+		info->ucode_id = AMDGPU_UCODE_ID_SDMA0 + i;
+		info->fw = adev->sdma.instance[i].fw;
+		header = (const struct common_firmware_header *)info->fw->data;
+		adev->firmware.fw_size +=
+			ALIGN(le32_to_cpu(header->ucode_size_bytes), PAGE_SIZE);
+
 	}
 out:
 	if (err) {
@@ -359,9 +366,7 @@ static uint64_t sdma_v3_0_ring_get_wptr(struct amdgpu_ring *ring)
 		/* XXX check if swapping is necessary on BE */
 		wptr = ring->adev->wb.wb[ring->wptr_offs] >> 2;
 	} else {
-		int me = (ring == &ring->adev->sdma.instance[0].ring) ? 0 : 1;
-
-		wptr = RREG32(mmSDMA0_GFX_RB_WPTR + sdma_offsets[me]) >> 2;
+		wptr = RREG32(mmSDMA0_GFX_RB_WPTR + sdma_offsets[ring->me]) >> 2;
 	}
 
 	return wptr;
@@ -388,9 +393,7 @@ static void sdma_v3_0_ring_set_wptr(struct amdgpu_ring *ring)
 
 		WRITE_ONCE(*wb, (lower_32_bits(ring->wptr) << 2));
 	} else {
-		int me = (ring == &ring->adev->sdma.instance[0].ring) ? 0 : 1;
-
-		WREG32(mmSDMA0_GFX_RB_WPTR + sdma_offsets[me], lower_32_bits(ring->wptr) << 2);
+		WREG32(mmSDMA0_GFX_RB_WPTR + sdma_offsets[ring->me], lower_32_bits(ring->wptr) << 2);
 	}
 }
 
@@ -444,7 +447,7 @@ static void sdma_v3_0_ring_emit_hdp_flush(struct amdgpu_ring *ring)
 {
 	u32 ref_and_mask = 0;
 
-	if (ring == &ring->adev->sdma.instance[0].ring)
+	if (ring->me == 0)
 		ref_and_mask = REG_SET_FIELD(ref_and_mask, GPU_HDP_FLUSH_DONE, SDMA0, 1);
 	else
 		ref_and_mask = REG_SET_FIELD(ref_and_mask, GPU_HDP_FLUSH_DONE, SDMA1, 1);
@@ -458,14 +461,6 @@ static void sdma_v3_0_ring_emit_hdp_flush(struct amdgpu_ring *ring)
 	amdgpu_ring_write(ring, ref_and_mask); /* mask */
 	amdgpu_ring_write(ring, SDMA_PKT_POLL_REGMEM_DW5_RETRY_COUNT(0xfff) |
 			  SDMA_PKT_POLL_REGMEM_DW5_INTERVAL(10)); /* retry count, poll interval */
-}
-
-static void sdma_v3_0_ring_emit_hdp_invalidate(struct amdgpu_ring *ring)
-{
-	amdgpu_ring_write(ring, SDMA_PKT_HEADER_OP(SDMA_OP_SRBM_WRITE) |
-			  SDMA_PKT_SRBM_WRITE_HEADER_BYTE_EN(0xf));
-	amdgpu_ring_write(ring, mmHDP_DEBUG0);
-	amdgpu_ring_write(ring, 1);
 }
 
 /**
@@ -518,7 +513,7 @@ static void sdma_v3_0_gfx_stop(struct amdgpu_device *adev)
 
 	if ((adev->mman.buffer_funcs_ring == sdma0) ||
 	    (adev->mman.buffer_funcs_ring == sdma1))
-		amdgpu_ttm_set_active_vram_size(adev, adev->mc.visible_vram_size);
+		amdgpu_ttm_set_buffer_funcs_status(adev, false);
 
 	for (i = 0; i < adev->sdma.num_instances; i++) {
 		rb_cntl = RREG32(mmSDMA0_GFX_RB_CNTL + sdma_offsets[i]);
@@ -719,14 +714,17 @@ static int sdma_v3_0_gfx_resume(struct amdgpu_device *adev)
 		WREG32(mmSDMA0_GFX_RB_WPTR_POLL_ADDR_HI + sdma_offsets[i],
 		       upper_32_bits(wptr_gpu_addr));
 		wptr_poll_cntl = RREG32(mmSDMA0_GFX_RB_WPTR_POLL_CNTL + sdma_offsets[i]);
-		if (ring->use_pollmem)
+		if (ring->use_pollmem) {
+			/*wptr polling is not enogh fast, directly clean the wptr register */
+			WREG32(mmSDMA0_GFX_RB_WPTR + sdma_offsets[i], 0);
 			wptr_poll_cntl = REG_SET_FIELD(wptr_poll_cntl,
 						       SDMA0_GFX_RB_WPTR_POLL_CNTL,
 						       ENABLE, 1);
-		else
+		} else {
 			wptr_poll_cntl = REG_SET_FIELD(wptr_poll_cntl,
 						       SDMA0_GFX_RB_WPTR_POLL_CNTL,
 						       ENABLE, 0);
+		}
 		WREG32(mmSDMA0_GFX_RB_WPTR_POLL_CNTL + sdma_offsets[i], wptr_poll_cntl);
 
 		/* enable DMA RB */
@@ -758,7 +756,7 @@ static int sdma_v3_0_gfx_resume(struct amdgpu_device *adev)
 		}
 
 		if (adev->mman.buffer_funcs_ring == ring)
-			amdgpu_ttm_set_active_vram_size(adev, adev->mc.real_vram_size);
+			amdgpu_ttm_set_buffer_funcs_status(adev, true);
 	}
 
 	return 0;
@@ -779,42 +777,6 @@ static int sdma_v3_0_rlc_resume(struct amdgpu_device *adev)
 }
 
 /**
- * sdma_v3_0_load_microcode - load the sDMA ME ucode
- *
- * @adev: amdgpu_device pointer
- *
- * Loads the sDMA0/1 ucode.
- * Returns 0 for success, -EINVAL if the ucode is not available.
- */
-static int sdma_v3_0_load_microcode(struct amdgpu_device *adev)
-{
-	const struct sdma_firmware_header_v1_0 *hdr;
-	const __le32 *fw_data;
-	u32 fw_size;
-	int i, j;
-
-	/* halt the MEs */
-	sdma_v3_0_enable(adev, false);
-
-	for (i = 0; i < adev->sdma.num_instances; i++) {
-		if (!adev->sdma.instance[i].fw)
-			return -EINVAL;
-		hdr = (const struct sdma_firmware_header_v1_0 *)adev->sdma.instance[i].fw->data;
-		amdgpu_ucode_print_sdma_hdr(&hdr->header);
-		fw_size = le32_to_cpu(hdr->header.ucode_size_bytes) / 4;
-		fw_data = (const __le32 *)
-			(adev->sdma.instance[i].fw->data +
-				le32_to_cpu(hdr->header.ucode_array_offset_bytes));
-		WREG32(mmSDMA0_UCODE_ADDR + sdma_offsets[i], 0);
-		for (j = 0; j < fw_size; j++)
-			WREG32(mmSDMA0_UCODE_DATA + sdma_offsets[i], le32_to_cpup(fw_data++));
-		WREG32(mmSDMA0_UCODE_ADDR + sdma_offsets[i], adev->sdma.instance[i].fw_version);
-	}
-
-	return 0;
-}
-
-/**
  * sdma_v3_0_start - setup and start the async dma engines
  *
  * @adev: amdgpu_device pointer
@@ -825,12 +787,6 @@ static int sdma_v3_0_load_microcode(struct amdgpu_device *adev)
 static int sdma_v3_0_start(struct amdgpu_device *adev)
 {
 	int r;
-
-	if (adev->firmware.load_type == AMDGPU_FW_LOAD_DIRECT) {
-		r = sdma_v3_0_load_microcode(adev);
-		if (r)
-			return r;
-	}
 
 	/* disable sdma engine before programing it */
 	sdma_v3_0_ctx_switch_enable(adev, false);
@@ -1110,7 +1066,7 @@ static void sdma_v3_0_ring_emit_pipeline_sync(struct amdgpu_ring *ring)
 	amdgpu_ring_write(ring, addr & 0xfffffffc);
 	amdgpu_ring_write(ring, upper_32_bits(addr) & 0xffffffff);
 	amdgpu_ring_write(ring, seq); /* reference */
-	amdgpu_ring_write(ring, 0xfffffff); /* mask */
+	amdgpu_ring_write(ring, 0xffffffff); /* mask */
 	amdgpu_ring_write(ring, SDMA_PKT_POLL_REGMEM_DW5_RETRY_COUNT(0xfff) |
 			  SDMA_PKT_POLL_REGMEM_DW5_INTERVAL(4)); /* retry count, poll interval */
 }
@@ -1127,20 +1083,7 @@ static void sdma_v3_0_ring_emit_pipeline_sync(struct amdgpu_ring *ring)
 static void sdma_v3_0_ring_emit_vm_flush(struct amdgpu_ring *ring,
 					 unsigned vmid, uint64_t pd_addr)
 {
-	amdgpu_ring_write(ring, SDMA_PKT_HEADER_OP(SDMA_OP_SRBM_WRITE) |
-			  SDMA_PKT_SRBM_WRITE_HEADER_BYTE_EN(0xf));
-	if (vmid < 8) {
-		amdgpu_ring_write(ring, (mmVM_CONTEXT0_PAGE_TABLE_BASE_ADDR + vmid));
-	} else {
-		amdgpu_ring_write(ring, (mmVM_CONTEXT8_PAGE_TABLE_BASE_ADDR + vmid - 8));
-	}
-	amdgpu_ring_write(ring, pd_addr >> 12);
-
-	/* flush TLB */
-	amdgpu_ring_write(ring, SDMA_PKT_HEADER_OP(SDMA_OP_SRBM_WRITE) |
-			  SDMA_PKT_SRBM_WRITE_HEADER_BYTE_EN(0xf));
-	amdgpu_ring_write(ring, mmVM_INVALIDATE_REQUEST);
-	amdgpu_ring_write(ring, 1 << vmid);
+	amdgpu_gmc_emit_flush_gpu_tlb(ring, vmid, pd_addr);
 
 	/* wait for flush */
 	amdgpu_ring_write(ring, SDMA_PKT_HEADER_OP(SDMA_OP_POLL_REGMEM) |
@@ -1152,6 +1095,15 @@ static void sdma_v3_0_ring_emit_vm_flush(struct amdgpu_ring *ring,
 	amdgpu_ring_write(ring, 0); /* mask */
 	amdgpu_ring_write(ring, SDMA_PKT_POLL_REGMEM_DW5_RETRY_COUNT(0xfff) |
 			  SDMA_PKT_POLL_REGMEM_DW5_INTERVAL(10)); /* retry count, poll interval */
+}
+
+static void sdma_v3_0_ring_emit_wreg(struct amdgpu_ring *ring,
+				     uint32_t reg, uint32_t val)
+{
+	amdgpu_ring_write(ring, SDMA_PKT_HEADER_OP(SDMA_OP_SRBM_WRITE) |
+			  SDMA_PKT_SRBM_WRITE_HEADER_BYTE_EN(0xf));
+	amdgpu_ring_write(ring, reg);
+	amdgpu_ring_write(ring, val);
 }
 
 static int sdma_v3_0_early_init(void *handle)
@@ -1182,19 +1134,19 @@ static int sdma_v3_0_sw_init(void *handle)
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	/* SDMA trap event */
-	r = amdgpu_irq_add_id(adev, AMDGPU_IH_CLIENTID_LEGACY, 224,
+	r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, VISLANDS30_IV_SRCID_SDMA_TRAP,
 			      &adev->sdma.trap_irq);
 	if (r)
 		return r;
 
 	/* SDMA Privileged inst */
-	r = amdgpu_irq_add_id(adev, AMDGPU_IH_CLIENTID_LEGACY, 241,
+	r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, 241,
 			      &adev->sdma.illegal_inst_irq);
 	if (r)
 		return r;
 
 	/* SDMA Privileged inst */
-	r = amdgpu_irq_add_id(adev, AMDGPU_IH_CLIENTID_LEGACY, 247,
+	r = amdgpu_irq_add_id(adev, AMDGPU_IRQ_CLIENTID_LEGACY, VISLANDS30_IV_SRCID_SDMA_SRBM_WRITE,
 			      &adev->sdma.illegal_inst_irq);
 	if (r)
 		return r;
@@ -1637,9 +1589,9 @@ static const struct amdgpu_ring_funcs sdma_v3_0_ring_funcs = {
 	.set_wptr = sdma_v3_0_ring_set_wptr,
 	.emit_frame_size =
 		6 + /* sdma_v3_0_ring_emit_hdp_flush */
-		3 + /* sdma_v3_0_ring_emit_hdp_invalidate */
+		3 + /* hdp invalidate */
 		6 + /* sdma_v3_0_ring_emit_pipeline_sync */
-		12 + /* sdma_v3_0_ring_emit_vm_flush */
+		VI_FLUSH_GPU_TLB_NUM_WREG * 3 + 6 + /* sdma_v3_0_ring_emit_vm_flush */
 		10 + 10 + 10, /* sdma_v3_0_ring_emit_fence x3 for user fence, vm fence */
 	.emit_ib_size = 7 + 6, /* sdma_v3_0_ring_emit_ib */
 	.emit_ib = sdma_v3_0_ring_emit_ib,
@@ -1647,19 +1599,21 @@ static const struct amdgpu_ring_funcs sdma_v3_0_ring_funcs = {
 	.emit_pipeline_sync = sdma_v3_0_ring_emit_pipeline_sync,
 	.emit_vm_flush = sdma_v3_0_ring_emit_vm_flush,
 	.emit_hdp_flush = sdma_v3_0_ring_emit_hdp_flush,
-	.emit_hdp_invalidate = sdma_v3_0_ring_emit_hdp_invalidate,
 	.test_ring = sdma_v3_0_ring_test_ring,
 	.test_ib = sdma_v3_0_ring_test_ib,
 	.insert_nop = sdma_v3_0_ring_insert_nop,
 	.pad_ib = sdma_v3_0_ring_pad_ib,
+	.emit_wreg = sdma_v3_0_ring_emit_wreg,
 };
 
 static void sdma_v3_0_set_ring_funcs(struct amdgpu_device *adev)
 {
 	int i;
 
-	for (i = 0; i < adev->sdma.num_instances; i++)
+	for (i = 0; i < adev->sdma.num_instances; i++) {
 		adev->sdma.instance[i].ring.funcs = &sdma_v3_0_ring_funcs;
+		adev->sdma.instance[i].ring.me = i;
+	}
 }
 
 static const struct amdgpu_irq_src_funcs sdma_v3_0_trap_irq_funcs = {
@@ -1739,10 +1693,8 @@ static const struct amdgpu_buffer_funcs sdma_v3_0_buffer_funcs = {
 
 static void sdma_v3_0_set_buffer_funcs(struct amdgpu_device *adev)
 {
-	if (adev->mman.buffer_funcs == NULL) {
-		adev->mman.buffer_funcs = &sdma_v3_0_buffer_funcs;
-		adev->mman.buffer_funcs_ring = &adev->sdma.instance[0].ring;
-	}
+	adev->mman.buffer_funcs = &sdma_v3_0_buffer_funcs;
+	adev->mman.buffer_funcs_ring = &adev->sdma.instance[0].ring;
 }
 
 static const struct amdgpu_vm_pte_funcs sdma_v3_0_vm_pte_funcs = {
@@ -1750,25 +1702,21 @@ static const struct amdgpu_vm_pte_funcs sdma_v3_0_vm_pte_funcs = {
 	.copy_pte = sdma_v3_0_vm_copy_pte,
 
 	.write_pte = sdma_v3_0_vm_write_pte,
-
-	/* not 0x3fffff due to HW limitation */
-	.set_max_nums_pte_pde = 0x3fffe0 >> 3,
-	.set_pte_pde_num_dw = 10,
 	.set_pte_pde = sdma_v3_0_vm_set_pte_pde,
 };
 
 static void sdma_v3_0_set_vm_pte_funcs(struct amdgpu_device *adev)
 {
+	struct drm_gpu_scheduler *sched;
 	unsigned i;
 
-	if (adev->vm_manager.vm_pte_funcs == NULL) {
-		adev->vm_manager.vm_pte_funcs = &sdma_v3_0_vm_pte_funcs;
-		for (i = 0; i < adev->sdma.num_instances; i++)
-			adev->vm_manager.vm_pte_rings[i] =
-				&adev->sdma.instance[i].ring;
-
-		adev->vm_manager.vm_pte_num_rings = adev->sdma.num_instances;
+	adev->vm_manager.vm_pte_funcs = &sdma_v3_0_vm_pte_funcs;
+	for (i = 0; i < adev->sdma.num_instances; i++) {
+		sched = &adev->sdma.instance[i].ring.sched;
+		adev->vm_manager.vm_pte_rqs[i] =
+			&sched->sched_rq[DRM_SCHED_PRIORITY_KERNEL];
 	}
+	adev->vm_manager.vm_pte_num_rqs = adev->sdma.num_instances;
 }
 
 const struct amdgpu_ip_block_version sdma_v3_0_ip_block =

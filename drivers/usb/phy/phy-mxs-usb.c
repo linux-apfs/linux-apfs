@@ -563,7 +563,7 @@ static enum usb_charger_type mxs_charger_primary_detection(struct mxs_phy *x)
 	regmap_read(regmap, ANADIG_USB1_CHRG_DET_STAT, &val);
 	if (!(val & ANADIG_USB1_CHRG_DET_STAT_CHRG_DETECTED)) {
 		chgr_type = SDP_TYPE;
-		dev_dbg(x->phy.dev, "It is a stardard downstream port\n");
+		dev_dbg(x->phy.dev, "It is a standard downstream port\n");
 	}
 
 	/* Disable charger detector */
@@ -578,7 +578,7 @@ static enum usb_charger_type mxs_charger_primary_detection(struct mxs_phy *x)
  * It must be called after DP is pulled up, which is used to
  * differentiate DCP and CDP.
  */
-enum usb_charger_type mxs_charger_secondary_detection(struct mxs_phy *x)
+static enum usb_charger_type mxs_charger_secondary_detection(struct mxs_phy *x)
 {
 	struct regmap *regmap = x->regmap_anatop;
 	int val;

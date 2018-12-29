@@ -73,8 +73,8 @@ static int vidioc_querycap(struct file *file, void *fh,
 {
 	struct capture_priv *priv = video_drvdata(file);
 
-	strncpy(cap->driver, "imx-media-capture", sizeof(cap->driver) - 1);
-	strncpy(cap->card, "imx-media-capture", sizeof(cap->card) - 1);
+	strscpy(cap->driver, "imx-media-capture", sizeof(cap->driver));
+	strscpy(cap->card, "imx-media-capture", sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 		 "platform:%s", priv->src_sd->name);
 
@@ -141,7 +141,8 @@ static int capture_enum_frameintervals(struct file *file, void *fh,
 
 	fie.code = cc->codes[0];
 
-	ret = v4l2_subdev_call(priv->src_sd, pad, enum_frame_interval, NULL, &fie);
+	ret = v4l2_subdev_call(priv->src_sd, pad, enum_frame_interval,
+			       NULL, &fie);
 	if (ret)
 		return ret;
 
@@ -169,23 +170,22 @@ static int capture_enum_fmt_vid_cap(struct file *file, void *fh,
 	}
 
 	cc_src = imx_media_find_ipu_format(fmt_src.format.code, CS_SEL_ANY);
-	if (!cc_src)
-		cc_src = imx_media_find_mbus_format(fmt_src.format.code,
-						    CS_SEL_ANY, true);
-	if (!cc_src)
-		return -EINVAL;
-
-	if (cc_src->bayer) {
-		if (f->index != 0)
-			return -EINVAL;
-		fourcc = cc_src->fourcc;
-	} else {
+	if (cc_src) {
 		u32 cs_sel = (cc_src->cs == IPUV3_COLORSPACE_YUV) ?
 			CS_SEL_YUV : CS_SEL_RGB;
 
 		ret = imx_media_enum_format(&fourcc, f->index, cs_sel);
 		if (ret)
 			return ret;
+	} else {
+		cc_src = imx_media_find_mbus_format(fmt_src.format.code,
+						    CS_SEL_ANY, true);
+		if (WARN_ON(!cc_src))
+			return -EINVAL;
+
+		if (f->index != 0)
+			return -EINVAL;
+		fourcc = cc_src->fourcc;
 	}
 
 	f->pixelformat = fourcc;
@@ -218,15 +218,7 @@ static int capture_try_fmt_vid_cap(struct file *file, void *fh,
 		return ret;
 
 	cc_src = imx_media_find_ipu_format(fmt_src.format.code, CS_SEL_ANY);
-	if (!cc_src)
-		cc_src = imx_media_find_mbus_format(fmt_src.format.code,
-						    CS_SEL_ANY, true);
-	if (!cc_src)
-		return -EINVAL;
-
-	if (cc_src->bayer) {
-		cc = cc_src;
-	} else {
+	if (cc_src) {
 		u32 fourcc, cs_sel;
 
 		cs_sel = (cc_src->cs == IPUV3_COLORSPACE_YUV) ?
@@ -238,6 +230,13 @@ static int capture_try_fmt_vid_cap(struct file *file, void *fh,
 			imx_media_enum_format(&fourcc, 0, cs_sel);
 			cc = imx_media_find_format(fourcc, cs_sel, false);
 		}
+	} else {
+		cc_src = imx_media_find_mbus_format(fmt_src.format.code,
+						    CS_SEL_ANY, true);
+		if (WARN_ON(!cc_src))
+			return -EINVAL;
+
+		cc = cc_src;
 	}
 
 	imx_media_mbus_fmt_to_pix_fmt(&f->fmt.pix, &fmt_src.format, cc);

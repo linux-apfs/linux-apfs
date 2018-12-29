@@ -490,7 +490,7 @@ qlafx00_mbx_reg_test(scsi_qla_host_t *vha)
 
 /**
  * qlafx00_pci_config() - Setup ISPFx00 PCI configuration registers.
- * @ha: HA context
+ * @vha: HA context
  *
  * Returns 0 on success.
  */
@@ -519,9 +519,9 @@ qlafx00_pci_config(scsi_qla_host_t *vha)
 
 /**
  * qlafx00_warm_reset() - Perform warm reset of iSA(CPUs being reset on SOC).
- * @ha: HA context
+ * @vha: HA context
  *
-  */
+ */
 static inline void
 qlafx00_soc_cpu_reset(scsi_qla_host_t *vha)
 {
@@ -625,7 +625,7 @@ qlafx00_soc_cpu_reset(scsi_qla_host_t *vha)
 
 /**
  * qlafx00_soft_reset() - Soft Reset ISPFx00.
- * @ha: HA context
+ * @vha: HA context
  *
  * Returns 0 on success.
  */
@@ -644,7 +644,7 @@ qlafx00_soft_reset(scsi_qla_host_t *vha)
 
 /**
  * qlafx00_chip_diag() - Test ISPFx00 for proper operation.
- * @ha: HA context
+ * @vha: HA context
  *
  * Returns 0 on success.
  */
@@ -1408,7 +1408,7 @@ qlafx00_abort_isp_cleanup(scsi_qla_host_t *vha, bool critemp)
 
 /**
  * qlafx00_init_response_q_entries() - Initializes response queue entries.
- * @ha: HA context
+ * @rsp: response queue
  *
  * Beginning of request ring has initialization control block already built
  * by nvram config routine.
@@ -1821,9 +1821,11 @@ qlafx00_fx_disc(scsi_qla_host_t *vha, fc_port_t *fcport, uint16_t fx_type)
 
 	sp->type = SRB_FXIOCB_DCMD;
 	sp->name = "fxdisc";
-	qla2x00_init_timer(sp, FXDISC_TIMEOUT);
 
 	fdisc = &sp->u.iocb_cmd;
+	fdisc->timeout = qla2x00_fxdisc_iocb_timeout;
+	qla2x00_init_timer(sp, FXDISC_TIMEOUT);
+
 	switch (fx_type) {
 	case FXDISC_GET_CONFIG_INFO:
 	fdisc->u.fxiocb.flags =
@@ -1924,7 +1926,6 @@ qlafx00_fx_disc(scsi_qla_host_t *vha, fc_port_t *fcport, uint16_t fx_type)
 			goto done_unmap_req;
 	}
 
-	fdisc->timeout = qla2x00_fxdisc_iocb_timeout;
 	fdisc->u.fxiocb.req_func_type = cpu_to_le16(fx_type);
 	sp->done = qla2x00_fxdisc_sp_done;
 
@@ -2211,7 +2212,7 @@ qlafx00_ioctl_iosb_entry(scsi_qla_host_t *vha, struct req_que *req,
 	struct bsg_job *bsg_job;
 	struct fc_bsg_reply *bsg_reply;
 	struct srb_iocb *iocb_job;
-	int res;
+	int res = 0;
 	struct qla_mt_iocb_rsp_fx00 fstatus;
 	uint8_t	*fw_sts_ptr;
 
@@ -2269,7 +2270,8 @@ qlafx00_ioctl_iosb_entry(scsi_qla_host_t *vha, struct req_que *req,
 
 /**
  * qlafx00_status_entry() - Process a Status IOCB entry.
- * @ha: SCSI driver HA context
+ * @vha: SCSI driver HA context
+ * @rsp: response queue
  * @pkt: Entry pointer
  */
 static void
@@ -2542,7 +2544,7 @@ check_scsi_status:
 
 /**
  * qlafx00_status_cont_entry() - Process a Status Continuations entry.
- * @ha: SCSI driver HA context
+ * @rsp: response queue
  * @pkt: Entry pointer
  *
  * Extended sense data.
@@ -2620,7 +2622,9 @@ qlafx00_status_cont_entry(struct rsp_que *rsp, sts_cont_entry_t *pkt)
 
 /**
  * qlafx00_multistatus_entry() - Process Multi response queue entries.
- * @ha: SCSI driver HA context
+ * @vha: SCSI driver HA context
+ * @rsp: response queue
+ * @pkt: received packet
  */
 static void
 qlafx00_multistatus_entry(struct scsi_qla_host *vha,
@@ -2674,12 +2678,13 @@ qlafx00_multistatus_entry(struct scsi_qla_host *vha,
 
 /**
  * qlafx00_error_entry() - Process an error entry.
- * @ha: SCSI driver HA context
+ * @vha: SCSI driver HA context
+ * @rsp: response queue
  * @pkt: Entry pointer
  */
 static void
 qlafx00_error_entry(scsi_qla_host_t *vha, struct rsp_que *rsp,
-		    struct sts_entry_fx00 *pkt, uint8_t estatus, uint8_t etype)
+		    struct sts_entry_fx00 *pkt)
 {
 	srb_t *sp;
 	struct qla_hw_data *ha = vha->hw;
@@ -2687,9 +2692,6 @@ qlafx00_error_entry(scsi_qla_host_t *vha, struct rsp_que *rsp,
 	uint16_t que = 0;
 	struct req_que *req = NULL;
 	int res = DID_ERROR << 16;
-
-	ql_dbg(ql_dbg_async, vha, 0x507f,
-	    "type of error status in response: 0x%x\n", estatus);
 
 	req = ha->req_q_map[que];
 
@@ -2705,7 +2707,8 @@ qlafx00_error_entry(scsi_qla_host_t *vha, struct rsp_que *rsp,
 
 /**
  * qlafx00_process_response_queue() - Process response queue entries.
- * @ha: SCSI driver HA context
+ * @vha: SCSI driver HA context
+ * @rsp: response queue
  */
 static void
 qlafx00_process_response_queue(struct scsi_qla_host *vha,
@@ -2737,9 +2740,11 @@ qlafx00_process_response_queue(struct scsi_qla_host *vha,
 
 		if (pkt->entry_status != 0 &&
 		    pkt->entry_type != IOCTL_IOSB_TYPE_FX00) {
+			ql_dbg(ql_dbg_async, vha, 0x507f,
+			       "type of error status in response: 0x%x\n",
+			       pkt->entry_status);
 			qlafx00_error_entry(vha, rsp,
-			    (struct sts_entry_fx00 *)pkt, pkt->entry_status,
-			    pkt->entry_type);
+					    (struct sts_entry_fx00 *)pkt);
 			continue;
 		}
 
@@ -2781,7 +2786,7 @@ qlafx00_process_response_queue(struct scsi_qla_host *vha,
 
 /**
  * qlafx00_async_event() - Process aynchronous events.
- * @ha: SCSI driver HA context
+ * @vha: SCSI driver HA context
  */
 static void
 qlafx00_async_event(scsi_qla_host_t *vha)
@@ -2857,10 +2862,9 @@ qlafx00_async_event(scsi_qla_host_t *vha)
 }
 
 /**
- *
  * qlafx00x_mbx_completion() - Process mailbox command completions.
- * @ha: SCSI driver HA context
- * @mb16: Mailbox16 register
+ * @vha: SCSI driver HA context
+ * @mb0: value to be written into mailbox register 0
  */
 static void
 qlafx00_mbx_completion(scsi_qla_host_t *vha, uint32_t mb0)
@@ -2886,7 +2890,7 @@ qlafx00_mbx_completion(scsi_qla_host_t *vha, uint32_t mb0)
 
 /**
  * qlafx00_intr_handler() - Process interrupts for the ISPFX00.
- * @irq:
+ * @irq: interrupt number
  * @dev_id: SCSI driver HA context
  *
  * Called by system whenever the host adapter generates an interrupt.

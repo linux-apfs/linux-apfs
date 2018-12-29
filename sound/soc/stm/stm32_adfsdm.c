@@ -149,7 +149,7 @@ static int stm32_afsdm_pcm_cb(const void *data, size_t size, void *private)
 	unsigned int old_pos = priv->pos;
 	unsigned int cur_size = size;
 
-	dev_dbg(rtd->dev, "%s: buff_add :%p, pos = %d, size = %zu\n",
+	dev_dbg(rtd->dev, "%s: buff_add :%pK, pos = %d, size = %zu\n",
 		__func__, &pcm_buff[priv->pos], priv->pos, size);
 
 	if ((priv->pos + size) > buff_size) {
@@ -269,19 +269,13 @@ static int stm32_adfsdm_pcm_new(struct snd_soc_pcm_runtime *rtd)
 static void stm32_adfsdm_pcm_free(struct snd_pcm *pcm)
 {
 	struct snd_pcm_substream *substream;
-	struct snd_soc_pcm_runtime *rtd;
-	struct stm32_adfsdm_priv *priv;
 
 	substream = pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream;
-	if (substream) {
-		rtd = substream->private_data;
-		priv = snd_soc_dai_get_drvdata(rtd->cpu_dai);
-
+	if (substream)
 		snd_pcm_lib_preallocate_free_for_all(pcm);
-	}
 }
 
-static struct snd_soc_platform_driver stm32_adfsdm_soc_platform = {
+static struct snd_soc_component_driver stm32_adfsdm_soc_platform = {
 	.ops		= &stm32_adfsdm_pcm_ops,
 	.pcm_new	= stm32_adfsdm_pcm_new,
 	.pcm_free	= stm32_adfsdm_pcm_free,
@@ -322,8 +316,9 @@ static int stm32_adfsdm_probe(struct platform_device *pdev)
 	if (IS_ERR(priv->iio_cb))
 		return PTR_ERR(priv->iio_cb);
 
-	ret = devm_snd_soc_register_platform(&pdev->dev,
-					     &stm32_adfsdm_soc_platform);
+	ret = devm_snd_soc_register_component(&pdev->dev,
+					      &stm32_adfsdm_soc_platform,
+					      NULL, 0);
 	if (ret < 0)
 		dev_err(&pdev->dev, "%s: Failed to register PCM platform\n",
 			__func__);

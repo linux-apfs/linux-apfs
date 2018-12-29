@@ -28,6 +28,7 @@
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_rect.h>
 #include <drm/drm_atomic.h>
+#include <drm/drm_atomic_uapi.h>
 #include <drm/drm_crtc_helper.h>
 #include <drm/drm_encoder.h>
 #include <drm/drm_atomic_helper.h>
@@ -106,7 +107,6 @@ static int get_connectors_for_crtc(struct drm_crtc *crtc,
  * @fb: framebuffer to flip onto plane
  * @src: source coordinates in 16.16 fixed point
  * @dst: integer destination coordinates
- * @clip: integer clipping coordinates
  * @rotation: plane rotation
  * @min_scale: minimum @src:@dest scaling factor in 16.16 fixed point
  * @max_scale: maximum @src:@dest scaling factor in 16.16 fixed point
@@ -131,7 +131,6 @@ int drm_plane_helper_check_update(struct drm_plane *plane,
 				  struct drm_framebuffer *fb,
 				  struct drm_rect *src,
 				  struct drm_rect *dst,
-				  const struct drm_rect *clip,
 				  unsigned int rotation,
 				  int min_scale,
 				  int max_scale,
@@ -157,11 +156,12 @@ int drm_plane_helper_check_update(struct drm_plane *plane,
 	struct drm_crtc_state crtc_state = {
 		.crtc = crtc,
 		.enable = crtc->enabled,
+		.mode = crtc->mode,
 	};
 	int ret;
 
 	ret = drm_atomic_helper_check_plane_state(&plane_state, &crtc_state,
-						  clip, min_scale, max_scale,
+						  min_scale, max_scale,
 						  can_position,
 						  can_update_disabled);
 	if (ret)
@@ -239,16 +239,12 @@ int drm_primary_helper_update(struct drm_plane *plane, struct drm_crtc *crtc,
 		.x2 = crtc_x + crtc_w,
 		.y2 = crtc_y + crtc_h,
 	};
-	const struct drm_rect clip = {
-		.x2 = crtc->mode.hdisplay,
-		.y2 = crtc->mode.vdisplay,
-	};
 	struct drm_connector **connector_list;
 	int num_connectors, ret;
 	bool visible;
 
 	ret = drm_plane_helper_check_update(plane, crtc, fb,
-					    &src, &dest, &clip,
+					    &src, &dest,
 					    DRM_MODE_ROTATE_0,
 					    DRM_PLANE_HELPER_NO_SCALING,
 					    DRM_PLANE_HELPER_NO_SCALING,
@@ -445,6 +441,7 @@ out:
  * @src_y: y offset of @fb for panning
  * @src_w: width of source rectangle in @fb
  * @src_h: height of source rectangle in @fb
+ * @ctx: lock acquire context, not used here
  *
  * Provides a default plane update handler using the atomic plane update
  * functions. It is fully left to the driver to check plane constraints and
@@ -460,7 +457,8 @@ int drm_plane_helper_update(struct drm_plane *plane, struct drm_crtc *crtc,
 			    int crtc_x, int crtc_y,
 			    unsigned int crtc_w, unsigned int crtc_h,
 			    uint32_t src_x, uint32_t src_y,
-			    uint32_t src_w, uint32_t src_h)
+			    uint32_t src_w, uint32_t src_h,
+			    struct drm_modeset_acquire_ctx *ctx)
 {
 	struct drm_plane_state *plane_state;
 
@@ -494,6 +492,7 @@ EXPORT_SYMBOL(drm_plane_helper_update);
 /**
  * drm_plane_helper_disable() - Transitional helper for plane disable
  * @plane: plane to disable
+ * @ctx: lock acquire context, not used here
  *
  * Provides a default plane disable handler using the atomic plane update
  * functions. It is fully left to the driver to check plane constraints and
@@ -504,9 +503,11 @@ EXPORT_SYMBOL(drm_plane_helper_update);
  * RETURNS:
  * Zero on success, error code on failure
  */
-int drm_plane_helper_disable(struct drm_plane *plane)
+int drm_plane_helper_disable(struct drm_plane *plane,
+			     struct drm_modeset_acquire_ctx *ctx)
 {
 	struct drm_plane_state *plane_state;
+	struct drm_framebuffer *old_fb;
 
 	/* crtc helpers love to call disable functions for already disabled hw
 	 * functions. So cope with that. */
@@ -526,8 +527,9 @@ int drm_plane_helper_disable(struct drm_plane *plane)
 	plane_state->plane = plane;
 
 	plane_state->crtc = NULL;
+	old_fb = plane_state->fb;
 	drm_atomic_set_fb_for_plane(plane_state, NULL);
 
-	return drm_plane_helper_commit(plane, plane_state, plane->fb);
+	return drm_plane_helper_commit(plane, plane_state, old_fb);
 }
 EXPORT_SYMBOL(drm_plane_helper_disable);

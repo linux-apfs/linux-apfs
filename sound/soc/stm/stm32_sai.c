@@ -30,10 +30,12 @@
 
 static const struct stm32_sai_conf stm32_sai_conf_f4 = {
 	.version = SAI_STM32F4,
+	.has_spdif = false,
 };
 
 static const struct stm32_sai_conf stm32_sai_conf_h7 = {
 	.version = SAI_STM32H7,
+	.has_spdif = true,
 };
 
 static const struct of_device_id stm32_sai_ids[] = {
@@ -102,7 +104,7 @@ static int stm32_sai_set_sync(struct stm32_sai_data *sai_client,
 
 	if (!pdev) {
 		dev_err(&sai_client->pdev->dev,
-			"Device not found for node %s\n", np_provider->name);
+			"Device not found for node %pOFn\n", np_provider);
 		return -ENODEV;
 	}
 

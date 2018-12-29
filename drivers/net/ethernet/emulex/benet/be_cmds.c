@@ -19,7 +19,7 @@
 #include "be.h"
 #include "be_cmds.h"
 
-char *be_misconfig_evt_port_state[] = {
+const char * const be_misconfig_evt_port_state[] = {
 	"Physical Link is functional",
 	"Optics faulted/incorrectly installed/not installed - Reseat optics. If issue not resolved, replace.",
 	"Optics of two types installed – Remove one optic or install matching pair of optics.",
@@ -4500,7 +4500,7 @@ int be_cmd_get_profile_config(struct be_adapter *adapter,
 				port_res->max_vfs += le16_to_cpu(pcie->num_vfs);
 			}
 		}
-		return status;
+		goto err;
 	}
 
 	pcie = be_get_pcie_desc(resp->func_param, desc_count,

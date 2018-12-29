@@ -27,6 +27,7 @@
 
 #include <linux/list.h>
 #include <asm/sync_bitops.h>
+#include <asm/hyperv-tlfs.h>
 #include <linux/atomic.h>
 #include <linux/hyperv.h>
 #include <linux/interrupt.h>
@@ -57,7 +58,9 @@ union hv_timer_config {
 		u64 periodic:1;
 		u64 lazy:1;
 		u64 auto_enable:1;
-		u64 reserved_z0:12;
+		u64 apic_vector:8;
+		u64 direct_mode:1;
+		u64 reserved_z0:3;
 		u64 sintx:4;
 		u64 reserved_z1:44;
 	};
@@ -184,6 +187,7 @@ struct hv_input_post_message {
 
 enum {
 	VMBUS_MESSAGE_CONNECTION_ID	= 1,
+	VMBUS_MESSAGE_CONNECTION_ID_4	= 4,
 	VMBUS_MESSAGE_PORT_ID		= 1,
 	VMBUS_EVENT_CONNECTION_ID	= 2,
 	VMBUS_EVENT_PORT_ID		= 2,
@@ -299,6 +303,8 @@ struct vmbus_connection {
 	 */
 	int connect_cpu;
 
+	u32 msg_conn_id;
+
 	atomic_t offer_in_progress;
 
 	enum vmbus_connect_state conn_state;
@@ -329,7 +335,14 @@ struct vmbus_connection {
 	struct list_head chn_list;
 	struct mutex channel_mutex;
 
+	/*
+	 * An offer message is handled first on the work_queue, and then
+	 * is further handled on handle_primary_chan_wq or
+	 * handle_sub_chan_wq.
+	 */
 	struct workqueue_struct *work_queue;
+	struct workqueue_struct *handle_primary_chan_wq;
+	struct workqueue_struct *handle_sub_chan_wq;
 };
 
 

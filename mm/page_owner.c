@@ -3,7 +3,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/uaccess.h>
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/stacktrace.h>
 #include <linux/page_owner.h>
 #include <linux/jump_label.h>
@@ -35,7 +35,7 @@ static depot_stack_handle_t early_handle;
 
 static void init_early_allocated_pages(void);
 
-static int early_page_owner_param(char *buf)
+static int __init early_page_owner_param(char *buf)
 {
 	if (!buf)
 		return -EINVAL;
@@ -631,8 +631,8 @@ static int __init pageowner_init(void)
 		return 0;
 	}
 
-	dentry = debugfs_create_file("page_owner", S_IRUSR, NULL,
-			NULL, &proc_page_owner_operations);
+	dentry = debugfs_create_file("page_owner", 0400, NULL,
+				     NULL, &proc_page_owner_operations);
 
 	return PTR_ERR_OR_ZERO(dentry);
 }

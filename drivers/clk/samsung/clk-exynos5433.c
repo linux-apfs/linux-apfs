@@ -177,6 +177,17 @@ static const unsigned long top_clk_regs[] __initconst = {
 	ENABLE_CMU_TOP_DIV_STAT,
 };
 
+static const struct samsung_clk_reg_dump top_suspend_regs[] = {
+	/* force all aclk clocks enabled */
+	{ ENABLE_ACLK_TOP, 0x67ecffed },
+	/* force all sclk_uart clocks enabled */
+	{ ENABLE_SCLK_TOP_PERIC, 0x38 },
+	/* ISP PLL has to be enabled for suspend: reset value + ENABLE bit */
+	{ ISP_PLL_CON0, 0x85cc0502 },
+	/* ISP PLL has to be enabled for suspend: reset value + ENABLE bit */
+	{ AUD_PLL_CON0, 0x84830202 },
+};
+
 /* list of all parent clock list */
 PNAME(mout_aud_pll_p)		= { "oscclk", "fout_aud_pll", };
 PNAME(mout_isp_pll_p)		= { "oscclk", "fout_isp_pll", };
@@ -703,68 +714,69 @@ static const struct samsung_gate_clock top_gate_clks[] __initconst = {
  * & MPHY_PLL & G3D_PLL & DISP_PLL & ISP_PLL
  */
 static const struct samsung_pll_rate_table exynos5433_pll_rates[] __initconst = {
-	PLL_35XX_RATE(2500000000U, 625, 6,  0),
-	PLL_35XX_RATE(2400000000U, 500, 5,  0),
-	PLL_35XX_RATE(2300000000U, 575, 6,  0),
-	PLL_35XX_RATE(2200000000U, 550, 6,  0),
-	PLL_35XX_RATE(2100000000U, 350, 4,  0),
-	PLL_35XX_RATE(2000000000U, 500, 6,  0),
-	PLL_35XX_RATE(1900000000U, 475, 6,  0),
-	PLL_35XX_RATE(1800000000U, 375, 5,  0),
-	PLL_35XX_RATE(1700000000U, 425, 6,  0),
-	PLL_35XX_RATE(1600000000U, 400, 6,  0),
-	PLL_35XX_RATE(1500000000U, 250, 4,  0),
-	PLL_35XX_RATE(1400000000U, 350, 6,  0),
-	PLL_35XX_RATE(1332000000U, 222, 4,  0),
-	PLL_35XX_RATE(1300000000U, 325, 6,  0),
-	PLL_35XX_RATE(1200000000U, 500, 5,  1),
-	PLL_35XX_RATE(1100000000U, 550, 6,  1),
-	PLL_35XX_RATE(1086000000U, 362, 4,  1),
-	PLL_35XX_RATE(1066000000U, 533, 6,  1),
-	PLL_35XX_RATE(1000000000U, 500, 6,  1),
-	PLL_35XX_RATE(933000000U,  311, 4,  1),
-	PLL_35XX_RATE(921000000U,  307, 4,  1),
-	PLL_35XX_RATE(900000000U,  375, 5,  1),
-	PLL_35XX_RATE(825000000U,  275, 4,  1),
-	PLL_35XX_RATE(800000000U,  400, 6,  1),
-	PLL_35XX_RATE(733000000U,  733, 12, 1),
-	PLL_35XX_RATE(700000000U,  175, 3,  1),
-	PLL_35XX_RATE(667000000U,  222, 4,  1),
-	PLL_35XX_RATE(633000000U,  211, 4,  1),
-	PLL_35XX_RATE(600000000U,  500, 5,  2),
-	PLL_35XX_RATE(552000000U,  460, 5,  2),
-	PLL_35XX_RATE(550000000U,  550, 6,  2),
-	PLL_35XX_RATE(543000000U,  362, 4,  2),
-	PLL_35XX_RATE(533000000U,  533, 6,  2),
-	PLL_35XX_RATE(500000000U,  500, 6,  2),
-	PLL_35XX_RATE(444000000U,  370, 5,  2),
-	PLL_35XX_RATE(420000000U,  350, 5,  2),
-	PLL_35XX_RATE(400000000U,  400, 6,  2),
-	PLL_35XX_RATE(350000000U,  350, 6,  2),
-	PLL_35XX_RATE(333000000U,  222, 4,  2),
-	PLL_35XX_RATE(300000000U,  500, 5,  3),
-	PLL_35XX_RATE(278000000U,  556, 6,  3),
-	PLL_35XX_RATE(266000000U,  532, 6,  3),
-	PLL_35XX_RATE(250000000U,  500, 6,  3),
-	PLL_35XX_RATE(200000000U,  400, 6,  3),
-	PLL_35XX_RATE(166000000U,  332, 6,  3),
-	PLL_35XX_RATE(160000000U,  320, 6,  3),
-	PLL_35XX_RATE(133000000U,  532, 6,  4),
-	PLL_35XX_RATE(100000000U,  400, 6,  4),
+	PLL_35XX_RATE(24 * MHZ, 2500000000U, 625, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 2400000000U, 500, 5,  0),
+	PLL_35XX_RATE(24 * MHZ, 2300000000U, 575, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 2200000000U, 550, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 2100000000U, 350, 4,  0),
+	PLL_35XX_RATE(24 * MHZ, 2000000000U, 500, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 1900000000U, 475, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 1800000000U, 375, 5,  0),
+	PLL_35XX_RATE(24 * MHZ, 1700000000U, 425, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 1600000000U, 400, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 1500000000U, 250, 4,  0),
+	PLL_35XX_RATE(24 * MHZ, 1400000000U, 350, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 1332000000U, 222, 4,  0),
+	PLL_35XX_RATE(24 * MHZ, 1300000000U, 325, 6,  0),
+	PLL_35XX_RATE(24 * MHZ, 1200000000U, 500, 5,  1),
+	PLL_35XX_RATE(24 * MHZ, 1100000000U, 550, 6,  1),
+	PLL_35XX_RATE(24 * MHZ, 1086000000U, 362, 4,  1),
+	PLL_35XX_RATE(24 * MHZ, 1066000000U, 533, 6,  1),
+	PLL_35XX_RATE(24 * MHZ, 1000000000U, 500, 6,  1),
+	PLL_35XX_RATE(24 * MHZ, 933000000U,  311, 4,  1),
+	PLL_35XX_RATE(24 * MHZ, 921000000U,  307, 4,  1),
+	PLL_35XX_RATE(24 * MHZ, 900000000U,  375, 5,  1),
+	PLL_35XX_RATE(24 * MHZ, 825000000U,  275, 4,  1),
+	PLL_35XX_RATE(24 * MHZ, 800000000U,  400, 6,  1),
+	PLL_35XX_RATE(24 * MHZ, 733000000U,  733, 12, 1),
+	PLL_35XX_RATE(24 * MHZ, 700000000U,  175, 3,  1),
+	PLL_35XX_RATE(24 * MHZ, 666000000U,  222, 4,  1),
+	PLL_35XX_RATE(24 * MHZ, 633000000U,  211, 4,  1),
+	PLL_35XX_RATE(24 * MHZ, 600000000U,  500, 5,  2),
+	PLL_35XX_RATE(24 * MHZ, 552000000U,  460, 5,  2),
+	PLL_35XX_RATE(24 * MHZ, 550000000U,  550, 6,  2),
+	PLL_35XX_RATE(24 * MHZ, 543000000U,  362, 4,  2),
+	PLL_35XX_RATE(24 * MHZ, 533000000U,  533, 6,  2),
+	PLL_35XX_RATE(24 * MHZ, 500000000U,  500, 6,  2),
+	PLL_35XX_RATE(24 * MHZ, 444000000U,  370, 5,  2),
+	PLL_35XX_RATE(24 * MHZ, 420000000U,  350, 5,  2),
+	PLL_35XX_RATE(24 * MHZ, 400000000U,  400, 6,  2),
+	PLL_35XX_RATE(24 * MHZ, 350000000U,  350, 6,  2),
+	PLL_35XX_RATE(24 * MHZ, 333000000U,  222, 4,  2),
+	PLL_35XX_RATE(24 * MHZ, 300000000U,  500, 5,  3),
+	PLL_35XX_RATE(24 * MHZ, 278000000U,  556, 6,  3),
+	PLL_35XX_RATE(24 * MHZ, 266000000U,  532, 6,  3),
+	PLL_35XX_RATE(24 * MHZ, 250000000U,  500, 6,  3),
+	PLL_35XX_RATE(24 * MHZ, 200000000U,  400, 6,  3),
+	PLL_35XX_RATE(24 * MHZ, 166000000U,  332, 6,  3),
+	PLL_35XX_RATE(24 * MHZ, 160000000U,  320, 6,  3),
+	PLL_35XX_RATE(24 * MHZ, 133000000U,  532, 6,  4),
+	PLL_35XX_RATE(24 * MHZ, 100000000U,  400, 6,  4),
 	{ /* sentinel */ }
 };
 
 /* AUD_PLL */
 static const struct samsung_pll_rate_table exynos5433_aud_pll_rates[] __initconst = {
-	PLL_36XX_RATE(400000000U, 200, 3, 2,      0),
-	PLL_36XX_RATE(393216000U, 197, 3, 2, -25690),
-	PLL_36XX_RATE(384000000U, 128, 2, 2,      0),
-	PLL_36XX_RATE(368640000U, 246, 4, 2, -15729),
-	PLL_36XX_RATE(361507200U, 181, 3, 2, -16148),
-	PLL_36XX_RATE(338688000U, 113, 2, 2,  -6816),
-	PLL_36XX_RATE(294912000U,  98, 1, 3,  19923),
-	PLL_36XX_RATE(288000000U,  96, 1, 3,      0),
-	PLL_36XX_RATE(252000000U,  84, 1, 3,      0),
+	PLL_36XX_RATE(24 * MHZ, 400000000U, 200, 3, 2,      0),
+	PLL_36XX_RATE(24 * MHZ, 393216003U, 197, 3, 2, -25690),
+	PLL_36XX_RATE(24 * MHZ, 384000000U, 128, 2, 2,      0),
+	PLL_36XX_RATE(24 * MHZ, 368639991U, 246, 4, 2, -15729),
+	PLL_36XX_RATE(24 * MHZ, 361507202U, 181, 3, 2, -16148),
+	PLL_36XX_RATE(24 * MHZ, 338687988U, 113, 2, 2,  -6816),
+	PLL_36XX_RATE(24 * MHZ, 294912002U,  98, 1, 3,  19923),
+	PLL_36XX_RATE(24 * MHZ, 288000000U,  96, 1, 3,      0),
+	PLL_36XX_RATE(24 * MHZ, 252000000U,  84, 1, 3,      0),
+	PLL_36XX_RATE(24 * MHZ, 196608001U, 197, 3, 3, -25690),
 	{ /* sentinel */ }
 };
 
@@ -791,6 +803,8 @@ static const struct samsung_cmu_info top_cmu_info __initconst = {
 	.nr_clk_ids		= TOP_NR_CLK,
 	.clk_regs		= top_clk_regs,
 	.nr_clk_regs		= ARRAY_SIZE(top_clk_regs),
+	.suspend_regs		= top_suspend_regs,
+	.nr_suspend_regs	= ARRAY_SIZE(top_suspend_regs),
 };
 
 static void __init exynos5433_cmu_top_init(struct device_node *np)
@@ -819,6 +833,13 @@ static const unsigned long cpif_clk_regs[] __initconst = {
 	MUX_SEL_CPIF0,
 	DIV_CPIF,
 	ENABLE_SCLK_CPIF,
+};
+
+static const struct samsung_clk_reg_dump cpif_suspend_regs[] = {
+	/* force all sclk clocks enabled */
+	{ ENABLE_SCLK_CPIF, 0x3ff },
+	/* MPHY PLL has to be enabled for suspend: reset value + ENABLE bit */
+	{ MPHY_PLL_CON0, 0x81c70601 },
 };
 
 /* list of all parent clock list */
@@ -861,6 +882,8 @@ static const struct samsung_cmu_info cpif_cmu_info __initconst = {
 	.nr_clk_ids		= CPIF_NR_CLK,
 	.clk_regs		= cpif_clk_regs,
 	.nr_clk_regs		= ARRAY_SIZE(cpif_clk_regs),
+	.suspend_regs		= cpif_suspend_regs,
+	.nr_suspend_regs	= ARRAY_SIZE(cpif_suspend_regs),
 };
 
 static void __init exynos5433_cmu_cpif_init(struct device_node *np)
@@ -1546,6 +1569,13 @@ static const unsigned long peric_clk_regs[] __initconst = {
 	ENABLE_IP_PERIC2,
 };
 
+static const struct samsung_clk_reg_dump peric_suspend_regs[] = {
+	/* pclk: sci, pmu, sysreg, gpio_{finger, ese, touch, nfc}, uart2-0 */
+	{ ENABLE_PCLK_PERIC0, 0xe00ff000 },
+	/* sclk: uart2-0 */
+	{ ENABLE_SCLK_PERIC, 0x7 },
+};
+
 static const struct samsung_div_clock peric_div_clks[] __initconst = {
 	/* DIV_PERIC */
 	DIV(CLK_DIV_SCLK_SCI, "div_sclk_sci", "oscclk", DIV_PERIC, 4, 4),
@@ -1672,7 +1702,7 @@ static const struct samsung_gate_clock peric_gate_clks[] __initconst = {
 			ENABLE_SCLK_PERIC, 11, CLK_SET_RATE_PARENT, 0),
 	GATE(CLK_SCLK_IOCLK_I2S1_BCLK, "sclk_ioclk_i2s1_bclk",
 			"ioclk_i2s1_bclk_in", ENABLE_SCLK_PERIC, 10,
-			CLK_SET_RATE_PARENT, 0),
+			CLK_SET_RATE_PARENT | CLK_IGNORE_UNUSED, 0),
 	GATE(CLK_SCLK_SPDIF, "sclk_spdif", "sclk_spdif_peric",
 			ENABLE_SCLK_PERIC, 8, CLK_SET_RATE_PARENT, 0),
 	GATE(CLK_SCLK_PCM1, "sclk_pcm1", "sclk_pcm1_peric",
@@ -1704,6 +1734,8 @@ static const struct samsung_cmu_info peric_cmu_info __initconst = {
 	.nr_clk_ids		= PERIC_NR_CLK,
 	.clk_regs		= peric_clk_regs,
 	.nr_clk_regs		= ARRAY_SIZE(peric_clk_regs),
+	.suspend_regs		= peric_suspend_regs,
+	.nr_suspend_regs	= ARRAY_SIZE(peric_suspend_regs),
 };
 
 static void __init exynos5433_cmu_peric_init(struct device_node *np)
@@ -5504,8 +5536,8 @@ static int __init exynos5433_cmu_probe(struct platform_device *pdev)
 
 	info = of_device_get_match_data(dev);
 
-	data = devm_kzalloc(dev, sizeof(*data) +
-			    sizeof(*data->ctx.clk_data.hws) * info->nr_clk_ids,
+	data = devm_kzalloc(dev,
+			    struct_size(data, ctx.clk_data.hws, info->nr_clk_ids),
 			    GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
@@ -5513,10 +5545,8 @@ static int __init exynos5433_cmu_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	reg_base = devm_ioremap_resource(dev, res);
-	if (IS_ERR(reg_base)) {
-		dev_err(dev, "failed to map registers\n");
+	if (IS_ERR(reg_base))
 		return PTR_ERR(reg_base);
-	}
 
 	for (i = 0; i < info->nr_clk_ids; ++i)
 		ctx->clk_data.hws[i] = ERR_PTR(-ENOENT);
@@ -5631,7 +5661,7 @@ static const struct of_device_id exynos5433_cmu_of_match[] = {
 static const struct dev_pm_ops exynos5433_cmu_pm_ops = {
 	SET_RUNTIME_PM_OPS(exynos5433_cmu_suspend, exynos5433_cmu_resume,
 			   NULL)
-	SET_LATE_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(pm_runtime_force_suspend,
 				     pm_runtime_force_resume)
 };
 

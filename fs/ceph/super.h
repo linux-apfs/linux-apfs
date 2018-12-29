@@ -39,8 +39,12 @@
 #define CEPH_MOUNT_OPT_FSCACHE         (1<<10) /* use fscache */
 #define CEPH_MOUNT_OPT_NOPOOLPERM      (1<<11) /* no pool permission check */
 #define CEPH_MOUNT_OPT_MOUNTWAIT       (1<<12) /* mount waits if no mds is up */
+#define CEPH_MOUNT_OPT_NOQUOTADF       (1<<13) /* no root dir quota in statfs */
+#define CEPH_MOUNT_OPT_NOCOPYFROM      (1<<14) /* don't use RADOS 'copy-from' op */
 
-#define CEPH_MOUNT_OPT_DEFAULT    CEPH_MOUNT_OPT_DCACHE
+#define CEPH_MOUNT_OPT_DEFAULT			\
+	(CEPH_MOUNT_OPT_DCACHE |		\
+	 CEPH_MOUNT_OPT_NOCOPYFROM)
 
 #define ceph_set_mount_opt(fsc, opt) \
 	(fsc)->mount_options->flags |= CEPH_MOUNT_OPT_##opt;
@@ -97,6 +101,7 @@ struct ceph_fs_client {
 
 	unsigned long mount_state;
 	int min_caps;                  /* min caps i added */
+	loff_t max_file_size;
 
 	struct ceph_mds_client *mdsc;
 
@@ -192,7 +197,7 @@ struct ceph_cap_snap {
 	u64 xattr_version;
 
 	u64 size;
-	struct timespec mtime, atime, ctime;
+	struct timespec64 mtime, atime, ctime;
 	u64 time_warp_seq;
 	u64 truncate_size;
 	u32 truncate_seq;
@@ -306,9 +311,12 @@ struct ceph_inode_info {
 	char *i_symlink;
 
 	/* for dirs */
-	struct timespec i_rctime;
+	struct timespec64 i_rctime;
 	u64 i_rbytes, i_rfiles, i_rsubdirs;
 	u64 i_files, i_subdirs;
+
+	/* quotas */
+	u64 i_max_bytes, i_max_files;
 
 	struct rb_root i_fragtree;
 	int i_fragtree_nsplits;
@@ -651,7 +659,7 @@ extern void ceph_caps_finalize(struct ceph_mds_client *mdsc);
 extern void ceph_adjust_min_caps(struct ceph_mds_client *mdsc, int delta);
 extern int ceph_reserve_caps(struct ceph_mds_client *mdsc,
 			     struct ceph_cap_reservation *ctx, int need);
-extern int ceph_unreserve_caps(struct ceph_mds_client *mdsc,
+extern void ceph_unreserve_caps(struct ceph_mds_client *mdsc,
 			       struct ceph_cap_reservation *ctx);
 extern void ceph_reservation_status(struct ceph_fs_client *client,
 				    int *total, int *avail, int *used,
@@ -671,6 +679,10 @@ struct ceph_file_info {
 
 	spinlock_t rw_contexts_lock;
 	struct list_head rw_contexts;
+};
+
+struct ceph_dir_file_info {
+	struct ceph_file_info file_info;
 
 	/* readdir: position within the dir */
 	u32 frag;
@@ -748,6 +760,7 @@ struct ceph_readdir_cache_control {
  */
 struct ceph_snap_realm {
 	u64 ino;
+	struct inode *inode;
 	atomic_t nref;
 	struct rb_node node;
 
@@ -848,8 +861,9 @@ extern struct inode *ceph_get_snapdir(struct inode *parent);
 extern int ceph_fill_file_size(struct inode *inode, int issued,
 			       u32 truncate_seq, u64 truncate_size, u64 size);
 extern void ceph_fill_file_time(struct inode *inode, int issued,
-				u64 time_warp_seq, struct timespec *ctime,
-				struct timespec *mtime, struct timespec *atime);
+				u64 time_warp_seq, struct timespec64 *ctime,
+				struct timespec64 *mtime,
+				struct timespec64 *atime);
 extern int ceph_fill_trace(struct super_block *sb,
 			   struct ceph_mds_request *req);
 extern int ceph_readdir_prepopulate(struct ceph_mds_request *req,
@@ -997,7 +1011,7 @@ extern int ceph_encode_dentry_release(void **p, struct dentry *dn,
 extern int ceph_get_caps(struct ceph_inode_info *ci, int need, int want,
 			 loff_t endoff, int *got, struct page **pinned_page);
 extern int ceph_try_get_caps(struct ceph_inode_info *ci,
-			     int need, int want, int *got);
+			     int need, int want, bool nonblock, int *got);
 
 /* for counting open files by mode */
 extern void __ceph_get_fmode(struct ceph_inode_info *ci, int mode);
@@ -1016,8 +1030,7 @@ extern const struct file_operations ceph_file_fops;
 extern int ceph_renew_caps(struct inode *inode);
 extern int ceph_open(struct inode *inode, struct file *file);
 extern int ceph_atomic_open(struct inode *dir, struct dentry *dentry,
-			    struct file *file, unsigned flags, umode_t mode,
-			    int *opened);
+			    struct file *file, unsigned flags, umode_t mode);
 extern int ceph_release(struct inode *inode, struct file *filp);
 extern void ceph_fill_inline_data(struct inode *inode, struct page *locked_page,
 				  char *data, size_t len);
@@ -1065,5 +1078,38 @@ extern int ceph_locks_to_pagelist(struct ceph_filelock *flocks,
 /* debugfs.c */
 extern int ceph_fs_debugfs_init(struct ceph_fs_client *client);
 extern void ceph_fs_debugfs_cleanup(struct ceph_fs_client *client);
+
+/* quota.c */
+static inline bool __ceph_has_any_quota(struct ceph_inode_info *ci)
+{
+	return ci->i_max_files || ci->i_max_bytes;
+}
+
+extern void ceph_adjust_quota_realms_count(struct inode *inode, bool inc);
+
+static inline void __ceph_update_quota(struct ceph_inode_info *ci,
+				       u64 max_bytes, u64 max_files)
+{
+	bool had_quota, has_quota;
+	had_quota = __ceph_has_any_quota(ci);
+	ci->i_max_bytes = max_bytes;
+	ci->i_max_files = max_files;
+	has_quota = __ceph_has_any_quota(ci);
+
+	if (had_quota != has_quota)
+		ceph_adjust_quota_realms_count(&ci->vfs_inode, has_quota);
+}
+
+extern void ceph_handle_quota(struct ceph_mds_client *mdsc,
+			      struct ceph_mds_session *session,
+			      struct ceph_msg *msg);
+extern bool ceph_quota_is_max_files_exceeded(struct inode *inode);
+extern bool ceph_quota_is_same_realm(struct inode *old, struct inode *new);
+extern bool ceph_quota_is_max_bytes_exceeded(struct inode *inode,
+					     loff_t newlen);
+extern bool ceph_quota_is_max_bytes_approaching(struct inode *inode,
+						loff_t newlen);
+extern bool ceph_quota_update_statfs(struct ceph_fs_client *fsc,
+				     struct kstatfs *buf);
 
 #endif /* _FS_CEPH_SUPER_H */

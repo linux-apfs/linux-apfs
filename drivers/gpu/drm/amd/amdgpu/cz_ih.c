@@ -111,7 +111,7 @@ static int cz_ih_irq_init(struct amdgpu_device *adev)
 	cz_ih_disable_interrupts(adev);
 
 	/* setup interrupt control */
-	WREG32(mmINTERRUPT_CNTL2, adev->dummy_page.addr >> 8);
+	WREG32(mmINTERRUPT_CNTL2, adev->dummy_page_addr >> 8);
 	interrupt_cntl = RREG32(mmINTERRUPT_CNTL);
 	/* INTERRUPT_CNTL__IH_DUMMY_RD_OVERRIDE_MASK=0 - dummy read disabled with msi, enabled without msi
 	 * INTERRUPT_CNTL__IH_DUMMY_RD_OVERRIDE_MASK=1 - dummy read controlled by IH_DUMMY_RD_EN
@@ -255,12 +255,12 @@ static void cz_ih_decode_iv(struct amdgpu_device *adev,
 	dw[2] = le32_to_cpu(adev->irq.ih.ring[ring_index + 2]);
 	dw[3] = le32_to_cpu(adev->irq.ih.ring[ring_index + 3]);
 
-	entry->client_id = AMDGPU_IH_CLIENTID_LEGACY;
+	entry->client_id = AMDGPU_IRQ_CLIENTID_LEGACY;
 	entry->src_id = dw[0] & 0xff;
 	entry->src_data[0] = dw[1] & 0xfffffff;
 	entry->ring_id = dw[2] & 0xff;
 	entry->vmid = (dw[2] >> 8) & 0xff;
-	entry->pas_id = (dw[2] >> 16) & 0xffff;
+	entry->pasid = (dw[2] >> 16) & 0xffff;
 
 	/* wptr/rptr are in bytes! */
 	adev->irq.ih.rptr += 16;
@@ -297,7 +297,7 @@ static int cz_ih_sw_init(void *handle)
 	int r;
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
-	r = amdgpu_ih_ring_init(adev, 64 * 1024, false);
+	r = amdgpu_ih_ring_init(adev, &adev->irq.ih, 64 * 1024, false);
 	if (r)
 		return r;
 
@@ -311,7 +311,7 @@ static int cz_ih_sw_fini(void *handle)
 	struct amdgpu_device *adev = (struct amdgpu_device *)handle;
 
 	amdgpu_irq_fini(adev);
-	amdgpu_ih_ring_fini(adev);
+	amdgpu_ih_ring_fini(adev, &adev->irq.ih);
 	amdgpu_irq_remove_domain(adev);
 
 	return 0;
@@ -449,8 +449,7 @@ static const struct amdgpu_ih_funcs cz_ih_funcs = {
 
 static void cz_ih_set_interrupt_funcs(struct amdgpu_device *adev)
 {
-	if (adev->irq.ih_funcs == NULL)
-		adev->irq.ih_funcs = &cz_ih_funcs;
+	adev->irq.ih_funcs = &cz_ih_funcs;
 }
 
 const struct amdgpu_ip_block_version cz_ih_ip_block =

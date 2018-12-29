@@ -75,15 +75,6 @@ struct dsa_slave_priv {
 	/* DSA port data, such as switch, port index, etc. */
 	struct dsa_port		*dp;
 
-	/*
-	 * The phylib phy_device pointer for the PHY connected
-	 * to this port.
-	 */
-	phy_interface_t		phy_interface;
-	int			old_link;
-	int			old_pause;
-	int			old_duplex;
-
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	struct netpoll		*netpoll;
 #endif
@@ -95,6 +86,7 @@ struct dsa_slave_priv {
 /* dsa.c */
 const struct dsa_device_ops *dsa_resolve_tag_protocol(int tag_protocol);
 bool dsa_schedule_work(struct work_struct *work);
+const char *dsa_tag_protocol_to_str(const struct dsa_device_ops *ops);
 
 /* legacy.c */
 #if IS_ENABLED(CONFIG_NET_DSA_LEGACY)
@@ -126,6 +118,7 @@ static inline struct net_device *dsa_master_find_slave(struct net_device *dev,
 	struct dsa_port *cpu_dp = dev->dsa_ptr;
 	struct dsa_switch_tree *dst = cpu_dp->dst;
 	struct dsa_switch *ds;
+	struct dsa_port *slave_port;
 
 	if (device < 0 || device >= DSA_MAX_SWITCHES)
 		return NULL;
@@ -137,7 +130,12 @@ static inline struct net_device *dsa_master_find_slave(struct net_device *dev,
 	if (port < 0 || port >= ds->num_ports)
 		return NULL;
 
-	return ds->ports[port].slave;
+	slave_port = &ds->ports[port];
+
+	if (unlikely(slave_port->type != DSA_PORT_TYPE_USER))
+		return NULL;
+
+	return slave_port->slave;
 }
 
 /* port.c */
@@ -207,6 +205,9 @@ extern const struct dsa_device_ops dsa_netdev_ops;
 
 /* tag_edsa.c */
 extern const struct dsa_device_ops edsa_netdev_ops;
+
+/* tag_gswip.c */
+extern const struct dsa_device_ops gswip_netdev_ops;
 
 /* tag_ksz.c */
 extern const struct dsa_device_ops ksz_netdev_ops;

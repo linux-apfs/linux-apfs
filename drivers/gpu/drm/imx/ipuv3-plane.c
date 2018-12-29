@@ -281,16 +281,13 @@ static void ipu_plane_state_reset(struct drm_plane *plane)
 		ipu_state = to_ipu_plane_state(plane->state);
 		__drm_atomic_helper_plane_destroy_state(plane->state);
 		kfree(ipu_state);
+		plane->state = NULL;
 	}
 
 	ipu_state = kzalloc(sizeof(*ipu_state), GFP_KERNEL);
 
-	if (ipu_state) {
-		ipu_state->base.plane = plane;
-		ipu_state->base.rotation = DRM_MODE_ROTATE_0;
-	}
-
-	plane->state = &ipu_state->base;
+	if (ipu_state)
+		__drm_atomic_helper_plane_reset(plane, &ipu_state->base);
 }
 
 static struct drm_plane_state *
@@ -353,7 +350,6 @@ static int ipu_plane_atomic_check(struct drm_plane *plane,
 	struct drm_framebuffer *old_fb = old_state->fb;
 	unsigned long eba, ubo, vbo, old_ubo, old_vbo, alpha_eba;
 	bool can_position = (plane->type == DRM_PLANE_TYPE_OVERLAY);
-	struct drm_rect clip;
 	int hsub, vsub;
 	int ret;
 
@@ -369,11 +365,7 @@ static int ipu_plane_atomic_check(struct drm_plane *plane,
 	if (WARN_ON(!crtc_state))
 		return -EINVAL;
 
-	clip.x1 = 0;
-	clip.y1 = 0;
-	clip.x2 = crtc_state->adjusted_mode.hdisplay;
-	clip.y2 = crtc_state->adjusted_mode.vdisplay;
-	ret = drm_atomic_helper_check_plane_state(state, crtc_state, &clip,
+	ret = drm_atomic_helper_check_plane_state(state, crtc_state,
 						  DRM_PLANE_HELPER_NO_SCALING,
 						  DRM_PLANE_HELPER_NO_SCALING,
 						  can_position, true);

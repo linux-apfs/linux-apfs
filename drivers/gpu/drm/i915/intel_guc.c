@@ -23,6 +23,7 @@
  */
 
 #include "intel_guc.h"
+#include "intel_guc_ads.h"
 #include "intel_guc_submission.h"
 #include "i915_drv.h"
 
@@ -63,13 +64,16 @@ void intel_guc_init_early(struct intel_guc *guc)
 {
 	intel_guc_fw_init_early(guc);
 	intel_guc_ct_init_early(&guc->ct);
+	intel_guc_log_init_early(&guc->log);
 
 	mutex_init(&guc->send_mutex);
+	spin_lock_init(&guc->irq_lock);
 	guc->send = intel_guc_send_nop;
+	guc->handler = intel_guc_to_host_event_handler_nop;
 	guc->notify = gen8_guc_raise_irq;
 }
 
-int intel_guc_init_wq(struct intel_guc *guc)
+static int guc_init_wq(struct intel_guc *guc)
 {
 	struct drm_i915_private *dev_priv = guc_to_i915(guc);
 
@@ -84,10 +88,13 @@ int intel_guc_init_wq(struct intel_guc *guc)
 	 * or scheduled later on resume. This way the handling of work
 	 * item can be kept same between system suspend & rpm suspend.
 	 */
-	guc->log.runtime.flush_wq = alloc_ordered_workqueue("i915-guc_log",
-						WQ_HIGHPRI | WQ_FREEZABLE);
-	if (!guc->log.runtime.flush_wq)
+	guc->log.relay.flush_wq =
+		alloc_ordered_workqueue("i915-guc_log",
+					WQ_HIGHPRI | WQ_FREEZABLE);
+	if (!guc->log.relay.flush_wq) {
+		DRM_ERROR("Couldn't allocate workqueue for GuC log\n");
 		return -ENOMEM;
+	}
 
 	/*
 	 * Even though both sending GuC action, and adding a new workitem to
@@ -107,7 +114,9 @@ int intel_guc_init_wq(struct intel_guc *guc)
 		guc->preempt_wq = alloc_ordered_workqueue("i915-guc_preempt",
 							  WQ_HIGHPRI);
 		if (!guc->preempt_wq) {
-			destroy_workqueue(guc->log.runtime.flush_wq);
+			destroy_workqueue(guc->log.relay.flush_wq);
+			DRM_ERROR("Couldn't allocate workqueue for GuC "
+				  "preemption\n");
 			return -ENOMEM;
 		}
 	}
@@ -115,15 +124,37 @@ int intel_guc_init_wq(struct intel_guc *guc)
 	return 0;
 }
 
-void intel_guc_fini_wq(struct intel_guc *guc)
+static void guc_fini_wq(struct intel_guc *guc)
 {
-	struct drm_i915_private *dev_priv = guc_to_i915(guc);
+	struct workqueue_struct *wq;
 
-	if (HAS_LOGICAL_RING_PREEMPTION(dev_priv) &&
-	    USES_GUC_SUBMISSION(dev_priv))
-		destroy_workqueue(guc->preempt_wq);
+	wq = fetch_and_zero(&guc->preempt_wq);
+	if (wq)
+		destroy_workqueue(wq);
 
-	destroy_workqueue(guc->log.runtime.flush_wq);
+	wq = fetch_and_zero(&guc->log.relay.flush_wq);
+	if (wq)
+		destroy_workqueue(wq);
+}
+
+int intel_guc_init_misc(struct intel_guc *guc)
+{
+	struct drm_i915_private *i915 = guc_to_i915(guc);
+	int ret;
+
+	ret = guc_init_wq(guc);
+	if (ret)
+		return ret;
+
+	intel_uc_fw_fetch(i915, &guc->fw);
+
+	return 0;
+}
+
+void intel_guc_fini_misc(struct intel_guc *guc)
+{
+	intel_uc_fw_fini(&guc->fw);
+	guc_fini_wq(guc);
 }
 
 static int guc_shared_data_create(struct intel_guc *guc)
@@ -137,7 +168,7 @@ static int guc_shared_data_create(struct intel_guc *guc)
 
 	vaddr = i915_gem_object_pin_map(vma->obj, I915_MAP_WB);
 	if (IS_ERR(vaddr)) {
-		i915_vma_unpin_and_release(&vma);
+		i915_vma_unpin_and_release(&vma, 0);
 		return PTR_ERR(vaddr);
 	}
 
@@ -149,8 +180,7 @@ static int guc_shared_data_create(struct intel_guc *guc)
 
 static void guc_shared_data_destroy(struct intel_guc *guc)
 {
-	i915_gem_object_unpin_map(guc->shared_data->obj);
-	i915_vma_unpin_and_release(&guc->shared_data);
+	i915_vma_unpin_and_release(&guc->shared_data, I915_VMA_RELEASE_MAP);
 }
 
 int intel_guc_init(struct intel_guc *guc)
@@ -160,13 +190,30 @@ int intel_guc_init(struct intel_guc *guc)
 
 	ret = guc_shared_data_create(guc);
 	if (ret)
-		return ret;
+		goto err_fetch;
 	GEM_BUG_ON(!guc->shared_data);
+
+	ret = intel_guc_log_create(&guc->log);
+	if (ret)
+		goto err_shared;
+
+	ret = intel_guc_ads_create(guc);
+	if (ret)
+		goto err_log;
+	GEM_BUG_ON(!guc->ads_vma);
 
 	/* We need to notify the guc whenever we change the GGTT */
 	i915_ggtt_enable_guc(dev_priv);
 
 	return 0;
+
+err_log:
+	intel_guc_log_destroy(&guc->log);
+err_shared:
+	guc_shared_data_destroy(guc);
+err_fetch:
+	intel_uc_fw_fini(&guc->fw);
+	return ret;
 }
 
 void intel_guc_fini(struct intel_guc *guc)
@@ -174,27 +221,103 @@ void intel_guc_fini(struct intel_guc *guc)
 	struct drm_i915_private *dev_priv = guc_to_i915(guc);
 
 	i915_ggtt_disable_guc(dev_priv);
+	intel_guc_ads_destroy(guc);
+	intel_guc_log_destroy(&guc->log);
 	guc_shared_data_destroy(guc);
+	intel_uc_fw_fini(&guc->fw);
 }
 
-static u32 get_gt_type(struct drm_i915_private *dev_priv)
+static u32 guc_ctl_debug_flags(struct intel_guc *guc)
 {
-	/* XXX: GT type based on PCI device ID? field seems unused by fw */
-	return 0;
+	u32 level = intel_guc_log_get_level(&guc->log);
+	u32 flags;
+	u32 ads;
+
+	ads = intel_guc_ggtt_offset(guc, guc->ads_vma) >> PAGE_SHIFT;
+	flags = ads << GUC_ADS_ADDR_SHIFT | GUC_ADS_ENABLED;
+
+	if (!GUC_LOG_LEVEL_IS_ENABLED(level))
+		flags |= GUC_LOG_DEFAULT_DISABLED;
+
+	if (!GUC_LOG_LEVEL_IS_VERBOSE(level))
+		flags |= GUC_LOG_DISABLED;
+	else
+		flags |= GUC_LOG_LEVEL_TO_VERBOSITY(level) <<
+			 GUC_LOG_VERBOSITY_SHIFT;
+
+	return flags;
 }
 
-static u32 get_core_family(struct drm_i915_private *dev_priv)
+static u32 guc_ctl_feature_flags(struct intel_guc *guc)
 {
-	u32 gen = INTEL_GEN(dev_priv);
+	u32 flags = 0;
 
-	switch (gen) {
-	case 9:
-		return GUC_CORE_FAMILY_GEN9;
+	flags |=  GUC_CTL_VCS2_ENABLED;
 
-	default:
-		MISSING_CASE(gen);
-		return GUC_CORE_FAMILY_UNKNOWN;
+	if (USES_GUC_SUBMISSION(guc_to_i915(guc)))
+		flags |= GUC_CTL_KERNEL_SUBMISSIONS;
+	else
+		flags |= GUC_CTL_DISABLE_SCHEDULER;
+
+	return flags;
+}
+
+static u32 guc_ctl_ctxinfo_flags(struct intel_guc *guc)
+{
+	u32 flags = 0;
+
+	if (USES_GUC_SUBMISSION(guc_to_i915(guc))) {
+		u32 ctxnum, base;
+
+		base = intel_guc_ggtt_offset(guc, guc->stage_desc_pool);
+		ctxnum = GUC_MAX_STAGE_DESCRIPTORS / 16;
+
+		base >>= PAGE_SHIFT;
+		flags |= (base << GUC_CTL_BASE_ADDR_SHIFT) |
+			(ctxnum << GUC_CTL_CTXNUM_IN16_SHIFT);
 	}
+	return flags;
+}
+
+static u32 guc_ctl_log_params_flags(struct intel_guc *guc)
+{
+	u32 offset = intel_guc_ggtt_offset(guc, guc->log.vma) >> PAGE_SHIFT;
+	u32 flags;
+
+	#if (((CRASH_BUFFER_SIZE) % SZ_1M) == 0)
+	#define UNIT SZ_1M
+	#define FLAG GUC_LOG_ALLOC_IN_MEGABYTE
+	#else
+	#define UNIT SZ_4K
+	#define FLAG 0
+	#endif
+
+	BUILD_BUG_ON(!CRASH_BUFFER_SIZE);
+	BUILD_BUG_ON(!IS_ALIGNED(CRASH_BUFFER_SIZE, UNIT));
+	BUILD_BUG_ON(!DPC_BUFFER_SIZE);
+	BUILD_BUG_ON(!IS_ALIGNED(DPC_BUFFER_SIZE, UNIT));
+	BUILD_BUG_ON(!ISR_BUFFER_SIZE);
+	BUILD_BUG_ON(!IS_ALIGNED(ISR_BUFFER_SIZE, UNIT));
+
+	BUILD_BUG_ON((CRASH_BUFFER_SIZE / UNIT - 1) >
+			(GUC_LOG_CRASH_MASK >> GUC_LOG_CRASH_SHIFT));
+	BUILD_BUG_ON((DPC_BUFFER_SIZE / UNIT - 1) >
+			(GUC_LOG_DPC_MASK >> GUC_LOG_DPC_SHIFT));
+	BUILD_BUG_ON((ISR_BUFFER_SIZE / UNIT - 1) >
+			(GUC_LOG_ISR_MASK >> GUC_LOG_ISR_SHIFT));
+
+	flags = GUC_LOG_VALID |
+		GUC_LOG_NOTIFY_ON_HALF_FULL |
+		FLAG |
+		((CRASH_BUFFER_SIZE / UNIT - 1) << GUC_LOG_CRASH_SHIFT) |
+		((DPC_BUFFER_SIZE / UNIT - 1) << GUC_LOG_DPC_SHIFT) |
+		((ISR_BUFFER_SIZE / UNIT - 1) << GUC_LOG_ISR_SHIFT) |
+		(offset << GUC_LOG_BUF_ADDR_SHIFT);
+
+	#undef UNIT
+	#undef FLAG
+
+	return flags;
 }
 
 /*
@@ -210,10 +333,6 @@ void intel_guc_init_params(struct intel_guc *guc)
 
 	memset(params, 0, sizeof(params));
 
-	params[GUC_CTL_DEVICE_INFO] |=
-		(get_gt_type(dev_priv) << GUC_CTL_GT_TYPE_SHIFT) |
-		(get_core_family(dev_priv) << GUC_CTL_CORE_FAMILY_SHIFT);
-
 	/*
 	 * GuC ARAT increment is 10 ns. GuC default scheduler quantum is one
 	 * second. This ARAR is calculated by:
@@ -224,36 +343,13 @@ void intel_guc_init_params(struct intel_guc *guc)
 
 	params[GUC_CTL_WA] |= GUC_CTL_WA_UK_BY_DRIVER;
 
-	params[GUC_CTL_FEATURE] |= GUC_CTL_DISABLE_SCHEDULER |
-			GUC_CTL_VCS2_ENABLED;
+	params[GUC_CTL_FEATURE] = guc_ctl_feature_flags(guc);
+	params[GUC_CTL_LOG_PARAMS]  = guc_ctl_log_params_flags(guc);
+	params[GUC_CTL_DEBUG] = guc_ctl_debug_flags(guc);
+	params[GUC_CTL_CTXINFO] = guc_ctl_ctxinfo_flags(guc);
 
-	params[GUC_CTL_LOG_PARAMS] = guc->log.flags;
-
-	if (i915_modparams.guc_log_level >= 0) {
-		params[GUC_CTL_DEBUG] =
-			i915_modparams.guc_log_level << GUC_LOG_VERBOSITY_SHIFT;
-	} else {
-		params[GUC_CTL_DEBUG] = GUC_LOG_DISABLED;
-	}
-
-	/* If GuC submission is enabled, set up additional parameters here */
-	if (USES_GUC_SUBMISSION(dev_priv)) {
-		u32 ads = guc_ggtt_offset(guc->ads_vma) >> PAGE_SHIFT;
-		u32 pgs = guc_ggtt_offset(dev_priv->guc.stage_desc_pool);
-		u32 ctx_in_16 = GUC_MAX_STAGE_DESCRIPTORS / 16;
-
-		params[GUC_CTL_DEBUG] |= ads << GUC_ADS_ADDR_SHIFT;
-		params[GUC_CTL_DEBUG] |= GUC_ADS_ENABLED;
-
-		pgs >>= PAGE_SHIFT;
-		params[GUC_CTL_CTXINFO] = (pgs << GUC_CTL_BASE_ADDR_SHIFT) |
-			(ctx_in_16 << GUC_CTL_CTXNUM_IN16_SHIFT);
-
-		params[GUC_CTL_FEATURE] |= GUC_CTL_KERNEL_SUBMISSIONS;
-
-		/* Unmask this bit to enable the GuC's internal scheduler */
-		params[GUC_CTL_FEATURE] &= ~GUC_CTL_DISABLE_SCHEDULER;
-	}
+	for (i = 0; i < GUC_CTL_MAX_DWORDS; i++)
+		DRM_DEBUG_DRIVER("param[%2d] = %#x\n", i, params[i]);
 
 	/*
 	 * All SOFT_SCRATCH registers are in FORCEWAKE_BLITTER domain and
@@ -270,16 +366,23 @@ void intel_guc_init_params(struct intel_guc *guc)
 	intel_uncore_forcewake_put(dev_priv, FORCEWAKE_BLITTER);
 }
 
-int intel_guc_send_nop(struct intel_guc *guc, const u32 *action, u32 len)
+int intel_guc_send_nop(struct intel_guc *guc, const u32 *action, u32 len,
+		       u32 *response_buf, u32 response_buf_size)
 {
 	WARN(1, "Unexpected send: action=%#x\n", *action);
 	return -ENODEV;
 }
 
+void intel_guc_to_host_event_handler_nop(struct intel_guc *guc)
+{
+	WARN(1, "Unexpected event: no suitable handler\n");
+}
+
 /*
  * This function implements the MMIO based host to GuC interface.
  */
-int intel_guc_send_mmio(struct intel_guc *guc, const u32 *action, u32 len)
+int intel_guc_send_mmio(struct intel_guc *guc, const u32 *action, u32 len,
+			u32 *response_buf, u32 response_buf_size)
 {
 	struct drm_i915_private *dev_priv = guc_to_i915(guc);
 	u32 status;
@@ -288,6 +391,9 @@ int intel_guc_send_mmio(struct intel_guc *guc, const u32 *action, u32 len)
 
 	GEM_BUG_ON(!len);
 	GEM_BUG_ON(len > guc->send_regs.count);
+
+	/* We expect only action code */
+	GEM_BUG_ON(*action & ~INTEL_GUC_MSG_CODE_MASK);
 
 	/* If CT is available, we expect to use MMIO only during init/fini */
 	GEM_BUG_ON(HAS_GUC_CT(dev_priv) &&
@@ -310,27 +416,72 @@ int intel_guc_send_mmio(struct intel_guc *guc, const u32 *action, u32 len)
 	 */
 	ret = __intel_wait_for_register_fw(dev_priv,
 					   guc_send_reg(guc, 0),
-					   INTEL_GUC_RECV_MASK,
-					   INTEL_GUC_RECV_MASK,
+					   INTEL_GUC_MSG_TYPE_MASK,
+					   INTEL_GUC_MSG_TYPE_RESPONSE <<
+					   INTEL_GUC_MSG_TYPE_SHIFT,
 					   10, 10, &status);
-	if (status != INTEL_GUC_STATUS_SUCCESS) {
-		/*
-		 * Either the GuC explicitly returned an error (which
-		 * we convert to -EIO here) or no response at all was
-		 * received within the timeout limit (-ETIMEDOUT)
-		 */
-		if (ret != -ETIMEDOUT)
-			ret = -EIO;
+	/* If GuC explicitly returned an error, convert it to -EIO */
+	if (!ret && !INTEL_GUC_MSG_IS_RESPONSE_SUCCESS(status))
+		ret = -EIO;
 
-		DRM_WARN("INTEL_GUC_SEND: Action 0x%X failed;"
-			 " ret=%d status=0x%08X response=0x%08X\n",
-			 action[0], ret, status, I915_READ(SOFT_SCRATCH(15)));
+	if (ret) {
+		DRM_ERROR("MMIO: GuC action %#x failed with error %d %#x\n",
+			  action[0], ret, status);
+		goto out;
 	}
 
+	if (response_buf) {
+		int count = min(response_buf_size, guc->send_regs.count - 1);
+
+		for (i = 0; i < count; i++)
+			response_buf[i] = I915_READ(guc_send_reg(guc, i + 1));
+	}
+
+	/* Use data from the GuC response as our return value */
+	ret = INTEL_GUC_MSG_TO_DATA(status);
+
+out:
 	intel_uncore_forcewake_put(dev_priv, guc->send_regs.fw_domains);
 	mutex_unlock(&guc->send_mutex);
 
 	return ret;
+}
+
+void intel_guc_to_host_event_handler_mmio(struct intel_guc *guc)
+{
+	struct drm_i915_private *dev_priv = guc_to_i915(guc);
+	u32 msg, val;
+
+	/*
+	 * Sample the log buffer flush related bits & clear them out now
+	 * itself from the message identity register to minimize the
+	 * probability of losing a flush interrupt, when there are back
+	 * to back flush interrupts.
+	 * There can be a new flush interrupt, for different log buffer
+	 * type (like for ISR), whilst Host is handling one (for DPC).
+	 * Since same bit is used in message register for ISR & DPC, it
+	 * could happen that GuC sets the bit for 2nd interrupt but Host
+	 * clears out the bit on handling the 1st interrupt.
+	 */
+	disable_rpm_wakeref_asserts(dev_priv);
+	spin_lock(&guc->irq_lock);
+	val = I915_READ(SOFT_SCRATCH(15));
+	msg = val & guc->msg_enabled_mask;
+	I915_WRITE(SOFT_SCRATCH(15), val & ~msg);
+	spin_unlock(&guc->irq_lock);
+	enable_rpm_wakeref_asserts(dev_priv);
+
+	intel_guc_to_host_process_recv_msg(guc, msg);
+}
+
+void intel_guc_to_host_process_recv_msg(struct intel_guc *guc, u32 msg)
+{
+	/* Make sure to handle only enabled messages */
+	msg &= guc->msg_enabled_mask;
+
+	if (msg & (INTEL_GUC_RECV_MSG_FLUSH_LOG_BUFFER |
+		   INTEL_GUC_RECV_MSG_CRASH_DUMP_POSTED))
+		intel_guc_log_handle_flush_event(&guc->log);
 }
 
 int intel_guc_sample_forcewake(struct intel_guc *guc)
@@ -339,7 +490,7 @@ int intel_guc_sample_forcewake(struct intel_guc *guc)
 	u32 action[2];
 
 	action[0] = INTEL_GUC_ACTION_SAMPLE_FORCEWAKE;
-	/* WaRsDisableCoarsePowerGating:skl,bxt */
+	/* WaRsDisableCoarsePowerGating:skl,cnl */
 	if (!HAS_RC6(dev_priv) || NEEDS_WaRsDisableCoarsePowerGating(dev_priv))
 		action[1] = 0;
 	else
@@ -372,22 +523,15 @@ int intel_guc_auth_huc(struct intel_guc *guc, u32 rsa_offset)
 
 /**
  * intel_guc_suspend() - notify GuC entering suspend state
- * @dev_priv:	i915 device private
+ * @guc:	the guc
  */
-int intel_guc_suspend(struct drm_i915_private *dev_priv)
+int intel_guc_suspend(struct intel_guc *guc)
 {
-	struct intel_guc *guc = &dev_priv->guc;
-	u32 data[3];
-
-	if (guc->fw.load_status != INTEL_UC_FIRMWARE_SUCCESS)
-		return 0;
-
-	gen9_disable_guc_interrupts(dev_priv);
-
-	data[0] = INTEL_GUC_ACTION_ENTER_S_STATE;
-	/* any value greater than GUC_POWER_D0 */
-	data[1] = GUC_POWER_D1;
-	data[2] = guc_ggtt_offset(guc->shared_data);
+	u32 data[] = {
+		INTEL_GUC_ACTION_ENTER_S_STATE,
+		GUC_POWER_D1, /* any value greater than GUC_POWER_D0 */
+		intel_guc_ggtt_offset(guc, guc->shared_data)
+	};
 
 	return intel_guc_send(guc, data, ARRAY_SIZE(data));
 }
@@ -410,32 +554,53 @@ int intel_guc_reset_engine(struct intel_guc *guc,
 	data[3] = 0;
 	data[4] = 0;
 	data[5] = guc->execbuf_client->stage_id;
-	data[6] = guc_ggtt_offset(guc->shared_data);
+	data[6] = intel_guc_ggtt_offset(guc, guc->shared_data);
 
 	return intel_guc_send(guc, data, ARRAY_SIZE(data));
 }
 
 /**
  * intel_guc_resume() - notify GuC resuming from suspend state
- * @dev_priv:	i915 device private
+ * @guc:	the guc
  */
-int intel_guc_resume(struct drm_i915_private *dev_priv)
+int intel_guc_resume(struct intel_guc *guc)
 {
-	struct intel_guc *guc = &dev_priv->guc;
-	u32 data[3];
-
-	if (guc->fw.load_status != INTEL_UC_FIRMWARE_SUCCESS)
-		return 0;
-
-	if (i915_modparams.guc_log_level >= 0)
-		gen9_enable_guc_interrupts(dev_priv);
-
-	data[0] = INTEL_GUC_ACTION_EXIT_S_STATE;
-	data[1] = GUC_POWER_D0;
-	data[2] = guc_ggtt_offset(guc->shared_data);
+	u32 data[] = {
+		INTEL_GUC_ACTION_EXIT_S_STATE,
+		GUC_POWER_D0,
+		intel_guc_ggtt_offset(guc, guc->shared_data)
+	};
 
 	return intel_guc_send(guc, data, ARRAY_SIZE(data));
 }
+
+/**
+ * DOC: GuC Address Space
+ *
+ * The layout of GuC address space is shown below:
+ *
+ * ::
+ *
+ *     +===========> +====================+ <== FFFF_FFFF
+ *     ^             |      Reserved      |
+ *     |             +====================+ <== GUC_GGTT_TOP
+ *     |             |                    |
+ *     |             |        DRAM        |
+ *    GuC            |                    |
+ *  Address    +===> +====================+ <== GuC ggtt_pin_bias
+ *   Space     ^     |                    |
+ *     |       |     |                    |
+ *     |      GuC    |        GuC         |
+ *     |     WOPCM   |       WOPCM        |
+ *     |      Size   |                    |
+ *     |       |     |                    |
+ *     v       v     |                    |
+ *     +=======+===> +====================+ <== 0000_0000
+ *
+ * The lower part of GuC Address Space [0, ggtt_pin_bias) is mapped to GuC WOPCM
+ * while upper part of GuC Address Space [ggtt_pin_bias, GUC_GGTT_TOP) is mapped
+ * to DRAM. The value of the GuC ggtt_pin_bias is the GuC WOPCM size.
+ */
 
 /**
  * intel_guc_allocate_vma() - Allocate a GGTT VMA for GuC usage
@@ -445,7 +610,7 @@ int intel_guc_resume(struct drm_i915_private *dev_priv)
  * This is a wrapper to create an object for use with the GuC. In order to
  * use it inside the GuC, an object needs to be pinned lifetime, so we allocate
  * both some backing storage and a range inside the Global GTT. We must pin
- * it in the GGTT somewhere other than than [0, GUC_WOPCM_TOP) because that
+ * it in the GGTT somewhere other than than [0, GUC ggtt_pin_bias) because that
  * range is reserved inside GuC.
  *
  * Return:	A i915_vma if successful, otherwise an ERR_PTR.
@@ -455,18 +620,19 @@ struct i915_vma *intel_guc_allocate_vma(struct intel_guc *guc, u32 size)
 	struct drm_i915_private *dev_priv = guc_to_i915(guc);
 	struct drm_i915_gem_object *obj;
 	struct i915_vma *vma;
+	u64 flags;
 	int ret;
 
 	obj = i915_gem_object_create(dev_priv, size);
 	if (IS_ERR(obj))
 		return ERR_CAST(obj);
 
-	vma = i915_vma_instance(obj, &dev_priv->ggtt.base, NULL);
+	vma = i915_vma_instance(obj, &dev_priv->ggtt.vm, NULL);
 	if (IS_ERR(vma))
 		goto err;
 
-	ret = i915_vma_pin(vma, 0, PAGE_SIZE,
-			   PIN_GLOBAL | PIN_OFFSET_BIAS | GUC_WOPCM_TOP);
+	flags = PIN_GLOBAL | PIN_OFFSET_BIAS | i915_ggtt_pin_bias(vma);
+	ret = i915_vma_pin(vma, 0, 0, flags);
 	if (ret) {
 		vma = ERR_PTR(ret);
 		goto err;
@@ -479,13 +645,19 @@ err:
 	return vma;
 }
 
-u32 intel_guc_wopcm_size(struct drm_i915_private *dev_priv)
+/**
+ * intel_guc_reserved_gtt_size()
+ * @guc:	intel_guc structure
+ *
+ * The GuC WOPCM mapping shadows the lower part of the GGTT, so if we are using
+ * GuC we can't have any objects pinned in that region. This function returns
+ * the size of the shadowed region.
+ *
+ * Returns:
+ * 0 if GuC is not present or not in use.
+ * Otherwise, the GuC WOPCM size.
+ */
+u32 intel_guc_reserved_gtt_size(struct intel_guc *guc)
 {
-	u32 wopcm_size = GUC_WOPCM_TOP;
-
-	/* On BXT, the top of WOPCM is reserved for RC6 context */
-	if (IS_GEN9_LP(dev_priv))
-		wopcm_size -= BXT_GUC_WOPCM_RC6_RESERVED;
-
-	return wopcm_size;
+	return guc_to_i915(guc)->wopcm.guc.size;
 }

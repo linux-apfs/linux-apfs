@@ -266,7 +266,7 @@ static int nsblk_attach_disk(struct nd_namespace_blk *nsblk)
 	blk_queue_make_request(q, nd_blk_make_request);
 	blk_queue_max_hw_sectors(q, UINT_MAX);
 	blk_queue_logical_block_size(q, nsblk_sector_size(nsblk));
-	queue_flag_set_unlocked(QUEUE_FLAG_NONROT, q);
+	blk_queue_flag_set(QUEUE_FLAG_NONROT, q);
 	q->queuedata = nsblk;
 
 	disk = alloc_disk(0);
@@ -290,7 +290,7 @@ static int nsblk_attach_disk(struct nd_namespace_blk *nsblk)
 	}
 
 	set_capacity(disk, available_disk_size >> SECTOR_SHIFT);
-	device_add_disk(dev, disk);
+	device_add_disk(dev, disk, NULL);
 	revalidate_disk(disk);
 	return 0;
 }

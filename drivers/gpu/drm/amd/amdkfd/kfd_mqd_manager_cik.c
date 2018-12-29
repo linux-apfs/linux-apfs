@@ -41,6 +41,31 @@ static inline struct cik_sdma_rlc_registers *get_sdma_mqd(void *mqd)
 	return (struct cik_sdma_rlc_registers *)mqd;
 }
 
+static void update_cu_mask(struct mqd_manager *mm, void *mqd,
+			struct queue_properties *q)
+{
+	struct cik_mqd *m;
+	uint32_t se_mask[4] = {0}; /* 4 is the max # of SEs */
+
+	if (q->cu_mask_count == 0)
+		return;
+
+	mqd_symmetrically_map_cu_mask(mm,
+		q->cu_mask, q->cu_mask_count, se_mask);
+
+	m = get_mqd(mqd);
+	m->compute_static_thread_mgmt_se0 = se_mask[0];
+	m->compute_static_thread_mgmt_se1 = se_mask[1];
+	m->compute_static_thread_mgmt_se2 = se_mask[2];
+	m->compute_static_thread_mgmt_se3 = se_mask[3];
+
+	pr_debug("Update cu mask to %#x %#x %#x %#x\n",
+		m->compute_static_thread_mgmt_se0,
+		m->compute_static_thread_mgmt_se1,
+		m->compute_static_thread_mgmt_se2,
+		m->compute_static_thread_mgmt_se3);
+}
+
 static int init_mqd(struct mqd_manager *mm, void **mqd,
 		struct kfd_mem_obj **mqd_mem_obj, uint64_t *gart_addr,
 		struct queue_properties *q)
@@ -78,10 +103,6 @@ static int init_mqd(struct mqd_manager *mm, void **mqd,
 	m->cp_mqd_control             = MQD_CONTROL_PRIV_STATE_EN;
 	m->cp_mqd_base_addr_lo        = lower_32_bits(addr);
 	m->cp_mqd_base_addr_hi        = upper_32_bits(addr);
-
-	m->cp_hqd_ib_control = DEFAULT_MIN_IB_AVAIL_SIZE | IB_ATC_EN;
-	/* Although WinKFD writes this, I suspect it should not be necessary */
-	m->cp_hqd_ib_control = IB_ATC_EN | DEFAULT_MIN_IB_AVAIL_SIZE;
 
 	m->cp_hqd_quantum = QUANTUM_EN | QUANTUM_SCALE_1MS |
 				QUANTUM_DURATION(10);
@@ -170,14 +191,19 @@ static int load_mqd_sdma(struct mqd_manager *mm, void *mqd,
 					       mms);
 }
 
-static int update_mqd(struct mqd_manager *mm, void *mqd,
-			struct queue_properties *q)
+static int __update_mqd(struct mqd_manager *mm, void *mqd,
+			struct queue_properties *q, unsigned int atc_bit)
 {
 	struct cik_mqd *m;
 
 	m = get_mqd(mqd);
 	m->cp_hqd_pq_control = DEFAULT_RPTR_BLOCK_SIZE |
-				DEFAULT_MIN_AVAIL_SIZE | PQ_ATC_EN;
+				DEFAULT_MIN_AVAIL_SIZE;
+	m->cp_hqd_ib_control = DEFAULT_MIN_IB_AVAIL_SIZE;
+	if (atc_bit) {
+		m->cp_hqd_pq_control |= PQ_ATC_EN;
+		m->cp_hqd_ib_control |= IB_ATC_EN;
+	}
 
 	/*
 	 * Calculating queue size which is log base 2 of actual queue size -1
@@ -195,11 +221,26 @@ static int update_mqd(struct mqd_manager *mm, void *mqd,
 	if (q->format == KFD_QUEUE_FORMAT_AQL)
 		m->cp_hqd_pq_control |= NO_UPDATE_RPTR;
 
+	update_cu_mask(mm, mqd, q);
+
 	q->is_active = (q->queue_size > 0 &&
 			q->queue_address != 0 &&
-			q->queue_percent > 0);
+			q->queue_percent > 0 &&
+			!q->is_evicted);
 
 	return 0;
+}
+
+static int update_mqd(struct mqd_manager *mm, void *mqd,
+			struct queue_properties *q)
+{
+	return __update_mqd(mm, mqd, q, 1);
+}
+
+static int update_mqd_hawaii(struct mqd_manager *mm, void *mqd,
+			struct queue_properties *q)
+{
+	return __update_mqd(mm, mqd, q, 0);
 }
 
 static int update_mqd_sdma(struct mqd_manager *mm, void *mqd,
@@ -228,7 +269,8 @@ static int update_mqd_sdma(struct mqd_manager *mm, void *mqd,
 
 	q->is_active = (q->queue_size > 0 &&
 			q->queue_address != 0 &&
-			q->queue_percent > 0);
+			q->queue_percent > 0 &&
+			!q->is_evicted);
 
 	return 0;
 }
@@ -360,7 +402,8 @@ static int update_mqd_hiq(struct mqd_manager *mm, void *mqd,
 
 	q->is_active = (q->queue_size > 0 &&
 			q->queue_address != 0 &&
-			q->queue_percent > 0);
+			q->queue_percent > 0 &&
+			!q->is_evicted);
 
 	return 0;
 }
@@ -441,3 +484,15 @@ struct mqd_manager *mqd_manager_init_cik(enum KFD_MQD_TYPE type,
 	return mqd;
 }
 
+struct mqd_manager *mqd_manager_init_cik_hawaii(enum KFD_MQD_TYPE type,
+			struct kfd_dev *dev)
+{
+	struct mqd_manager *mqd;
+
+	mqd = mqd_manager_init_cik(type, dev);
+	if (!mqd)
+		return NULL;
+	if ((type == KFD_MQD_TYPE_CP) || (type == KFD_MQD_TYPE_COMPUTE))
+		mqd->update_mqd = update_mqd_hawaii;
+	return mqd;
+}

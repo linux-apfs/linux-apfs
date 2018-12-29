@@ -595,7 +595,7 @@ static int dw_mipi_dsi_host_attach(struct mipi_dsi_host *host,
 	dsi->format = device->format;
 	dsi->mode_flags = device->mode_flags;
 	dsi->panel = of_drm_find_panel(device->dev.of_node);
-	if (dsi->panel)
+	if (!IS_ERR(dsi->panel))
 		return drm_panel_attach(dsi->panel, &dsi->connector);
 
 	return -EINVAL;
@@ -1129,7 +1129,7 @@ static int dw_mipi_dsi_register(struct drm_device *drm,
 			   &dw_mipi_dsi_atomic_connector_funcs,
 			   DRM_MODE_CONNECTOR_DSI);
 
-	drm_mode_connector_attach_encoder(connector, encoder);
+	drm_connector_attach_encoder(connector, encoder);
 
 	return 0;
 }
@@ -1202,9 +1202,6 @@ static int dw_mipi_dsi_bind(struct device *dev, struct device *master,
 		return ret;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (!res)
-		return -ENODEV;
-
 	dsi->base = devm_ioremap_resource(dev, res);
 	if (IS_ERR(dsi->base))
 		return PTR_ERR(dsi->base);
@@ -1305,8 +1302,8 @@ static int dw_mipi_dsi_bind(struct device *dev, struct device *master,
 err_mipi_dsi_host:
 	mipi_dsi_host_unregister(&dsi->dsi_host);
 err_cleanup:
-	drm_encoder_cleanup(&dsi->encoder);
-	drm_connector_cleanup(&dsi->connector);
+	dsi->connector.funcs->destroy(&dsi->connector);
+	dsi->encoder.funcs->destroy(&dsi->encoder);
 err_pllref:
 	clk_disable_unprepare(dsi->pllref_clk);
 	return ret;
@@ -1319,6 +1316,10 @@ static void dw_mipi_dsi_unbind(struct device *dev, struct device *master,
 
 	mipi_dsi_host_unregister(&dsi->dsi_host);
 	pm_runtime_disable(dev);
+
+	dsi->connector.funcs->destroy(&dsi->connector);
+	dsi->encoder.funcs->destroy(&dsi->encoder);
+
 	clk_disable_unprepare(dsi->pllref_clk);
 }
 

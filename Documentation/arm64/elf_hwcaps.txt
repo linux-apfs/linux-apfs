@@ -78,11 +78,11 @@ HWCAP_EVTSTRM
 
 HWCAP_AES
 
-    Functionality implied by ID_AA64ISAR1_EL1.AES == 0b0001.
+    Functionality implied by ID_AA64ISAR0_EL1.AES == 0b0001.
 
 HWCAP_PMULL
 
-    Functionality implied by ID_AA64ISAR1_EL1.AES == 0b0010.
+    Functionality implied by ID_AA64ISAR0_EL1.AES == 0b0010.
 
 HWCAP_SHA1
 
@@ -153,7 +153,7 @@ HWCAP_ASIMDDP
 
 HWCAP_SHA512
 
-    Functionality implied by ID_AA64ISAR0_EL1.SHA2 == 0b0002.
+    Functionality implied by ID_AA64ISAR0_EL1.SHA2 == 0b0010.
 
 HWCAP_SVE
 
@@ -162,3 +162,23 @@ HWCAP_SVE
 HWCAP_ASIMDFHM
 
    Functionality implied by ID_AA64ISAR0_EL1.FHM == 0b0001.
+
+HWCAP_DIT
+
+    Functionality implied by ID_AA64PFR0_EL1.DIT == 0b0001.
+
+HWCAP_USCAT
+
+    Functionality implied by ID_AA64MMFR2_EL1.AT == 0b0001.
+
+HWCAP_ILRCPC
+
+    Functionality implied by ID_AA64ISAR1_EL1.LRCPC == 0b0010.
+
+HWCAP_FLAGM
+
+    Functionality implied by ID_AA64ISAR0_EL1.TS == 0b0001.
+
+HWCAP_SSBS
+
+    Functionality implied by ID_AA64PFR1_EL1.SSBS == 0b0010.

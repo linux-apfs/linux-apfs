@@ -33,6 +33,7 @@ FEATURE_TESTS_BASIC :=                  \
         dwarf_getlocations              \
         fortify-source                  \
         sync-compare-and-swap           \
+        get_current_dir_name            \
         glibc                           \
         gtk2                            \
         gtk2-infobar                    \
@@ -57,6 +58,7 @@ FEATURE_TESTS_BASIC :=                  \
         libunwind-aarch64               \
         pthread-attr-setaffinity-np     \
         pthread-barrier     		\
+        reallocarray                    \
         stackprotector-all              \
         timerfd                         \
         libdw-dwarf-unwind              \
@@ -82,7 +84,11 @@ FEATURE_TESTS_EXTRA :=                  \
          liberty-z                      \
          libunwind-debug-frame          \
          libunwind-debug-frame-arm      \
-         libunwind-debug-frame-aarch64
+         libunwind-debug-frame-aarch64  \
+         cxx                            \
+         llvm                           \
+         llvm-version                   \
+         clang
 
 FEATURE_TESTS ?= $(FEATURE_TESTS_BASIC)
 

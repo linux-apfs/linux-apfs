@@ -966,6 +966,7 @@ static int tlan_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	switch (cmd) {
 	case SIOCGMIIPHY:		/* get address of MII PHY in use. */
 		data->phy_id = phy;
+		/* fall through */
 
 
 	case SIOCGMIIREG:		/* read MII PHY register. */
@@ -1901,7 +1902,7 @@ ThunderLAN driver adapter related routines
  *		Nothing
  *	Parms:
  *		dev	The device structure with the list
- *			stuctures to be reset.
+ *			structures to be reset.
  *
  *	This routine sets the variables associated with managing
  *	the TLAN lists to their initial values.

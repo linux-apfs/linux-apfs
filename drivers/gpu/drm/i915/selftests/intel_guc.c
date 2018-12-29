@@ -65,6 +65,40 @@ static int check_all_doorbells(struct intel_guc *guc)
 	return 0;
 }
 
+static int ring_doorbell_nop(struct intel_guc_client *client)
+{
+	struct guc_process_desc *desc = __get_process_desc(client);
+	int err;
+
+	client->use_nop_wqi = true;
+
+	spin_lock_irq(&client->wq_lock);
+
+	guc_wq_item_append(client, 0, 0, 0, 0);
+	guc_ring_doorbell(client);
+
+	spin_unlock_irq(&client->wq_lock);
+
+	client->use_nop_wqi = false;
+
+	/* if there are no issues GuC will update the WQ head and keep the
+	 * WQ in active status
+	 */
+	err = wait_for(READ_ONCE(desc->head) == READ_ONCE(desc->tail), 10);
+	if (err) {
+		pr_err("doorbell %u ring failed!\n", client->doorbell_id);
+		return -EIO;
+	}
+
+	if (desc->wq_status != WQ_STATUS_ACTIVE) {
+		pr_err("doorbell %u ring put WQ in bad state (%u)!\n",
+		       client->doorbell_id, desc->wq_status);
+		return -EIO;
+	}
+
+	return 0;
+}
+
 /*
  * Basic client sanity check, handy to validate create_clients.
  */
@@ -87,7 +121,7 @@ static int validate_client(struct intel_guc_client *client,
 
 static bool client_doorbell_in_sync(struct intel_guc_client *client)
 {
-	return doorbell_ok(client->guc, client->doorbell_id);
+	return !client || doorbell_ok(client->guc, client->doorbell_id);
 }
 
 /*
@@ -108,6 +142,7 @@ static int igt_guc_clients(void *args)
 
 	GEM_BUG_ON(!HAS_GUC(dev_priv));
 	mutex_lock(&dev_priv->drm.struct_mutex);
+	intel_runtime_pm_get(dev_priv);
 
 	guc = &dev_priv->guc;
 	if (!guc) {
@@ -137,7 +172,6 @@ static int igt_guc_clients(void *args)
 		goto unlock;
 	}
 	GEM_BUG_ON(!guc->execbuf_client);
-	GEM_BUG_ON(!guc->preempt_client);
 
 	err = validate_client(guc->execbuf_client,
 			      GUC_CLIENT_PRIORITY_KMD_NORMAL, false);
@@ -146,16 +180,18 @@ static int igt_guc_clients(void *args)
 		goto out;
 	}
 
-	err = validate_client(guc->preempt_client,
-			      GUC_CLIENT_PRIORITY_KMD_HIGH, true);
-	if (err) {
-		pr_err("preempt client validation failed\n");
-		goto out;
+	if (guc->preempt_client) {
+		err = validate_client(guc->preempt_client,
+				      GUC_CLIENT_PRIORITY_KMD_HIGH, true);
+		if (err) {
+			pr_err("preempt client validation failed\n");
+			goto out;
+		}
 	}
 
 	/* each client should now have reserved a doorbell */
 	if (!has_doorbell(guc->execbuf_client) ||
-	    !has_doorbell(guc->preempt_client)) {
+	    (guc->preempt_client && !has_doorbell(guc->preempt_client))) {
 		pr_err("guc_clients_create didn't reserve doorbells\n");
 		err = -EINVAL;
 		goto out;
@@ -195,19 +231,23 @@ static int igt_guc_clients(void *args)
 	}
 
 	unreserve_doorbell(guc->execbuf_client);
-	err = guc_clients_doorbell_init(guc);
+
+	__create_doorbell(guc->execbuf_client);
+	err = __guc_allocate_doorbell(guc, guc->execbuf_client->stage_id);
 	if (err != -EIO) {
 		pr_err("unexpected (err = %d)", err);
-		goto out;
+		goto out_db;
 	}
 
 	if (!available_dbs(guc, guc->execbuf_client->priority)) {
 		pr_err("doorbell not available when it should\n");
 		err = -EIO;
-		goto out;
+		goto out_db;
 	}
 
+out_db:
 	/* clean after test */
+	__destroy_doorbell(guc->execbuf_client);
 	err = reserve_doorbell(guc->execbuf_client);
 	if (err) {
 		pr_err("failed to reserve back the doorbell back\n");
@@ -224,11 +264,13 @@ out:
 	 * clients during unload.
 	 */
 	destroy_doorbell(guc->execbuf_client);
-	destroy_doorbell(guc->preempt_client);
+	if (guc->preempt_client)
+		destroy_doorbell(guc->preempt_client);
 	guc_clients_destroy(guc);
 	guc_clients_create(guc);
 	guc_clients_doorbell_init(guc);
 unlock:
+	intel_runtime_pm_put(dev_priv);
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 	return err;
 }
@@ -247,6 +289,7 @@ static int igt_guc_doorbells(void *arg)
 
 	GEM_BUG_ON(!HAS_GUC(dev_priv));
 	mutex_lock(&dev_priv->drm.struct_mutex);
+	intel_runtime_pm_get(dev_priv);
 
 	guc = &dev_priv->guc;
 	if (!guc) {
@@ -326,6 +369,10 @@ static int igt_guc_doorbells(void *arg)
 		err = check_all_doorbells(guc);
 		if (err)
 			goto out;
+
+		err = ring_doorbell_nop(clients[i]);
+		if (err)
+			goto out;
 	}
 
 out:
@@ -335,6 +382,7 @@ out:
 			guc_client_free(clients[i]);
 		}
 unlock:
+	intel_runtime_pm_put(dev_priv);
 	mutex_unlock(&dev_priv->drm.struct_mutex);
 	return err;
 }

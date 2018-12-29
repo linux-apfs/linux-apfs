@@ -14,8 +14,11 @@
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/gpio/gpio-reg.h>
+#include <linux/gpio/machine.h>
 #include <linux/ioport.h>
 #include <linux/platform_data/sa11x0-serial.h>
+#include <linux/regulator/fixed.h>
+#include <linux/regulator/machine.h>
 #include <linux/serial_core.h>
 #include <linux/platform_device.h>
 #include <linux/mfd/ucb1x00.h>
@@ -98,7 +101,7 @@ static int __init assabet_init_gpio(void __iomem *reg, u32 def_val)
 
 	assabet_bcr_gc = gc;
 
-	return gc->base;
+	return 0;
 }
 
 /*
@@ -445,6 +448,37 @@ static struct resource neponset_resources[] = {
 };
 #endif
 
+static struct gpiod_lookup_table assabet_cf_gpio_table = {
+	.dev_id = "sa11x0-pcmcia.1",
+	.table = {
+		GPIO_LOOKUP("gpio", 21, "ready", GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP("gpio", 22, "detect", GPIO_ACTIVE_LOW),
+		GPIO_LOOKUP("gpio", 24, "bvd2", GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP("gpio", 25, "bvd1", GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP("assabet", 1, "reset", GPIO_ACTIVE_HIGH),
+		GPIO_LOOKUP("assabet", 7, "bus-enable", GPIO_ACTIVE_LOW),
+		{ },
+	},
+};
+
+static struct regulator_consumer_supply assabet_cf_vcc_consumers[] = {
+	REGULATOR_SUPPLY("vcc", "sa11x0-pcmcia.1"),
+};
+
+static struct fixed_voltage_config assabet_cf_vcc_pdata __initdata = {
+	.supply_name = "cf-power",
+	.microvolts = 3300000,
+	.enable_high = 1,
+};
+
+static struct gpiod_lookup_table assabet_cf_vcc_gpio_table = {
+	.dev_id = "reg-fixed-voltage.0",
+	.table = {
+		GPIO_LOOKUP("assabet", 0, NULL, GPIO_ACTIVE_HIGH),
+		{ },
+	},
+};
+
 static void __init assabet_init(void)
 {
 	/*
@@ -490,6 +524,13 @@ static void __init assabet_init(void)
 		platform_device_register_simple("neponset", 0,
 			neponset_resources, ARRAY_SIZE(neponset_resources));
 #endif
+	} else {
+		gpiod_add_lookup_table(&assabet_cf_vcc_gpio_table);
+		sa11x0_register_fixed_regulator(0, &assabet_cf_vcc_pdata,
+					assabet_cf_vcc_consumers,
+					ARRAY_SIZE(assabet_cf_vcc_consumers),
+					true);
+
 	}
 
 #ifndef ASSABET_PAL_VIDEO
@@ -501,6 +542,9 @@ static void __init assabet_init(void)
 			    ARRAY_SIZE(assabet_flash_resources));
 	sa11x0_register_irda(&assabet_irda_data);
 	sa11x0_register_mcp(&assabet_mcp_data);
+
+	if (!machine_has_neponset())
+		sa11x0_register_pcmcia(1, &assabet_cf_gpio_table);
 }
 
 /*

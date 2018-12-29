@@ -1,14 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
- * Copyright (c) 2017 Intel Corporation.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License version
- * 2 as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
+ * Copyright (C) 2017 Intel Corporation
  *
  * Based partially on Intel IPU4 driver written by
  *  Sakari Ailus <sakari.ailus@linux.intel.com>
@@ -226,12 +218,10 @@ static int cio2_fbpt_init(struct cio2_device *cio2, struct cio2_queue *q)
 {
 	struct device *dev = &cio2->pci_dev->dev;
 
-	q->fbpt = dma_alloc_coherent(dev, CIO2_FBPT_SIZE, &q->fbpt_bus_addr,
-				     GFP_KERNEL);
+	q->fbpt = dma_zalloc_coherent(dev, CIO2_FBPT_SIZE, &q->fbpt_bus_addr,
+				      GFP_KERNEL);
 	if (!q->fbpt)
 		return -ENOMEM;
-
-	memset(q->fbpt, 0, CIO2_FBPT_SIZE);
 
 	return 0;
 }
@@ -526,6 +516,8 @@ static void cio2_hw_exit(struct cio2_device *cio2, struct cio2_queue *q)
 	unsigned int i, maxloops = 1000;
 
 	/* Disable CSI receiver and MIPI backend devices */
+	writel(0, q->csi_rx_base + CIO2_REG_IRQCTRL_MASK);
+	writel(0, q->csi_rx_base + CIO2_REG_IRQCTRL_ENABLE);
 	writel(0, q->csi_rx_base + CIO2_REG_CSIRX_ENABLE);
 	writel(0, q->csi_rx_base + CIO2_REG_MIPIBE_ENABLE);
 
@@ -646,18 +638,10 @@ static const char *const cio2_port_errs[] = {
 	"PKT2LONG",
 };
 
-static irqreturn_t cio2_irq(int irq, void *cio2_ptr)
+static void cio2_irq_handle_once(struct cio2_device *cio2, u32 int_status)
 {
-	struct cio2_device *cio2 = cio2_ptr;
 	void __iomem *const base = cio2->base;
 	struct device *dev = &cio2->pci_dev->dev;
-	u32 int_status, int_clear;
-
-	int_status = readl(base + CIO2_REG_INT_STS);
-	int_clear = int_status;
-
-	if (!int_status)
-		return IRQ_NONE;
 
 	if (int_status & CIO2_INT_IOOE) {
 		/*
@@ -776,9 +760,29 @@ static irqreturn_t cio2_irq(int irq, void *cio2_ptr)
 		int_status &= ~(CIO2_INT_IOIE | CIO2_INT_IOIRQ);
 	}
 
-	writel(int_clear, base + CIO2_REG_INT_STS);
 	if (int_status)
 		dev_warn(dev, "unknown interrupt 0x%x on INT\n", int_status);
+}
+
+static irqreturn_t cio2_irq(int irq, void *cio2_ptr)
+{
+	struct cio2_device *cio2 = cio2_ptr;
+	void __iomem *const base = cio2->base;
+	struct device *dev = &cio2->pci_dev->dev;
+	u32 int_status;
+
+	int_status = readl(base + CIO2_REG_INT_STS);
+	dev_dbg(dev, "isr enter - interrupt status 0x%x\n", int_status);
+	if (!int_status)
+		return IRQ_NONE;
+
+	do {
+		writel(int_status, base + CIO2_REG_INT_STS);
+		cio2_irq_handle_once(cio2, int_status);
+		int_status = readl(base + CIO2_REG_INT_STS);
+		if (int_status)
+			dev_dbg(dev, "pending status 0x%x\n", int_status);
+	} while (int_status);
 
 	return IRQ_HANDLED;
 }
@@ -1035,6 +1039,7 @@ static void cio2_vb2_stop_streaming(struct vb2_queue *vq)
 			"failed to stop sensor streaming\n");
 
 	cio2_hw_exit(cio2, q);
+	synchronize_irq(cio2->pci_dev->irq);
 	cio2_vb2_return_all_buffers(q, VB2_BUF_STATE_ERROR);
 	media_pipeline_stop(&q->vdev.entity);
 	pm_runtime_put(&cio2->pci_dev->dev);
@@ -1059,8 +1064,8 @@ static int cio2_v4l2_querycap(struct file *file, void *fh,
 {
 	struct cio2_device *cio2 = video_drvdata(file);
 
-	strlcpy(cap->driver, CIO2_NAME, sizeof(cap->driver));
-	strlcpy(cap->card, CIO2_DEVICE_NAME, sizeof(cap->card));
+	strscpy(cap->driver, CIO2_NAME, sizeof(cap->driver));
+	strscpy(cap->card, CIO2_DEVICE_NAME, sizeof(cap->card));
 	snprintf(cap->bus_info, sizeof(cap->bus_info),
 		 "PCI:%s", pci_name(cio2->pci_dev));
 
@@ -1138,7 +1143,7 @@ cio2_video_enum_input(struct file *file, void *fh, struct v4l2_input *input)
 	if (input->index > 0)
 		return -EINVAL;
 
-	strlcpy(input->name, "camera", sizeof(input->name));
+	strscpy(input->name, "camera", sizeof(input->name));
 	input->type = V4L2_INPUT_TYPE_CAMERA;
 
 	return 0;
@@ -1428,13 +1433,13 @@ static int cio2_notifier_complete(struct v4l2_async_notifier *notifier)
 	struct cio2_device *cio2 = container_of(notifier, struct cio2_device,
 						notifier);
 	struct sensor_async_subdev *s_asd;
+	struct v4l2_async_subdev *asd;
 	struct cio2_queue *q;
-	unsigned int i, pad;
+	unsigned int pad;
 	int ret;
 
-	for (i = 0; i < notifier->num_subdevs; i++) {
-		s_asd = container_of(cio2->notifier.subdevs[i],
-				     struct sensor_async_subdev, asd);
+	list_for_each_entry(asd, &cio2->notifier.asd_list, asd_list) {
+		s_asd = container_of(asd, struct sensor_async_subdev, asd);
 		q = &cio2->queue[s_asd->csi2.port];
 
 		for (pad = 0; pad < q->sensor->entity.num_pads; pad++)
@@ -1456,7 +1461,7 @@ static int cio2_notifier_complete(struct v4l2_async_notifier *notifier)
 		if (ret) {
 			dev_err(&cio2->pci_dev->dev,
 				"failed to create link for %s\n",
-				cio2->queue[i].sensor->name);
+				q->sensor->name);
 			return ret;
 		}
 	}
@@ -1477,7 +1482,7 @@ static int cio2_fwnode_parse(struct device *dev,
 	struct sensor_async_subdev *s_asd =
 			container_of(asd, struct sensor_async_subdev, asd);
 
-	if (vep->bus_type != V4L2_MBUS_CSI2) {
+	if (vep->bus_type != V4L2_MBUS_CSI2_DPHY) {
 		dev_err(dev, "Only CSI2 bus type is currently supported\n");
 		return -EINVAL;
 	}
@@ -1492,6 +1497,8 @@ static int cio2_notifier_init(struct cio2_device *cio2)
 {
 	int ret;
 
+	v4l2_async_notifier_init(&cio2->notifier);
+
 	ret = v4l2_async_notifier_parse_fwnode_endpoints(
 		&cio2->pci_dev->dev, &cio2->notifier,
 		sizeof(struct sensor_async_subdev),
@@ -1499,7 +1506,7 @@ static int cio2_notifier_init(struct cio2_device *cio2)
 	if (ret < 0)
 		return ret;
 
-	if (!cio2->notifier.num_subdevs)
+	if (list_empty(&cio2->notifier.asd_list))
 		return -ENODEV;	/* no endpoint */
 
 	cio2->notifier.ops = &cio2_async_ops;
@@ -1778,7 +1785,7 @@ static int cio2_pci_probe(struct pci_dev *pci_dev,
 	mutex_init(&cio2->lock);
 
 	cio2->media_dev.dev = &cio2->pci_dev->dev;
-	strlcpy(cio2->media_dev.model, CIO2_DEVICE_NAME,
+	strscpy(cio2->media_dev.model, CIO2_DEVICE_NAME,
 		sizeof(cio2->media_dev.model));
 	snprintf(cio2->media_dev.bus_info, sizeof(cio2->media_dev.bus_info),
 		 "PCI:%s", pci_name(cio2->pci_dev));
@@ -1837,14 +1844,12 @@ fail_mutex_destroy:
 static void cio2_pci_remove(struct pci_dev *pci_dev)
 {
 	struct cio2_device *cio2 = pci_get_drvdata(pci_dev);
-	unsigned int i;
 
-	cio2_notifier_exit(cio2);
-	cio2_fbpt_exit_dummy(cio2);
-	for (i = 0; i < CIO2_QUEUES; i++)
-		cio2_queue_exit(cio2, &cio2->queue[i]);
-	v4l2_device_unregister(&cio2->v4l2_dev);
 	media_device_unregister(&cio2->media_dev);
+	cio2_notifier_exit(cio2);
+	cio2_queues_exit(cio2);
+	cio2_fbpt_exit_dummy(cio2);
+	v4l2_device_unregister(&cio2->v4l2_dev);
 	media_device_cleanup(&cio2->media_dev);
 	mutex_destroy(&cio2->lock);
 }
@@ -1976,6 +1981,7 @@ static int __maybe_unused cio2_suspend(struct device *dev)
 
 	/* Stop stream */
 	cio2_hw_exit(cio2, q);
+	synchronize_irq(pci_dev->irq);
 
 	pm_runtime_force_suspend(dev);
 

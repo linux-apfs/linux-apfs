@@ -818,7 +818,7 @@ static int handle_ahash_req(struct iproc_reqctx_s *rctx)
 
 	/* AES hashing keeps key size in type field, so need to copy it here */
 	if (hash_parms.alg == HASH_ALG_AES)
-		hash_parms.type = cipher_parms.type;
+		hash_parms.type = (enum hash_type)cipher_parms.type;
 	else
 		hash_parms.type = spu->spu_hash_type(rctx->total_sent);
 
@@ -1409,7 +1409,7 @@ static int handle_aead_req(struct iproc_reqctx_s *rctx)
 						rctx->iv_ctr_len);
 
 	if (ctx->auth.alg == HASH_ALG_AES)
-		hash_parms.type = ctx->cipher_type;
+		hash_parms.type = (enum hash_type)ctx->cipher_type;
 
 	/* General case AAD padding (CCM and RFC4543 special cases below) */
 	aead_parms.aad_pad_len = spu->spu_gcm_ccm_pad_len(ctx->cipher.mode,
@@ -3914,8 +3914,7 @@ static struct iproc_alg_s driver_algs[] = {
 				    .cra_name = "md5",
 				    .cra_driver_name = "md5-iproc",
 				    .cra_blocksize = MD5_BLOCK_WORDS * 4,
-				    .cra_flags = CRYPTO_ALG_TYPE_AHASH |
-					     CRYPTO_ALG_ASYNC,
+				    .cra_flags = CRYPTO_ALG_ASYNC,
 				}
 		      },
 	 .cipher_info = {
@@ -4649,8 +4648,7 @@ static int spu_register_ahash(struct iproc_alg_s *driver_alg)
 	hash->halg.base.cra_ctxsize = sizeof(struct iproc_ctx_s);
 	hash->halg.base.cra_init = ahash_cra_init;
 	hash->halg.base.cra_exit = generic_cra_exit;
-	hash->halg.base.cra_type = &crypto_ahash_type;
-	hash->halg.base.cra_flags = CRYPTO_ALG_TYPE_AHASH | CRYPTO_ALG_ASYNC;
+	hash->halg.base.cra_flags = CRYPTO_ALG_ASYNC;
 	hash->halg.statesize = sizeof(struct spu_hash_export_s);
 
 	if (driver_alg->auth_info.mode != HASH_MODE_HMAC) {
@@ -4691,7 +4689,7 @@ static int spu_register_aead(struct iproc_alg_s *driver_alg)
 	aead->base.cra_ctxsize = sizeof(struct iproc_ctx_s);
 	INIT_LIST_HEAD(&aead->base.cra_list);
 
-	aead->base.cra_flags |= CRYPTO_ALG_TYPE_AEAD | CRYPTO_ALG_ASYNC;
+	aead->base.cra_flags |= CRYPTO_ALG_ASYNC;
 	/* setkey set in alg initialization */
 	aead->setauthsize = aead_setauthsize;
 	aead->encrypt = aead_encrypt;

@@ -1,8 +1,11 @@
-// SPDX-License-Identifier: GPL-2.0
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * A hack to create a platform device from a DMI entry.  This will
  * allow autoloading of the IPMI drive based on SMBIOS entries.
  */
+
+#define pr_fmt(fmt) "%s" fmt, "ipmi:dmi: "
+#define dev_fmt pr_fmt
 
 #include <linux/ipmi.h>
 #include <linux/init.h>
@@ -29,15 +32,6 @@ static struct ipmi_dmi_info *ipmi_dmi_infos;
 
 static int ipmi_dmi_nr __initdata;
 
-#define set_prop_entry(_p_, _name_, type, val)	\
-do {					\
-	struct property_entry *_p = &_p_;	\
-	_p->name = _name_;			\
-	_p->length = sizeof(type);		\
-	_p->is_string = false;			\
-	_p->value.type##_data = val;		\
-} while(0)
-
 static void __init dmi_add_platform_ipmi(unsigned long base_addr,
 					 u32 flags,
 					 u8 slave_addr,
@@ -50,7 +44,7 @@ static void __init dmi_add_platform_ipmi(unsigned long base_addr,
 	unsigned int num_r = 1, size;
 	struct property_entry p[5];
 	unsigned int pidx = 0;
-	char *name, *override;
+	char *name;
 	int rv;
 	enum si_type si_type;
 	struct ipmi_dmi_info *info;
@@ -58,11 +52,9 @@ static void __init dmi_add_platform_ipmi(unsigned long base_addr,
 	memset(p, 0, sizeof(p));
 
 	name = "dmi-ipmi-si";
-	override = "ipmi_si";
 	switch (type) {
 	case IPMI_DMI_TYPE_SSIF:
 		name = "dmi-ipmi-ssif";
-		override = "ipmi_ssif";
 		offset = 1;
 		size = 1;
 		si_type = SI_TYPE_INVALID;
@@ -80,18 +72,19 @@ static void __init dmi_add_platform_ipmi(unsigned long base_addr,
 		si_type = SI_SMIC;
 		break;
 	default:
-		pr_err("ipmi:dmi: Invalid IPMI type: %d\n", type);
+		pr_err("Invalid IPMI type: %d\n", type);
 		return;
 	}
 
 	if (si_type != SI_TYPE_INVALID)
-		set_prop_entry(p[pidx++], "ipmi-type", u8, si_type);
-	set_prop_entry(p[pidx++], "slave-addr", u8, slave_addr);
-	set_prop_entry(p[pidx++], "addr-source", u8, SI_SMBIOS);
+		p[pidx++] = PROPERTY_ENTRY_U8("ipmi-type", si_type);
+
+	p[pidx++] = PROPERTY_ENTRY_U8("slave-addr", slave_addr);
+	p[pidx++] = PROPERTY_ENTRY_U8("addr-source", SI_SMBIOS);
 
 	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (!info) {
-		pr_warn("ipmi:dmi: Could not allocate dmi info\n");
+		pr_warn("Could not allocate dmi info\n");
 	} else {
 		info->si_type = si_type;
 		info->flags = flags;
@@ -103,16 +96,12 @@ static void __init dmi_add_platform_ipmi(unsigned long base_addr,
 
 	pdev = platform_device_alloc(name, ipmi_dmi_nr);
 	if (!pdev) {
-		pr_err("ipmi:dmi: Error allocation IPMI platform device\n");
+		pr_err("Error allocation IPMI platform device\n");
 		return;
 	}
-	pdev->driver_override = kasprintf(GFP_KERNEL, "%s",
-					  override);
-	if (!pdev->driver_override)
-		goto err;
 
 	if (type == IPMI_DMI_TYPE_SSIF) {
-		set_prop_entry(p[pidx++], "i2c-addr", u16, base_addr);
+		p[pidx++] = PROPERTY_ENTRY_U16("i2c-addr", base_addr);
 		goto add_properties;
 	}
 
@@ -149,22 +138,20 @@ static void __init dmi_add_platform_ipmi(unsigned long base_addr,
 
 	rv = platform_device_add_resources(pdev, r, num_r);
 	if (rv) {
-		dev_err(&pdev->dev,
-			"ipmi:dmi: Unable to add resources: %d\n", rv);
+		dev_err(&pdev->dev, "Unable to add resources: %d\n", rv);
 		goto err;
 	}
 
 add_properties:
 	rv = platform_device_add_properties(pdev, p);
 	if (rv) {
-		dev_err(&pdev->dev,
-			"ipmi:dmi: Unable to add properties: %d\n", rv);
+		dev_err(&pdev->dev, "Unable to add properties: %d\n", rv);
 		goto err;
 	}
 
 	rv = platform_device_add(pdev);
 	if (rv) {
-		dev_err(&pdev->dev, "ipmi:dmi: Unable to add device: %d\n", rv);
+		dev_err(&pdev->dev, "Unable to add device: %d\n", rv);
 		goto err;
 	}
 
@@ -225,6 +212,10 @@ static void __init dmi_decode_ipmi(const struct dmi_header *dm)
 	slave_addr = data[DMI_IPMI_SLAVEADDR];
 
 	memcpy(&base_addr, data + DMI_IPMI_ADDR, sizeof(unsigned long));
+	if (!base_addr) {
+		pr_err("Base address is zero, assuming no IPMI interface\n");
+		return;
+	}
 	if (len >= DMI_IPMI_VER2_LENGTH) {
 		if (type == IPMI_DMI_TYPE_SSIF) {
 			offset = 0;
@@ -271,7 +262,7 @@ static void __init dmi_decode_ipmi(const struct dmi_header *dm)
 				offset = 16;
 				break;
 			default:
-				pr_err("ipmi:dmi: Invalid offset: 0\n");
+				pr_err("Invalid offset: 0\n");
 				return;
 			}
 		}

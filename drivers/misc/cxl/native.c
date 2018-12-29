@@ -353,8 +353,17 @@ int cxl_data_cache_flush(struct cxl *adapter)
 	u64 reg;
 	unsigned long timeout = jiffies + (HZ * CXL_TIMEOUT);
 
-	pr_devel("Flushing data cache\n");
+	/*
+	 * Do a datacache flush only if datacache is available.
+	 * In case of PSL9D datacache absent hence flush operation.
+	 * would timeout.
+	 */
+	if (adapter->native->no_data_cache) {
+		pr_devel("No PSL data cache. Ignoring cache flush req.\n");
+		return 0;
+	}
 
+	pr_devel("Flushing data cache\n");
 	reg = cxl_p1_read(adapter, CXL_PSL_Control);
 	reg |= CXL_PSL_Control_Fr;
 	cxl_p1_write(adapter, CXL_PSL_Control, reg);
@@ -596,6 +605,7 @@ u64 cxl_calculate_sr(bool master, bool kernel, bool real_mode, bool p9)
 		sr |= CXL_PSL_SR_An_MP;
 	if (mfspr(SPRN_LPCR) & LPCR_TC)
 		sr |= CXL_PSL_SR_An_TC;
+
 	if (kernel) {
 		if (!real_mode)
 			sr |= CXL_PSL_SR_An_R;
@@ -620,7 +630,7 @@ u64 cxl_calculate_sr(bool master, bool kernel, bool real_mode, bool p9)
 
 static u64 calculate_sr(struct cxl_context *ctx)
 {
-	return cxl_calculate_sr(ctx->master, ctx->kernel, ctx->real_mode,
+	return cxl_calculate_sr(ctx->master, ctx->kernel, false,
 				cxl_is_power9());
 }
 

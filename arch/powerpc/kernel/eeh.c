@@ -169,6 +169,11 @@ static size_t eeh_dump_dev_log(struct eeh_dev *edev, char *buf, size_t len)
 	int n = 0, l = 0;
 	char buffer[128];
 
+	if (!pdn) {
+		pr_warn("EEH: Note: No error log for absent device.\n");
+		return 0;
+	}
+
 	n += scnprintf(buf+n, len-n, "%04x:%02x:%02x.%01x\n",
 		       pdn->phb->global_number, pdn->busno,
 		       PCI_SLOT(pdn->devfn), PCI_FUNC(pdn->devfn));
@@ -263,9 +268,8 @@ static size_t eeh_dump_dev_log(struct eeh_dev *edev, char *buf, size_t len)
 	return n;
 }
 
-static void *eeh_dump_pe_log(void *data, void *flag)
+static void *eeh_dump_pe_log(struct eeh_pe *pe, void *flag)
 {
-	struct eeh_pe *pe = data;
 	struct eeh_dev *edev, *tmp;
 	size_t *plen = flag;
 
@@ -394,15 +398,13 @@ static int eeh_phb_check_failure(struct eeh_pe *pe)
 	/* Check PHB state */
 	ret = eeh_ops->get_state(phb_pe, NULL);
 	if ((ret < 0) ||
-	    (ret == EEH_STATE_NOT_SUPPORT) ||
-	    (ret & (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE)) ==
-	    (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE)) {
+	    (ret == EEH_STATE_NOT_SUPPORT) || eeh_state_active(ret)) {
 		ret = 0;
 		goto out;
 	}
 
 	/* Isolate the PHB and send event */
-	eeh_pe_state_mark(phb_pe, EEH_PE_ISOLATED);
+	eeh_pe_mark_isolated(phb_pe);
 	eeh_serialize_unlock(flags);
 
 	pr_err("EEH: PHB#%x failure detected, location: %s\n",
@@ -433,7 +435,6 @@ out:
 int eeh_dev_check_failure(struct eeh_dev *edev)
 {
 	int ret;
-	int active_flags = (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE);
 	unsigned long flags;
 	struct device_node *dn;
 	struct pci_dev *dev;
@@ -525,8 +526,7 @@ int eeh_dev_check_failure(struct eeh_dev *edev)
 	 * state, PE is in good state.
 	 */
 	if ((ret < 0) ||
-	    (ret == EEH_STATE_NOT_SUPPORT) ||
-	    ((ret & active_flags) == active_flags)) {
+	    (ret == EEH_STATE_NOT_SUPPORT) || eeh_state_active(ret)) {
 		eeh_stats.false_positives++;
 		pe->false_positives++;
 		rc = 0;
@@ -546,9 +546,12 @@ int eeh_dev_check_failure(struct eeh_dev *edev)
 
 		/* Frozen parent PE ? */
 		ret = eeh_ops->get_state(parent_pe, NULL);
-		if (ret > 0 &&
-		    (ret & active_flags) != active_flags)
+		if (ret > 0 && !eeh_state_active(ret)) {
 			pe = parent_pe;
+			pr_err("EEH: Failure of PHB#%x-PE#%x will be handled at parent PHB#%x-PE#%x.\n",
+			       pe->phb->global_number, pe->addr,
+			       pe->phb->global_number, parent_pe->addr);
+		}
 
 		/* Next parent level */
 		parent_pe = parent_pe->parent;
@@ -560,7 +563,7 @@ int eeh_dev_check_failure(struct eeh_dev *edev)
 	 * with other functions on this device, and functions under
 	 * bridges.
 	 */
-	eeh_pe_state_mark(pe, EEH_PE_ISOLATED);
+	eeh_pe_mark_isolated(pe);
 	eeh_serialize_unlock(flags);
 
 	/* Most EEH events are due to device driver bugs.  Having
@@ -678,7 +681,7 @@ int eeh_pci_enable(struct eeh_pe *pe, int function)
 
 	/* Check if the request is finished successfully */
 	if (active_flag) {
-		rc = eeh_ops->wait_state(pe, PCI_BUS_RESET_WAIT_MSEC);
+		rc = eeh_wait_state(pe, PCI_BUS_RESET_WAIT_MSEC);
 		if (rc < 0)
 			return rc;
 
@@ -691,9 +694,9 @@ int eeh_pci_enable(struct eeh_pe *pe, int function)
 	return rc;
 }
 
-static void *eeh_disable_and_save_dev_state(void *data, void *userdata)
+static void *eeh_disable_and_save_dev_state(struct eeh_dev *edev,
+					    void *userdata)
 {
-	struct eeh_dev *edev = data;
 	struct pci_dev *pdev = eeh_dev_to_pci_dev(edev);
 	struct pci_dev *dev = userdata;
 
@@ -719,9 +722,8 @@ static void *eeh_disable_and_save_dev_state(void *data, void *userdata)
 	return NULL;
 }
 
-static void *eeh_restore_dev_state(void *data, void *userdata)
+static void *eeh_restore_dev_state(struct eeh_dev *edev, void *userdata)
 {
-	struct eeh_dev *edev = data;
 	struct pci_dn *pdn = eeh_dev_to_pdn(edev);
 	struct pci_dev *pdev = eeh_dev_to_pci_dev(edev);
 	struct pci_dev *dev = userdata;
@@ -828,7 +830,8 @@ int pcibios_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state stat
 		eeh_pe_state_clear(pe, EEH_PE_ISOLATED);
 		break;
 	case pcie_hot_reset:
-		eeh_pe_state_mark_with_cfg(pe, EEH_PE_ISOLATED);
+		eeh_pe_mark_isolated(pe);
+		eeh_pe_state_clear(pe, EEH_PE_CFG_BLOCKED);
 		eeh_ops->set_option(pe, EEH_OPT_FREEZE_PE);
 		eeh_pe_dev_traverse(pe, eeh_disable_and_save_dev_state, dev);
 		if (!(pe->type & EEH_PE_VF))
@@ -836,7 +839,8 @@ int pcibios_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state stat
 		eeh_ops->reset(pe, EEH_RESET_HOT);
 		break;
 	case pcie_warm_reset:
-		eeh_pe_state_mark_with_cfg(pe, EEH_PE_ISOLATED);
+		eeh_pe_mark_isolated(pe);
+		eeh_pe_state_clear(pe, EEH_PE_CFG_BLOCKED);
 		eeh_ops->set_option(pe, EEH_OPT_FREEZE_PE);
 		eeh_pe_dev_traverse(pe, eeh_disable_and_save_dev_state, dev);
 		if (!(pe->type & EEH_PE_VF))
@@ -861,11 +865,10 @@ int pcibios_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state stat
  * the indicated device and its children so that the bunch of the
  * devices could be reset properly.
  */
-static void *eeh_set_dev_freset(void *data, void *flag)
+static void *eeh_set_dev_freset(struct eeh_dev *edev, void *flag)
 {
 	struct pci_dev *dev;
 	unsigned int *freset = (unsigned int *)flag;
-	struct eeh_dev *edev = (struct eeh_dev *)data;
 
 	dev = eeh_dev_to_pci_dev(edev);
 	if (dev)
@@ -888,7 +891,6 @@ static void *eeh_set_dev_freset(void *data, void *flag)
  */
 int eeh_pe_reset_full(struct eeh_pe *pe)
 {
-	int active_flags = (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE);
 	int reset_state = (EEH_PE_RESET | EEH_PE_CFG_BLOCKED);
 	int type = EEH_RESET_HOT;
 	unsigned int freset = 0;
@@ -918,16 +920,15 @@ int eeh_pe_reset_full(struct eeh_pe *pe)
 			break;
 
 		/* Wait until the PE is in a functioning state */
-		state = eeh_ops->wait_state(pe, PCI_BUS_RESET_WAIT_MSEC);
-		if ((state & active_flags) == active_flags)
-			break;
-
+		state = eeh_wait_state(pe, PCI_BUS_RESET_WAIT_MSEC);
 		if (state < 0) {
 			pr_warn("%s: Unrecoverable slot failure on PHB#%x-PE#%x",
 				__func__, pe->phb->global_number, pe->addr);
 			ret = -ENOTRECOVERABLE;
 			break;
 		}
+		if (eeh_state_active(state))
+			break;
 
 		/* Set error in case this is our last attempt */
 		ret = -EIO;
@@ -1041,6 +1042,11 @@ void eeh_probe_devices(void)
 		pdn = hose->pci_data;
 		traverse_pci_dn(pdn, eeh_ops->probe, NULL);
 	}
+	if (eeh_enabled())
+		pr_info("EEH: PCI Enhanced I/O Error Handling Enabled\n");
+	else
+		pr_info("EEH: No capable adapters found\n");
+
 }
 
 /**
@@ -1084,18 +1090,7 @@ static int eeh_init(void)
 		eeh_dev_phb_init_dynamic(hose);
 
 	/* Initialize EEH event */
-	ret = eeh_event_init();
-	if (ret)
-		return ret;
-
-	eeh_probe_devices();
-
-	if (eeh_enabled())
-		pr_info("EEH: PCI Enhanced I/O Error Handling Enabled\n");
-	else
-		pr_info("EEH: No capable adapters found\n");
-
-	return ret;
+	return eeh_event_init();
 }
 
 core_initcall_sync(eeh_init);
@@ -1352,16 +1347,15 @@ static int eeh_pe_change_owner(struct eeh_pe *pe)
 	struct eeh_dev *edev, *tmp;
 	struct pci_dev *pdev;
 	struct pci_device_id *id;
-	int flags, ret;
+	int ret;
 
 	/* Check PE state */
-	flags = (EEH_STATE_MMIO_ACTIVE | EEH_STATE_DMA_ACTIVE);
 	ret = eeh_ops->get_state(pe, NULL);
 	if (ret < 0 || ret == EEH_STATE_NOT_SUPPORT)
 		return 0;
 
 	/* Unfrozen PE, nothing to do */
-	if ((ret & flags) == flags)
+	if (eeh_state_active(ret))
 		return 0;
 
 	/* Frozen PE, check if it needs PE level reset */
@@ -1782,18 +1776,6 @@ static int proc_eeh_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static int proc_eeh_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, proc_eeh_show, NULL);
-}
-
-static const struct file_operations proc_eeh_operations = {
-	.open      = proc_eeh_open,
-	.read      = seq_read,
-	.llseek    = seq_lseek,
-	.release   = single_release,
-};
-
 #ifdef CONFIG_DEBUG_FS
 static int eeh_enable_dbgfs_set(void *data, u64 val)
 {
@@ -1835,7 +1817,7 @@ DEFINE_SIMPLE_ATTRIBUTE(eeh_freeze_dbgfs_ops, eeh_freeze_dbgfs_get,
 static int __init eeh_init_proc(void)
 {
 	if (machine_is(pseries) || machine_is(powernv)) {
-		proc_create("powerpc/eeh", 0, NULL, &proc_eeh_operations);
+		proc_create_single("powerpc/eeh", 0, NULL, proc_eeh_show);
 #ifdef CONFIG_DEBUG_FS
 		debugfs_create_file("eeh_enable", 0600,
                                     powerpc_debugfs_root, NULL,

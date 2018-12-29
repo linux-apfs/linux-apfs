@@ -1,4 +1,5 @@
-/*
+/* SPDX-License-Identifier: GPL-2.0+
+ *
  * include/linux/TODO
  *
  * userspace interface for pi433 radio module
@@ -42,7 +43,8 @@ enum option_on_off {
 /* IOCTL structs and commands */
 
 /**
- * struct pi433_tx_config - describes the configuration of the radio module for sending
+ * struct pi433_tx_config
+ * describes the configuration of the radio module for sending
  * @frequency:
  * @bit_rate:
  * @modulation:
@@ -67,9 +69,9 @@ struct pi433_tx_cfg {
 	enum modulation		modulation;
 	enum mod_shaping	mod_shaping;
 
-	enum paRamp		pa_ramp;
+	enum pa_ramp		pa_ramp;
 
-	enum txStartCondition	tx_start_condition;
+	enum tx_start_condition	tx_start_condition;
 
 	__u16			repetitions;
 
@@ -89,7 +91,8 @@ struct pi433_tx_cfg {
 };
 
 /**
- * struct pi433_rx_config - describes the configuration of the radio module for sending
+ * struct pi433_rx_config
+ * describes the configuration of the radio module for sending
  * @frequency:
  * @bit_rate:
  * @modulation:
@@ -115,9 +118,9 @@ struct pi433_rx_cfg {
 	enum modulation		modulation;
 
 	__u8			rssi_threshold;
-	enum thresholdDecrement	threshold_decrement;
-	enum antennaImpedance	antenna_impedance;
-	enum lnaGain		lna_gain;
+	enum threshold_decrement threshold_decrement;
+	enum antenna_impedance	antenna_impedance;
+	enum lna_gain		lna_gain;
 	enum mantisse		bw_mantisse;	/* normal: 0x50 */
 	__u8			bw_exponent;	/* during AFC: 0x8b */
 	enum dagc		dagc;
@@ -125,7 +128,7 @@ struct pi433_rx_cfg {
 	/* packet format */
 	enum option_on_off	enable_sync;
 	enum option_on_off	enable_length_byte;	  /* should be used in combination with sync, only */
-	enum addressFiltering	enable_address_filtering; /* operational with sync, only */
+	enum address_filtering	enable_address_filtering; /* operational with sync, only */
 	enum option_on_off	enable_crc;		  /* only operational, if sync on and fixed length or length byte is used */
 
 	__u8			sync_length;

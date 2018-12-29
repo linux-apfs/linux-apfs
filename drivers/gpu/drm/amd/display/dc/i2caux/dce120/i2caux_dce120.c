@@ -38,7 +38,8 @@
 
 #include "dce/dce_12_0_offset.h"
 #include "dce/dce_12_0_sh_mask.h"
-#include "soc15ip.h"
+#include "soc15_hw_ip.h"
+#include "vega10_ip_offset.h"
 
 /* begin *********************
  * macros to expend register list macro defined in HW object header file */
@@ -110,6 +111,7 @@ struct i2caux *dal_i2caux_dce120_create(
 
 	dal_i2caux_dce110_construct(i2caux_dce110,
 				    ctx,
+				    ARRAY_SIZE(dce120_aux_regs),
 				    dce120_aux_regs,
 				    dce120_hw_engine_regs,
 				    &i2c_shift,

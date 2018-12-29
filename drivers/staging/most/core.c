@@ -111,8 +111,10 @@ static void most_free_mbo_coherent(struct mbo *mbo)
 	struct most_channel *c = mbo->context;
 	u16 const coherent_buf_size = c->cfg.buffer_size + c->cfg.extra_len;
 
-	dma_free_coherent(NULL, coherent_buf_size, mbo->virt_address,
-			  mbo->bus_address);
+	if (c->iface->dma_free)
+		c->iface->dma_free(mbo, coherent_buf_size);
+	else
+		kfree(mbo->virt_address);
 	kfree(mbo);
 	if (atomic_sub_and_test(1, &c->mbo_ref))
 		complete(&c->cleanup);
@@ -349,7 +351,7 @@ static ssize_t set_datatype_show(struct device *dev,
 
 	for (i = 0; i < ARRAY_SIZE(ch_data_type); i++) {
 		if (c->cfg.data_type & ch_data_type[i].most_ch_data_type)
-			return snprintf(buf, PAGE_SIZE, ch_data_type[i].name);
+			return snprintf(buf, PAGE_SIZE, "%s", ch_data_type[i].name);
 	}
 	return snprintf(buf, PAGE_SIZE, "unconfigured\n");
 }
@@ -420,6 +422,44 @@ static ssize_t set_packets_per_xact_store(struct device *dev,
 	return count;
 }
 
+static ssize_t set_dbr_size_show(struct device *dev,
+				 struct device_attribute *attr, char *buf)
+{
+	struct most_channel *c = to_channel(dev);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n", c->cfg.dbr_size);
+}
+
+static ssize_t set_dbr_size_store(struct device *dev,
+				  struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct most_channel *c = to_channel(dev);
+	int ret = kstrtou16(buf, 0, &c->cfg.dbr_size);
+
+	if (ret)
+		return ret;
+	return count;
+}
+
+#define to_dev_attr(a) container_of(a, struct device_attribute, attr)
+static umode_t channel_attr_is_visible(struct kobject *kobj,
+				       struct attribute *attr, int index)
+{
+	struct device_attribute *dev_attr = to_dev_attr(attr);
+	struct device *dev = kobj_to_dev(kobj);
+	struct most_channel *c = to_channel(dev);
+
+	if (!strcmp(dev_attr->attr.name, "set_dbr_size") &&
+	    (c->iface->interface != ITYPE_MEDIALB_DIM2))
+		return 0;
+	if (!strcmp(dev_attr->attr.name, "set_packets_per_xact") &&
+	    (c->iface->interface != ITYPE_USB))
+		return 0;
+
+	return attr->mode;
+}
+
 #define DEV_ATTR(_name)  (&dev_attr_##_name.attr)
 
 static DEVICE_ATTR_RO(available_directions);
@@ -435,6 +475,7 @@ static DEVICE_ATTR_RW(set_direction);
 static DEVICE_ATTR_RW(set_datatype);
 static DEVICE_ATTR_RW(set_subbuffer_size);
 static DEVICE_ATTR_RW(set_packets_per_xact);
+static DEVICE_ATTR_RW(set_dbr_size);
 
 static struct attribute *channel_attrs[] = {
 	DEV_ATTR(available_directions),
@@ -450,11 +491,13 @@ static struct attribute *channel_attrs[] = {
 	DEV_ATTR(set_datatype),
 	DEV_ATTR(set_subbuffer_size),
 	DEV_ATTR(set_packets_per_xact),
+	DEV_ATTR(set_dbr_size),
 	NULL,
 };
 
 static struct attribute_group channel_attr_group = {
 	.attrs = channel_attrs,
+	.is_visible = channel_attr_is_visible,
 };
 
 static const struct attribute_group *channel_attr_groups[] = {
@@ -583,6 +626,7 @@ static ssize_t components_show(struct device_driver *drv, char *buf)
 	}
 	return offs;
 }
+
 /**
  * split_string - parses buf and extracts ':' separated substrings.
  *
@@ -915,7 +959,6 @@ static void arm_mbo(struct mbo *mbo)
 	unsigned long flags;
 	struct most_channel *c;
 
-	BUG_ON((!mbo) || (!mbo->context));
 	c = mbo->context;
 
 	if (c->is_poisoned) {
@@ -952,45 +995,49 @@ static int arm_mbo_chain(struct most_channel *c, int dir,
 			 void (*compl)(struct mbo *))
 {
 	unsigned int i;
-	int retval;
 	struct mbo *mbo;
+	unsigned long flags;
 	u32 coherent_buf_size = c->cfg.buffer_size + c->cfg.extra_len;
 
 	atomic_set(&c->mbo_nq_level, 0);
 
 	for (i = 0; i < c->cfg.num_buffers; i++) {
 		mbo = kzalloc(sizeof(*mbo), GFP_KERNEL);
-		if (!mbo) {
-			retval = i;
-			goto _exit;
-		}
+		if (!mbo)
+			goto flush_fifos;
+
 		mbo->context = c;
 		mbo->ifp = c->iface;
 		mbo->hdm_channel_id = c->channel_id;
-		mbo->virt_address = dma_alloc_coherent(NULL,
-						       coherent_buf_size,
-						       &mbo->bus_address,
-						       GFP_KERNEL);
-		if (!mbo->virt_address) {
-			pr_info("WARN: No DMA coherent buffer.\n");
-			retval = i;
-			goto _error1;
+		if (c->iface->dma_alloc) {
+			mbo->virt_address =
+				c->iface->dma_alloc(mbo, coherent_buf_size);
+		} else {
+			mbo->virt_address =
+				kzalloc(coherent_buf_size, GFP_KERNEL);
 		}
+		if (!mbo->virt_address)
+			goto release_mbo;
+
 		mbo->complete = compl;
 		mbo->num_buffers_ptr = &dummy_num_buffers;
 		if (dir == MOST_CH_RX) {
 			nq_hdm_mbo(mbo);
 			atomic_inc(&c->mbo_nq_level);
 		} else {
-			arm_mbo(mbo);
+			spin_lock_irqsave(&c->fifo_lock, flags);
+			list_add_tail(&mbo->list, &c->fifo);
+			spin_unlock_irqrestore(&c->fifo_lock, flags);
 		}
 	}
-	return i;
+	return c->cfg.num_buffers;
 
-_error1:
+release_mbo:
 	kfree(mbo);
-_exit:
-	return retval;
+
+flush_fifos:
+	flush_channel_fifos(c);
+	return 0;
 }
 
 /**
@@ -1017,8 +1064,6 @@ EXPORT_SYMBOL_GPL(most_submit_mbo);
 static void most_write_completion(struct mbo *mbo)
 {
 	struct most_channel *c;
-
-	BUG_ON((!mbo) || (!mbo->context));
 
 	c = mbo->context;
 	if (mbo->status == MBO_E_INVAL)
@@ -1190,7 +1235,7 @@ int most_start_channel(struct most_interface *iface, int id,
 	if (c->iface->configure(c->iface, c->channel_id, &c->cfg)) {
 		pr_info("channel configuration failed. Go check settings...\n");
 		ret = -EINVAL;
-		goto error;
+		goto err_put_module;
 	}
 
 	init_waitqueue_head(&c->hdm_fifo_wq);
@@ -1202,14 +1247,13 @@ int most_start_channel(struct most_interface *iface, int id,
 		num_buffer = arm_mbo_chain(c, c->cfg.direction,
 					   most_write_completion);
 	if (unlikely(!num_buffer)) {
-		pr_info("failed to allocate memory\n");
 		ret = -ENOMEM;
-		goto error;
+		goto err_put_module;
 	}
 
 	ret = run_enqueue_thread(c, id);
 	if (ret)
-		goto error;
+		goto err_put_module;
 
 	c->is_starving = 0;
 	c->pipe0.num_buffers = c->cfg.num_buffers / 2;
@@ -1224,7 +1268,7 @@ out:
 	mutex_unlock(&c->start_mutex);
 	return 0;
 
-error:
+err_put_module:
 	module_put(iface->mod);
 	mutex_unlock(&c->start_mutex);
 	return ret;
@@ -1381,7 +1425,6 @@ int most_register_interface(struct most_interface *iface)
 
 	iface->p = kzalloc(sizeof(*iface->p), GFP_KERNEL);
 	if (!iface->p) {
-		pr_info("Failed to allocate interface instance\n");
 		ida_simple_remove(&mdev_id, id);
 		return -ENOMEM;
 	}
@@ -1406,7 +1449,7 @@ int most_register_interface(struct most_interface *iface)
 
 		c = kzalloc(sizeof(*c), GFP_KERNEL);
 		if (!c)
-			goto free_instance;
+			goto err_free_resources;
 		if (!name_suffix)
 			snprintf(c->name, STRING_SIZE, "ch%d", i);
 		else
@@ -1415,10 +1458,6 @@ int most_register_interface(struct most_interface *iface)
 		c->dev.parent = &iface->dev;
 		c->dev.groups = channel_attr_groups;
 		c->dev.release = release_channel;
-		if (device_register(&c->dev)) {
-			pr_err("registering c->dev failed\n");
-			goto free_instance_nodev;
-		}
 		iface->p->channel[i] = c;
 		c->is_starving = 0;
 		c->iface = iface;
@@ -1441,15 +1480,19 @@ int most_register_interface(struct most_interface *iface)
 		mutex_init(&c->start_mutex);
 		mutex_init(&c->nq_mutex);
 		list_add_tail(&c->list, &iface->p->channel_list);
+		if (device_register(&c->dev)) {
+			pr_err("registering c->dev failed\n");
+			goto err_free_most_channel;
+		}
 	}
 	pr_info("registered new device mdev%d (%s)\n",
 		id, iface->description);
 	return 0;
 
-free_instance_nodev:
+err_free_most_channel:
 	kfree(c);
 
-free_instance:
+err_free_resources:
 	while (i > 0) {
 		c = iface->p->channel[--i];
 		device_unregister(&c->dev);
@@ -1474,7 +1517,8 @@ void most_deregister_interface(struct most_interface *iface)
 	int i;
 	struct most_channel *c;
 
-	pr_info("deregistering device %s (%s)\n", dev_name(&iface->dev), iface->description);
+	pr_info("deregistering device %s (%s)\n", dev_name(&iface->dev),
+		iface->description);
 	for (i = 0; i < iface->num_channels; i++) {
 		c = iface->p->channel[i];
 		if (c->pipe0.comp)
@@ -1569,20 +1613,20 @@ static int __init most_init(void)
 	err = driver_register(&mc.drv);
 	if (err) {
 		pr_info("Cannot register core driver\n");
-		goto exit_bus;
+		goto err_unregister_bus;
 	}
 	mc.dev.init_name = "most_bus";
 	mc.dev.release = release_most_sub;
 	if (device_register(&mc.dev)) {
 		err = -ENOMEM;
-		goto exit_driver;
+		goto err_unregister_driver;
 	}
 
 	return 0;
 
-exit_driver:
+err_unregister_driver:
 	driver_unregister(&mc.drv);
-exit_bus:
+err_unregister_bus:
 	bus_unregister(&mc.bus);
 	return err;
 }

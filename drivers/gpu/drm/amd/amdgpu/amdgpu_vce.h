@@ -30,6 +30,8 @@
 #define AMDGPU_VCE_HARVEST_VCE0 (1 << 0)
 #define AMDGPU_VCE_HARVEST_VCE1 (1 << 1)
 
+#define AMDGPU_VCE_FW_53_45	((53 << 24) | (45 << 16))
+
 struct amdgpu_vce {
 	struct amdgpu_bo	*vcpu_bo;
 	uint64_t		gpu_addr;
@@ -53,6 +55,7 @@ struct amdgpu_vce {
 
 int amdgpu_vce_sw_init(struct amdgpu_device *adev, unsigned long size);
 int amdgpu_vce_sw_fini(struct amdgpu_device *adev);
+int amdgpu_vce_entity_init(struct amdgpu_device *adev);
 int amdgpu_vce_suspend(struct amdgpu_device *adev);
 int amdgpu_vce_resume(struct amdgpu_device *adev);
 int amdgpu_vce_get_create_msg(struct amdgpu_ring *ring, uint32_t handle,

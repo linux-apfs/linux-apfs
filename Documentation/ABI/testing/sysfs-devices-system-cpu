@@ -198,6 +198,31 @@ Description:
 		time (in microseconds) this cpu should spend in this idle state
 		to make the transition worth the effort.
 
+What:		/sys/devices/system/cpu/cpuX/cpuidle/stateN/s2idle/
+Date:		March 2018
+KernelVersion:	v4.17
+Contact:	Linux power management list <linux-pm@vger.kernel.org>
+Description:
+		Idle state usage statistics related to suspend-to-idle.
+
+		This attribute group is only present for states that can be
+		used in suspend-to-idle with suspended timekeeping.
+
+What:		/sys/devices/system/cpu/cpuX/cpuidle/stateN/s2idle/time
+Date:		March 2018
+KernelVersion:	v4.17
+Contact:	Linux power management list <linux-pm@vger.kernel.org>
+Description:
+		Total time spent by the CPU in suspend-to-idle (with scheduler
+		tick suspended) after requesting this state.
+
+What:		/sys/devices/system/cpu/cpuX/cpuidle/stateN/s2idle/usage
+Date:		March 2018
+KernelVersion:	v4.17
+Contact:	Linux power management list <linux-pm@vger.kernel.org>
+Description:
+		Total number of times this state has been requested by the CPU
+		while entering suspend-to-idle.
 
 What:		/sys/devices/system/cpu/cpu#/cpufreq/*
 Date:		pre-git history
@@ -212,9 +237,6 @@ Description:	Discover and change clock speed of CPUs
 		There are many knobs to tweak in this directory.
 
 		See files in Documentation/cpu-freq/ for more information.
-
-		In particular, read Documentation/cpu-freq/user-guide.txt
-		to learn how to control the knobs.
 
 
 What:		/sys/devices/system/cpu/cpu#/cpufreq/freqdomain_cpus
@@ -453,6 +475,8 @@ What:		/sys/devices/system/cpu/vulnerabilities
 		/sys/devices/system/cpu/vulnerabilities/meltdown
 		/sys/devices/system/cpu/vulnerabilities/spectre_v1
 		/sys/devices/system/cpu/vulnerabilities/spectre_v2
+		/sys/devices/system/cpu/vulnerabilities/spec_store_bypass
+		/sys/devices/system/cpu/vulnerabilities/l1tf
 Date:		January 2018
 Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
 Description:	Information about CPU vulnerabilities
@@ -464,3 +488,26 @@ Description:	Information about CPU vulnerabilities
 		"Not affected"	  CPU is not affected by the vulnerability
 		"Vulnerable"	  CPU is affected and no mitigation in effect
 		"Mitigation: $M"  CPU is affected and mitigation $M is in effect
+
+		Details about the l1tf file can be found in
+		Documentation/admin-guide/l1tf.rst
+
+What:		/sys/devices/system/cpu/smt
+		/sys/devices/system/cpu/smt/active
+		/sys/devices/system/cpu/smt/control
+Date:		June 2018
+Contact:	Linux kernel mailing list <linux-kernel@vger.kernel.org>
+Description:	Control Symetric Multi Threading (SMT)
+
+		active:  Tells whether SMT is active (enabled and siblings online)
+
+		control: Read/write interface to control SMT. Possible
+			 values:
+
+			 "on"		SMT is enabled
+			 "off"		SMT is disabled
+			 "forceoff"	SMT is force disabled. Cannot be changed.
+			 "notsupported" SMT is not supported by the CPU
+
+			 If control status is "forceoff" or "notsupported" writes
+			 are rejected.

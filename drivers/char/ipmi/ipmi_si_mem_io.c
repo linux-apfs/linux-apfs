@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0+
 
 #include <linux/io.h>
 #include "ipmi_si.h"
@@ -50,7 +51,7 @@ static unsigned char mem_inq(const struct si_sm_io *io, unsigned int offset)
 static void mem_outq(const struct si_sm_io *io, unsigned int offset,
 		     unsigned char b)
 {
-	writeq(b << io->regshift, (io->addr)+(offset * io->regspacing));
+	writeq((u64)b << io->regshift, (io->addr)+(offset * io->regspacing));
 }
 #endif
 

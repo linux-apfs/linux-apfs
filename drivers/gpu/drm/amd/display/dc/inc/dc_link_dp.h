@@ -33,9 +33,10 @@ struct dc_link;
 struct dc_stream_state;
 struct dc_link_settings;
 
-bool dp_hbr_verify_link_cap(
+bool dp_verify_link_cap(
 	struct dc_link *link,
-	struct dc_link_settings *known_limit_link_setting);
+	struct dc_link_settings *known_limit_link_setting,
+	int *fail_count);
 
 bool dp_validate_mode_timing(
 	struct dc_link *link,
@@ -53,7 +54,7 @@ bool perform_link_training_with_retries(
 
 bool is_mst_supported(struct dc_link *link);
 
-void detect_dp_sink_caps(struct dc_link *link);
+bool detect_dp_sink_caps(struct dc_link *link);
 
 void detect_edp_sink_caps(struct dc_link *link);
 

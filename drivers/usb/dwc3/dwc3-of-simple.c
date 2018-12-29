@@ -27,6 +27,8 @@ struct dwc3_of_simple {
 	struct clk		**clks;
 	int			num_clocks;
 	struct reset_control	*resets;
+	bool			pulse_resets;
+	bool			need_reset;
 };
 
 static int dwc3_of_simple_clk_init(struct dwc3_of_simple *simple, int count)
@@ -83,6 +85,7 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
 
 	int			ret;
 	int			i;
+	bool			shared_resets = false;
 
 	simple = devm_kzalloc(dev, sizeof(*simple), GFP_KERNEL);
 	if (!simple)
@@ -91,16 +94,35 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, simple);
 	simple->dev = dev;
 
-	simple->resets = of_reset_control_array_get_optional_exclusive(np);
+	/*
+	 * Some controllers need to toggle the usb3-otg reset before trying to
+	 * initialize the PHY, otherwise the PHY times out.
+	 */
+	if (of_device_is_compatible(np, "rockchip,rk3399-dwc3"))
+		simple->need_reset = true;
+
+	if (of_device_is_compatible(np, "amlogic,meson-axg-dwc3") ||
+	    of_device_is_compatible(np, "amlogic,meson-gxl-dwc3")) {
+		shared_resets = true;
+		simple->pulse_resets = true;
+	}
+
+	simple->resets = of_reset_control_array_get(np, shared_resets, true);
 	if (IS_ERR(simple->resets)) {
 		ret = PTR_ERR(simple->resets);
 		dev_err(dev, "failed to get device resets, err=%d\n", ret);
 		return ret;
 	}
 
-	ret = reset_control_deassert(simple->resets);
-	if (ret)
-		goto err_resetc_put;
+	if (simple->pulse_resets) {
+		ret = reset_control_reset(simple->resets);
+		if (ret)
+			goto err_resetc_put;
+	} else {
+		ret = reset_control_deassert(simple->resets);
+		if (ret)
+			goto err_resetc_put;
+	}
 
 	ret = dwc3_of_simple_clk_init(simple, of_count_phandle_with_args(np,
 						"clocks", "#clock-cells"));
@@ -124,7 +146,8 @@ static int dwc3_of_simple_probe(struct platform_device *pdev)
 	return 0;
 
 err_resetc_assert:
-	reset_control_assert(simple->resets);
+	if (!simple->pulse_resets)
+		reset_control_assert(simple->resets);
 
 err_resetc_put:
 	reset_control_put(simple->resets);
@@ -145,17 +168,19 @@ static int dwc3_of_simple_remove(struct platform_device *pdev)
 	}
 	simple->num_clocks = 0;
 
-	reset_control_assert(simple->resets);
+	if (!simple->pulse_resets)
+		reset_control_assert(simple->resets);
+
 	reset_control_put(simple->resets);
 
-	pm_runtime_put_sync(dev);
 	pm_runtime_disable(dev);
+	pm_runtime_put_noidle(dev);
+	pm_runtime_set_suspended(dev);
 
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int dwc3_of_simple_runtime_suspend(struct device *dev)
+static int __maybe_unused dwc3_of_simple_runtime_suspend(struct device *dev)
 {
 	struct dwc3_of_simple	*simple = dev_get_drvdata(dev);
 	int			i;
@@ -166,7 +191,7 @@ static int dwc3_of_simple_runtime_suspend(struct device *dev)
 	return 0;
 }
 
-static int dwc3_of_simple_runtime_resume(struct device *dev)
+static int __maybe_unused dwc3_of_simple_runtime_resume(struct device *dev)
 {
 	struct dwc3_of_simple	*simple = dev_get_drvdata(dev);
 	int			ret;
@@ -183,19 +208,41 @@ static int dwc3_of_simple_runtime_resume(struct device *dev)
 
 	return 0;
 }
-#endif
+
+static int __maybe_unused dwc3_of_simple_suspend(struct device *dev)
+{
+	struct dwc3_of_simple *simple = dev_get_drvdata(dev);
+
+	if (simple->need_reset)
+		reset_control_assert(simple->resets);
+
+	return 0;
+}
+
+static int __maybe_unused dwc3_of_simple_resume(struct device *dev)
+{
+	struct dwc3_of_simple *simple = dev_get_drvdata(dev);
+
+	if (simple->need_reset)
+		reset_control_deassert(simple->resets);
+
+	return 0;
+}
 
 static const struct dev_pm_ops dwc3_of_simple_dev_pm_ops = {
+	SET_SYSTEM_SLEEP_PM_OPS(dwc3_of_simple_suspend, dwc3_of_simple_resume)
 	SET_RUNTIME_PM_OPS(dwc3_of_simple_runtime_suspend,
 			dwc3_of_simple_runtime_resume, NULL)
 };
 
 static const struct of_device_id of_dwc3_simple_match[] = {
-	{ .compatible = "qcom,dwc3" },
 	{ .compatible = "rockchip,rk3399-dwc3" },
 	{ .compatible = "xlnx,zynqmp-dwc3" },
 	{ .compatible = "cavium,octeon-7130-usb-uctl" },
 	{ .compatible = "sprd,sc9860-dwc3" },
+	{ .compatible = "amlogic,meson-axg-dwc3" },
+	{ .compatible = "amlogic,meson-gxl-dwc3" },
+	{ .compatible = "allwinner,sun50i-h6-dwc3" },
 	{ /* Sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, of_dwc3_simple_match);

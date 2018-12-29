@@ -17,7 +17,6 @@
 #include <linux/nodemask.h>
 #include <linux/memblock.h>
 #include <linux/fs.h>
-#include <linux/bootmem.h>
 #include <linux/io.h>
 
 #include <asm/cputype.h>
@@ -144,7 +143,7 @@ static void __init build_mem_type_table(void)
 
 static void __init *early_alloc(unsigned long sz)
 {
-	void *ptr = __va(memblock_alloc(sz, sz));
+	void *ptr = __va(memblock_phys_alloc(sz, sz));
 	memset(ptr, 0, sz);
 	return ptr;
 }
@@ -503,7 +502,7 @@ void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr,
 	if (page == ZERO_PAGE(0))
 		return;
 
-	mapping = page_mapping(page);
+	mapping = page_mapping_file(page);
 	if (!test_and_set_bit(PG_dcache_clean, &page->flags))
 		__flush_dcache_page(mapping, page);
 	if (mapping)

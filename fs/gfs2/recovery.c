@@ -15,6 +15,7 @@
 #include <linux/gfs2_ondisk.h>
 #include <linux/crc32.h>
 #include <linux/crc32c.h>
+#include <linux/ktime.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -409,14 +410,16 @@ void gfs2_recover_func(struct work_struct *work)
 	struct gfs2_sbd *sdp = GFS2_SB(jd->jd_inode);
 	struct gfs2_log_header_host head;
 	struct gfs2_holder j_gh, ji_gh, thaw_gh;
-	unsigned long t;
+	ktime_t t_start, t_jlck, t_jhd, t_tlck, t_rep;
 	int ro = 0;
 	unsigned int pass;
-	int error;
+	int error = 0;
 	int jlocked = 0;
 
-	if (sdp->sd_args.ar_spectator ||
-	    (jd->jd_jid != sdp->sd_lockstruct.ls_jid)) {
+	t_start = ktime_get();
+	if (sdp->sd_args.ar_spectator)
+		goto fail;
+	if (jd->jd_jid != sdp->sd_lockstruct.ls_jid) {
 		fs_info(sdp, "jid=%u: Trying to acquire journal lock...\n",
 			jd->jd_jid);
 		jlocked = 1;
@@ -446,6 +449,7 @@ void gfs2_recover_func(struct work_struct *work)
 		fs_info(sdp, "jid=%u, already locked for use\n", jd->jd_jid);
 	}
 
+	t_jlck = ktime_get();
 	fs_info(sdp, "jid=%u: Looking at journal...\n", jd->jd_jid);
 
 	error = gfs2_jdesc_check(jd);
@@ -455,12 +459,11 @@ void gfs2_recover_func(struct work_struct *work)
 	error = gfs2_find_jhead(jd, &head);
 	if (error)
 		goto fail_gunlock_ji;
+	t_jhd = ktime_get();
 
 	if (!(head.lh_flags & GFS2_LOG_HEAD_UNMOUNT)) {
 		fs_info(sdp, "jid=%u: Acquiring the transaction lock...\n",
 			jd->jd_jid);
-
-		t = jiffies;
 
 		/* Acquire a shared hold on the freeze lock */
 
@@ -495,6 +498,7 @@ void gfs2_recover_func(struct work_struct *work)
 			goto fail_gunlock_thaw;
 		}
 
+		t_tlck = ktime_get();
 		fs_info(sdp, "jid=%u: Replaying journal...\n", jd->jd_jid);
 
 		for (pass = 0; pass < 2; pass++) {
@@ -509,9 +513,14 @@ void gfs2_recover_func(struct work_struct *work)
 		clean_journal(jd, &head);
 
 		gfs2_glock_dq_uninit(&thaw_gh);
-		t = DIV_ROUND_UP(jiffies - t, HZ);
-		fs_info(sdp, "jid=%u: Journal replayed in %lus\n",
-			jd->jd_jid, t);
+		t_rep = ktime_get();
+		fs_info(sdp, "jid=%u: Journal replayed in %lldms [jlck:%lldms, "
+			"jhead:%lldms, tlck:%lldms, replay:%lldms]\n",
+			jd->jd_jid, ktime_ms_delta(t_rep, t_start),
+			ktime_ms_delta(t_jlck, t_start),
+			ktime_ms_delta(t_jhd, t_jlck),
+			ktime_ms_delta(t_tlck, t_jhd),
+			ktime_ms_delta(t_rep, t_tlck));
 	}
 
 	gfs2_recovery_done(sdp, jd->jd_jid, LM_RD_SUCCESS);

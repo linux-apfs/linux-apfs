@@ -19,12 +19,15 @@
 #include <linux/workqueue.h>
 #include <linux/of.h>
 #include <linux/ethtool.h>
+#include <linux/net_tstamp.h>
+#include <linux/phy.h>
 #include <net/devlink.h>
 #include <net/switchdev.h>
 
 struct tc_action;
 struct phy_device;
 struct fixed_phy_status;
+struct phylink_link_state;
 
 enum dsa_tag_protocol {
 	DSA_TAG_PROTO_NONE = 0,
@@ -32,6 +35,7 @@ enum dsa_tag_protocol {
 	DSA_TAG_PROTO_BRCM_PREPEND,
 	DSA_TAG_PROTO_DSA,
 	DSA_TAG_PROTO_EDSA,
+	DSA_TAG_PROTO_GSWIP,
 	DSA_TAG_PROTO_KSZ,
 	DSA_TAG_PROTO_LAN9303,
 	DSA_TAG_PROTO_MTK,
@@ -101,6 +105,7 @@ struct dsa_platform_data {
 };
 
 struct packet_type;
+struct dsa_switch;
 
 struct dsa_device_ops {
 	struct sk_buff *(*xmit)(struct sk_buff *skb, struct net_device *dev);
@@ -197,6 +202,7 @@ struct dsa_port {
 	u8			stp_state;
 	struct net_device	*bridge_dev;
 	struct devlink_port	devlink_port;
+	struct phylink		*pl;
 	/*
 	 * Original copy of the master netdev ethtool_ops
 	 */
@@ -253,6 +259,9 @@ struct dsa_switch {
 
 	/* Number of switch port queues */
 	unsigned int		num_tx_queues;
+
+	unsigned long		*bitmap;
+	unsigned long		_bitmap;
 
 	/* Dynamically allocated ports, keep last */
 	size_t num_ports;
@@ -352,12 +361,36 @@ struct dsa_switch_ops {
 				struct fixed_phy_status *st);
 
 	/*
+	 * PHYLINK integration
+	 */
+	void	(*phylink_validate)(struct dsa_switch *ds, int port,
+				    unsigned long *supported,
+				    struct phylink_link_state *state);
+	int	(*phylink_mac_link_state)(struct dsa_switch *ds, int port,
+					  struct phylink_link_state *state);
+	void	(*phylink_mac_config)(struct dsa_switch *ds, int port,
+				      unsigned int mode,
+				      const struct phylink_link_state *state);
+	void	(*phylink_mac_an_restart)(struct dsa_switch *ds, int port);
+	void	(*phylink_mac_link_down)(struct dsa_switch *ds, int port,
+					 unsigned int mode,
+					 phy_interface_t interface);
+	void	(*phylink_mac_link_up)(struct dsa_switch *ds, int port,
+				       unsigned int mode,
+				       phy_interface_t interface,
+				       struct phy_device *phydev);
+	void	(*phylink_fixed_state)(struct dsa_switch *ds, int port,
+				       struct phylink_link_state *state);
+	/*
 	 * ethtool hardware statistics.
 	 */
-	void	(*get_strings)(struct dsa_switch *ds, int port, uint8_t *data);
+	void	(*get_strings)(struct dsa_switch *ds, int port,
+			       u32 stringset, uint8_t *data);
 	void	(*get_ethtool_stats)(struct dsa_switch *ds,
 				     int port, uint64_t *data);
-	int	(*get_sset_count)(struct dsa_switch *ds);
+	int	(*get_sset_count)(struct dsa_switch *ds, int port, int sset);
+	void	(*get_ethtool_phy_stats)(struct dsa_switch *ds,
+					 int port, uint64_t *data);
 
 	/*
 	 * ethtool Wake-on-LAN
@@ -366,6 +399,12 @@ struct dsa_switch_ops {
 			   struct ethtool_wolinfo *w);
 	int	(*set_wol)(struct dsa_switch *ds, int port,
 			   struct ethtool_wolinfo *w);
+
+	/*
+	 * ethtool timestamp info
+	 */
+	int	(*get_ts_info)(struct dsa_switch *ds, int port,
+			       struct ethtool_ts_info *ts);
 
 	/*
 	 * Suspend and resume
@@ -469,6 +508,18 @@ struct dsa_switch_ops {
 					 int port, struct net_device *br);
 	void	(*crosschip_bridge_leave)(struct dsa_switch *ds, int sw_index,
 					  int port, struct net_device *br);
+
+	/*
+	 * PTP functionality
+	 */
+	int	(*port_hwtstamp_get)(struct dsa_switch *ds, int port,
+				     struct ifreq *ifr);
+	int	(*port_hwtstamp_set)(struct dsa_switch *ds, int port,
+				     struct ifreq *ifr);
+	bool	(*port_txtstamp)(struct dsa_switch *ds, int port,
+				 struct sk_buff *clone, unsigned int type);
+	bool	(*port_rxtstamp)(struct dsa_switch *ds, int port,
+				 struct sk_buff *skb, unsigned int type);
 };
 
 struct dsa_switch_driver {
@@ -567,5 +618,11 @@ static inline int call_dsa_notifiers(unsigned long val, struct net_device *dev,
 #define BRCM_TAG_SET_PORT_QUEUE(p, q)	((p) << 8 | q)
 #define BRCM_TAG_GET_PORT(v)		((v) >> 8)
 #define BRCM_TAG_GET_QUEUE(v)		((v) & 0xff)
+
+
+int dsa_port_get_phy_strings(struct dsa_port *dp, uint8_t *data);
+int dsa_port_get_ethtool_phy_stats(struct dsa_port *dp, uint64_t *data);
+int dsa_port_get_phy_sset_count(struct dsa_port *dp);
+void dsa_port_phylink_mac_change(struct dsa_switch *ds, int port, bool up);
 
 #endif

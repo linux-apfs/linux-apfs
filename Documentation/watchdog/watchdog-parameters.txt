@@ -40,6 +40,11 @@ margin: Watchdog margin in seconds (default=60)
 nowayout: Disable watchdog shutdown on close
 	(default=kernel config parameter)
 -------------------------------------------------
+armada_37xx_wdt:
+timeout: Watchdog timeout in seconds. (default=120)
+nowayout: Disable watchdog shutdown on close
+	(default=kernel config parameter)
+-------------------------------------------------
 at91rm9200_wdt:
 wdt_time: Watchdog time in seconds. (default=5)
 nowayout: Watchdog cannot be stopped once started
@@ -52,11 +57,6 @@ nowayout: Watchdog cannot be stopped once started
 -------------------------------------------------
 bcm47xx_wdt:
 wdt_time: Watchdog time in seconds. (default=30)
-nowayout: Watchdog cannot be stopped once started
-	(default=kernel config parameter)
--------------------------------------------------
-bfin_wdt:
-timeout: Watchdog timeout in seconds. (1<=timeout<=((2^32)/SCLK), default=20)
 nowayout: Watchdog cannot be stopped once started
 	(default=kernel config parameter)
 -------------------------------------------------

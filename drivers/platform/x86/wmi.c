@@ -130,13 +130,11 @@ static bool find_guid(const char *guid_string, struct wmi_block **out)
 	uuid_le guid_input;
 	struct wmi_block *wblock;
 	struct guid_block *block;
-	struct list_head *p;
 
 	if (uuid_le_to_bin(guid_string, &guid_input))
 		return false;
 
-	list_for_each(p, &wmi_block_list) {
-		wblock = list_entry(p, struct wmi_block, list);
+	list_for_each_entry(wblock, &wmi_block_list, list) {
 		block = &wblock->gblock;
 
 		if (memcmp(block->guid, &guid_input, 16) == 0) {
@@ -519,7 +517,6 @@ wmi_notify_handler handler, void *data)
 	struct wmi_block *block;
 	acpi_status status = AE_NOT_EXIST;
 	uuid_le guid_input;
-	struct list_head *p;
 
 	if (!guid || !handler)
 		return AE_BAD_PARAMETER;
@@ -527,9 +524,8 @@ wmi_notify_handler handler, void *data)
 	if (uuid_le_to_bin(guid, &guid_input))
 		return AE_BAD_PARAMETER;
 
-	list_for_each(p, &wmi_block_list) {
+	list_for_each_entry(block, &wmi_block_list, list) {
 		acpi_status wmi_status;
-		block = list_entry(p, struct wmi_block, list);
 
 		if (memcmp(block->gblock.guid, &guid_input, 16) == 0) {
 			if (block->handler &&
@@ -560,7 +556,6 @@ acpi_status wmi_remove_notify_handler(const char *guid)
 	struct wmi_block *block;
 	acpi_status status = AE_NOT_EXIST;
 	uuid_le guid_input;
-	struct list_head *p;
 
 	if (!guid)
 		return AE_BAD_PARAMETER;
@@ -568,9 +563,8 @@ acpi_status wmi_remove_notify_handler(const char *guid)
 	if (uuid_le_to_bin(guid, &guid_input))
 		return AE_BAD_PARAMETER;
 
-	list_for_each(p, &wmi_block_list) {
+	list_for_each_entry(block, &wmi_block_list, list) {
 		acpi_status wmi_status;
-		block = list_entry(p, struct wmi_block, list);
 
 		if (memcmp(block->gblock.guid, &guid_input, 16) == 0) {
 			if (!block->handler ||
@@ -610,15 +604,13 @@ acpi_status wmi_get_event_data(u32 event, struct acpi_buffer *out)
 	union acpi_object params[1];
 	struct guid_block *gblock;
 	struct wmi_block *wblock;
-	struct list_head *p;
 
 	input.count = 1;
 	input.pointer = params;
 	params[0].type = ACPI_TYPE_INTEGER;
 	params[0].integer.value = event;
 
-	list_for_each(p, &wmi_block_list) {
-		wblock = list_entry(p, struct wmi_block, list);
+	list_for_each_entry(wblock, &wmi_block_list, list) {
 		gblock = &wblock->gblock;
 
 		if ((gblock->flags & ACPI_WMI_EVENT) &&
@@ -903,7 +895,6 @@ static int wmi_dev_probe(struct device *dev)
 	struct wmi_driver *wdriver =
 		container_of(dev->driver, struct wmi_driver, driver);
 	int ret = 0;
-	int count;
 	char *buf;
 
 	if (ACPI_FAILURE(wmi_method_enable(wblock, 1)))
@@ -925,20 +916,18 @@ static int wmi_dev_probe(struct device *dev)
 			goto probe_failure;
 		}
 
-		count = get_order(wblock->req_buf_size);
-		wblock->handler_data = (void *)__get_free_pages(GFP_KERNEL,
-								count);
+		wblock->handler_data = kmalloc(wblock->req_buf_size,
+					       GFP_KERNEL);
 		if (!wblock->handler_data) {
 			ret = -ENOMEM;
 			goto probe_failure;
 		}
 
-		buf = kmalloc(strlen(wdriver->driver.name) + 5, GFP_KERNEL);
+		buf = kasprintf(GFP_KERNEL, "wmi/%s", wdriver->driver.name);
 		if (!buf) {
 			ret = -ENOMEM;
 			goto probe_string_failure;
 		}
-		sprintf(buf, "wmi/%s", wdriver->driver.name);
 		wblock->char_dev.minor = MISC_DYNAMIC_MINOR;
 		wblock->char_dev.name = buf;
 		wblock->char_dev.fops = &wmi_fops;
@@ -973,8 +962,7 @@ static int wmi_dev_remove(struct device *dev)
 	if (wdriver->filter_callback) {
 		misc_deregister(&wblock->char_dev);
 		kfree(wblock->char_dev.name);
-		free_pages((unsigned long)wblock->handler_data,
-			   get_order(wblock->req_buf_size));
+		kfree(wblock->handler_data);
 	}
 
 	if (wdriver->remove)
@@ -999,19 +987,19 @@ static struct bus_type wmi_bus_type = {
 	.remove = wmi_dev_remove,
 };
 
-static struct device_type wmi_type_event = {
+static const struct device_type wmi_type_event = {
 	.name = "event",
 	.groups = wmi_event_groups,
 	.release = wmi_dev_release,
 };
 
-static struct device_type wmi_type_method = {
+static const struct device_type wmi_type_method = {
 	.name = "method",
 	.groups = wmi_method_groups,
 	.release = wmi_dev_release,
 };
 
-static struct device_type wmi_type_data = {
+static const struct device_type wmi_type_data = {
 	.name = "data",
 	.groups = wmi_data_groups,
 	.release = wmi_dev_release,
@@ -1261,11 +1249,9 @@ static void acpi_wmi_notify_handler(acpi_handle handle, u32 event,
 {
 	struct guid_block *block;
 	struct wmi_block *wblock;
-	struct list_head *p;
 	bool found_it = false;
 
-	list_for_each(p, &wmi_block_list) {
-		wblock = list_entry(p, struct wmi_block, list);
+	list_for_each_entry(wblock, &wmi_block_list, list) {
 		block = &wblock->gblock;
 
 		if (wblock->acpi_device->handle == handle &&

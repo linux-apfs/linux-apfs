@@ -6,7 +6,7 @@
  * Licensed under the GPL.
  */
 
-#include <linux/bootmem.h>
+#include <linux/memblock.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/inetdevice.h>
@@ -288,7 +288,7 @@ static void uml_net_user_timer_expire(struct timer_list *t)
 #endif
 }
 
-static void setup_etheraddr(struct net_device *dev, char *str)
+void uml_net_setup_etheraddr(struct net_device *dev, char *str)
 {
 	unsigned char *addr = dev->dev_addr;
 	char *end;
@@ -412,7 +412,7 @@ static void eth_configure(int n, void *init, char *mac,
 	 */
 	snprintf(dev->name, sizeof(dev->name), "eth%d", n);
 
-	setup_etheraddr(dev, mac);
+	uml_net_setup_etheraddr(dev, mac);
 
 	printk(KERN_INFO "Netdevice %d (%pM) : ", n, dev->dev_addr);
 
@@ -650,7 +650,7 @@ static int __init eth_setup(char *str)
 		return 1;
 	}
 
-	new = alloc_bootmem(sizeof(*new));
+	new = memblock_alloc(sizeof(*new), SMP_CACHE_BYTES);
 
 	INIT_LIST_HEAD(&new->list);
 	new->index = n;

@@ -154,8 +154,10 @@ static int sprd_wdt_enable(struct sprd_wdt *wdt)
 	if (ret)
 		return ret;
 	ret = clk_prepare_enable(wdt->rtc_enable);
-	if (ret)
+	if (ret) {
+		clk_disable_unprepare(wdt->enable);
 		return ret;
+	}
 
 	sprd_wdt_unlock(wdt->base);
 	val = readl_relaxed(wdt->base + SPRD_WDT_CTRL);
@@ -277,10 +279,8 @@ static int sprd_wdt_probe(struct platform_device *pdev)
 
 	wdt_res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	wdt->base = devm_ioremap_resource(&pdev->dev, wdt_res);
-	if (IS_ERR(wdt->base)) {
-		dev_err(&pdev->dev, "failed to map memory resource\n");
+	if (IS_ERR(wdt->base))
 		return PTR_ERR(wdt->base);
-	}
 
 	wdt->enable = devm_clk_get(&pdev->dev, "enable");
 	if (IS_ERR(wdt->enable)) {
