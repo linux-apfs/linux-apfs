@@ -112,6 +112,10 @@ struct apfs_inode_info {
 	spinlock_t		i_extent_lock;	 /* Protects i_cached_extent */
 	struct timespec64	i_crtime;	 /* Time of creation */
 
+#if BITS_PER_LONG == 32
+	/* This is the actual inode number; vfs_inode.i_ino could overflow */
+	u64			i_ino;
+#endif
 	struct inode vfs_inode;
 };
 

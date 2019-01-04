@@ -172,6 +172,52 @@ done:
 	return ret;
 }
 
+#if BITS_PER_LONG == 64
+#define apfs_iget_locked iget_locked
+#else /* 64-bit inode numbers may not fit in the vfs inode */
+
+/**
+ * apfs_test_inode - Check if the inode matches a 64-bit inode number
+ * @inode:	inode to test
+ * @cnid:	pointer to the inode number
+ */
+static int apfs_test_inode(struct inode *inode, void *cnid)
+{
+	struct apfs_inode_info *ai = APFS_I(inode);
+	u64 *ino = cnid;
+
+	return ai->i_ino == *ino;
+}
+
+/**
+ * apfs_set_inode - Set a 64-bit inode number on the given inode
+ * @inode:	inode to set
+ * @cnid:	pointer to the inode number
+ */
+static int apfs_set_inode(struct inode *inode, void *cnid)
+{
+	struct apfs_inode_info *ai = APFS_I(inode);
+	u64 *ino = cnid;
+
+	ai->i_ino = *ino;
+	inode->i_ino = *ino; /* Just discard the higher bits here... */
+	return 0;
+}
+
+/**
+ * apfs_iget_locked - Wrapper for iget5_locked()
+ * @sb:		filesystem superblock
+ * @cnid:	64-bit inode number
+ *
+ * Works the same as iget_locked(), but supports 64-bit inode numbers.
+ */
+static struct inode *apfs_iget_locked(struct super_block *sb, u64 cnid)
+{
+	return iget5_locked(sb, cnid, apfs_test_inode, apfs_set_inode, &cnid);
+}
+
+#endif /* BITS_PER_LONG == 64 */
+
 /**
  * apfs_iget - Populate inode structures with metadata from disk
  * @sb:		filesystem superblock
@@ -180,25 +226,14 @@ done:
  * Populates the vfs inode and the corresponding apfs_inode_info structure.
  * Returns a pointer to the vfs inode in case of success, or an appropriate
  * error pointer otherwise.
- *
- * Most fields of the on-disk inode are 64 bits long and they may not fit in
- * the vfs fields. In that case this function will throw an overflow error.
- *
- * TODO: other filesystems also support 64 bit inode numbers; check out how
- * they handle this. And perhaps make some of this code architecture-dependent.
  */
 struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode;
-	unsigned long ino = cnid;
 	int err;
 
-	if (ino < cnid) {
-		apfs_warn(sb, "inode number overflow: 0x%llx", cnid);
-		return ERR_PTR(-EOVERFLOW);
-	}
-	inode = iget_locked(sb, ino);
+	inode = apfs_iget_locked(sb, cnid);
 	if (!inode)
 		return ERR_PTR(-ENOMEM);
 	if (!(inode->i_state & I_NEW))
@@ -251,5 +286,8 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 	stat->attributes_mask |= STATX_ATTR_COMPRESSED;
 
 	generic_fillattr(inode, stat);
+#if BITS_PER_LONG == 32
+	stat->ino = ai->i_ino;
+#endif
 	return 0;
 }
