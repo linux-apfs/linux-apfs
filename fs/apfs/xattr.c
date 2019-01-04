@@ -94,11 +94,8 @@ static int apfs_xattr_extents_read(struct inode *parent,
 
 	xdata = (struct apfs_xattr_dstream *) xattr->xdata;
 	length = le64_to_cpu(xdata->dstream.size);
-	if (length < 0 || length < le64_to_cpu(xdata->dstream.size)) {
-		apfs_warn(sb, "too large xattr in inode 0x%llx",
-			  (unsigned long long) parent->i_ino);
-		return -EOVERFLOW;
-	}
+	if (length < 0 || length < le64_to_cpu(xdata->dstream.size))
+		return -E2BIG;
 
 	if (!buffer) /* All we want is the length */
 		return length;
