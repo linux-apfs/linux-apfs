@@ -116,7 +116,7 @@ struct apfs_btree_info {
  */
 struct apfs_table {
 	u16 t_flags;		/* Table flags */
-	u16 t_records;		/* Number of records in the table */
+	u32 t_records;		/* Number of records in the table */
 
 	int t_key;		/* Offset of the key area in the block */
 	int t_free;		/* Offset of the free area in the block */

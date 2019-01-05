@@ -89,7 +89,7 @@ struct apfs_table *apfs_read_table(struct super_block *sb, u64 block)
 	}
 
 	table->t_flags = le16_to_cpu(raw->btn_flags);
-	table->t_records = le16_to_cpu(raw->btn_nkeys);
+	table->t_records = le32_to_cpu(raw->btn_nkeys);
 	table->t_key = sizeof(*raw) + le16_to_cpu(raw->btn_table_space.off)
 				+ le16_to_cpu(raw->btn_table_space.len);
 	table->t_free = table->t_key + le16_to_cpu(raw->btn_free_space.off);
