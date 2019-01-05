@@ -226,41 +226,6 @@ next_node:
 }
 
 /**
- * apfs_cat_resolve - Resolve a catalog key into an inode number
- * @sb:		filesystem superblock
- * @key:	catalog key (for a key record)
- * @ino:	on return, the inode number found
- *
- * Returns 0 and the inode number on success; Otherwise, return the
- * appropriate error code.
- */
-int apfs_cat_resolve(struct super_block *sb, struct apfs_key *key, u64 *ino)
-{
-	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_query *query;
-	struct apfs_drec drec;
-	int err = 0;
-
-	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query)
-		return -ENOMEM;
-	query->key = key;
-	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
-
-	err = apfs_btree_query(sb, &query);
-	if (err)
-		goto out;
-
-	err = apfs_drec_from_query(query, &drec);
-	if (!err)
-		*ino = drec.ino;
-
-out:
-	apfs_free_query(sb, query);
-	return err;
-}
-
-/**
  * apfs_omap_read_table - Find and read a table from a b-tree
  * @id:		node id for the seeked table
  *

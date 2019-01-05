@@ -45,8 +45,6 @@ extern struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 					   struct apfs_query *parent);
 extern void apfs_free_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_btree_query(struct super_block *sb, struct apfs_query **query);
-extern int apfs_cat_resolve(struct super_block *sb, struct apfs_key *key,
-			    u64 *ino);
 extern struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id);
 extern int apfs_omap_lookup_block(struct super_block *sb,
 				  struct apfs_table *tbl, u64 id, u64 *block);

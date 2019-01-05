@@ -69,13 +69,31 @@ int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
 int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
 {
 	struct super_block *sb = dir->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key key;
+	struct apfs_query *query;
+	struct apfs_drec drec;
 	u64 cnid = dir->i_ino;
 	int err;
 
 	apfs_init_drec_hashed_key(sb, cnid, child->name, &key);
 
-	err = apfs_cat_resolve(dir->i_sb, &key, ino);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+
+	err = apfs_btree_query(sb, &query);
+	if (err)
+		goto out;
+
+	err = apfs_drec_from_query(query, &drec);
+	if (!err)
+		*ino = drec.ino;
+
+out:
+	apfs_free_query(sb, query);
 	return err;
 }
 
