@@ -995,6 +995,7 @@ APFS FILE SYSTEM
 M:	Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
 L:	linux-apfs@googlegroups.com
 S:	Maintained
+T:	git git://github.com/eafer/linux-apfs.git
 F:	Documentation/filesystems/apfs.txt
 F:	fs/apfs/
 
