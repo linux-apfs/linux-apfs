@@ -45,10 +45,15 @@ When mounting an APFS filesystem, the following options are accepted:
 Credits
 =======
 
-The APFS module was written by Ernesto A. Fernández, based on reverse
-engineering done by others [1][2]. Some parts of the code imitate the
-ext2 module, and to a lesser degree xfs, udf, gfs2 and hfsplus.
+Originally written by Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>,
+with several contributions from Gabriel Krisman Bertazi <krisman@collabora.com>
+and Arnaud Ferraris <arnaud.ferraris@collabora.com>.
+
+Work was first based on reverse engineering done by others [1][2], and later
+on the (very incomplete) official specification [3]. Some parts of the code
+imitate the ext2 module, and to a lesser degree xfs, udf, gfs2 and hfsplus.
 
 [1] Hansen, K.H., Toolan, F., Decoding the APFS file system, Digital
     Investigation (2017), http://dx.doi.org/10.1016/j.diin.2017.07.003
 [2] https://github.com/sgan81/apfs-fuse
+[3] https://developer.apple.com/support/apple-file-system/Apple-File-System-Reference.pdf
