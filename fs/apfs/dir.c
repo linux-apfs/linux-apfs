@@ -52,8 +52,10 @@ int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
 	drec->name = de_key->name;
 	drec->name_len = namelen - 1; /* Don't count the NULL termination */
 	drec->ino = le64_to_cpu(de->file_id);
-	/* TODO: what if the dentry flags are corrupted? */
+
 	drec->type = le16_to_cpu(de->flags) & APFS_DREC_TYPE_MASK;
+	if (drec->type != DT_FIFO && drec->type & 1) /* Invalid file type */
+		drec->type = DT_UNKNOWN;
 	return 0;
 }
 
