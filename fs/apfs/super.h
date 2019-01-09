@@ -268,11 +268,11 @@ struct apfs_sb_info {
 	struct apfs_nx_superblock *s_msb_raw;		/* On-disk main sb */
 	struct apfs_superblock *s_vsb_raw;		/* On-disk volume sb */
 
-	struct apfs_table *s_cat_root;	/* Root of the catalog tree */
-	struct apfs_table *s_omap_root;	/* Root of the object map tree */
+	struct apfs_node *s_cat_root;	/* Root of the catalog tree */
+	struct apfs_node *s_omap_root;	/* Root of the object map tree */
 
-	struct apfs_node s_mnode;	/* Node of the main superblock */
-	struct apfs_node s_vnode;	/* Node of the volume checkpoint sb */
+	struct apfs_object s_mobject;	/* Main superblock object */
+	struct apfs_object s_vobject;	/* Volume superblock object */
 
 	/* Mount options */
 	unsigned int s_flags;
@@ -280,9 +280,9 @@ struct apfs_sb_info {
 	kuid_t s_uid;			/* uid to override on-disk uid */
 	kgid_t s_gid;			/* gid to override on-disk gid */
 
-	/* We must handle node sizes above the maximum blocksize of PAGE_SIZE */
-	unsigned long s_nodesize;
-	unsigned char s_nodesize_bits;
+	/* TODO: handle block sizes above the maximum of PAGE_SIZE? */
+	unsigned long s_blocksize;
+	unsigned char s_blocksize_bits;
 };
 
 static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)

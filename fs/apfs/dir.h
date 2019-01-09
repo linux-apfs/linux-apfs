@@ -15,7 +15,7 @@ struct apfs_query;
 
 /*
  * Structure of the value of a directory entry. This is the data in
- * the catalog tables for record type APFS_TYPE_DIR_REC.
+ * the catalog nodes for record type APFS_TYPE_DIR_REC.
  */
 struct apfs_drec_val {
 	__le64 file_id;

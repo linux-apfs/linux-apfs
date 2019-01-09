@@ -19,8 +19,8 @@
 #include "inode.h"
 #include "key.h"
 #include "message.h"
+#include "node.h"
 #include "super.h"
-#include "table.h"
 #include "xattr.h"
 
 /*
@@ -63,7 +63,7 @@ static int apfs_obj_verify_csum(struct super_block *sb,
  * @sb:	superblock structure
  *
  * Returns a negative error code in case of failure.  On success, returns 0
- * and sets APFS_SB(@sb)->s_msb_raw and APFS_SB(@sb)->s_mnode.
+ * and sets APFS_SB(@sb)->s_msb_raw and APFS_SB(@sb)->s_mobject.
  */
 static int apfs_map_main_super(struct super_block *sb)
 {
@@ -115,10 +115,10 @@ static int apfs_map_main_super(struct super_block *sb)
 	}
 
 	sbi->s_msb_raw = msb_raw;
-	sbi->s_mnode.sb = sb;
-	sbi->s_mnode.block_nr = APFS_NX_BLOCK_NUM;
-	sbi->s_mnode.node_id = le64_to_cpu(msb_raw->nx_o.o_oid);
-	sbi->s_mnode.bh = bh;
+	sbi->s_mobject.sb = sb;
+	sbi->s_mobject.block_nr = APFS_NX_BLOCK_NUM;
+	sbi->s_mobject.oid = le64_to_cpu(msb_raw->nx_o.o_oid);
+	sbi->s_mobject.bh = bh;
 	return 0;
 
 fail:
@@ -134,7 +134,7 @@ static inline void apfs_unmap_main_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 
-	brelse(sbi->s_mnode.bh);
+	brelse(sbi->s_mobject.bh);
 }
 
 /**
@@ -142,7 +142,7 @@ static inline void apfs_unmap_main_super(struct super_block *sb)
  * @sb:	superblock structure
  *
  * Returns a negative error code in case of failure.  On success, returns 0
- * and sets APFS_SB(@sb)->s_vsb_raw and APFS_SB(@sb)->s_vnode.
+ * and sets APFS_SB(@sb)->s_vsb_raw and APFS_SB(@sb)->s_vobject.
  */
 static int apfs_map_volume_super(struct super_block *sb)
 {
@@ -150,7 +150,7 @@ static int apfs_map_volume_super(struct super_block *sb)
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_superblock *vsb_raw;
 	struct apfs_omap_phys *msb_omap_raw;
-	struct apfs_table *vtable;
+	struct apfs_node *vnode;
 	struct buffer_head *bh;
 	u64 vol_id;
 	u64 msb_omap, vb, vsb;
@@ -158,7 +158,7 @@ static int apfs_map_volume_super(struct super_block *sb)
 
 	/* Get the id for the requested volume number */
 	if (sizeof(*msb_raw) + 8 * (sbi->s_vol_nr + 1) >= sb->s_blocksize) {
-		/* For now we assume that nodesize <= PAGE_SIZE */
+		/* For now we assume that blocksize <= PAGE_SIZE */
 		apfs_err(sb, "volume number out of range");
 		return -EINVAL;
 	}
@@ -182,14 +182,14 @@ static int apfs_map_volume_super(struct super_block *sb)
 	msb_omap_raw = NULL;
 	brelse(bh);
 
-	vtable = apfs_read_table(sb, vb);
-	if (IS_ERR(vtable)) {
+	vnode = apfs_read_node(sb, vb);
+	if (IS_ERR(vnode)) {
 		apfs_err(sb, "unable to read volume block");
-		return PTR_ERR(vtable);
+		return PTR_ERR(vnode);
 	}
 
-	err = apfs_omap_lookup_block(sb, vtable, vol_id, &vsb);
-	apfs_table_put(vtable);
+	err = apfs_omap_lookup_block(sb, vnode, vol_id, &vsb);
+	apfs_node_put(vnode);
 	if (err) {
 		apfs_err(sb, "volume not found, likely corruption");
 		return err;
@@ -209,10 +209,10 @@ static int apfs_map_volume_super(struct super_block *sb)
 	}
 
 	sbi->s_vsb_raw = vsb_raw;
-	sbi->s_vnode.sb = sb;
-	sbi->s_vnode.block_nr = vsb;
-	sbi->s_vnode.node_id = le64_to_cpu(vsb_raw->apfs_o.o_oid);
-	sbi->s_vnode.bh = bh;
+	sbi->s_vobject.sb = sb;
+	sbi->s_vobject.block_nr = vsb;
+	sbi->s_vobject.oid = le64_to_cpu(vsb_raw->apfs_o.o_oid);
+	sbi->s_vobject.bh = bh;
 	return 0;
 }
 
@@ -224,7 +224,7 @@ static inline void apfs_unmap_volume_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 
-	brelse(sbi->s_vnode.bh);
+	brelse(sbi->s_vobject.bh);
 }
 
 /**
@@ -239,7 +239,7 @@ static int apfs_read_omap(struct super_block *sb)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
 	struct apfs_omap_phys *omap_raw;
-	struct apfs_table *omap_root;
+	struct apfs_node *omap_root;
 	struct buffer_head *bh;
 	u64 omap_blk, omap_root_blk;
 
@@ -255,7 +255,7 @@ static int apfs_read_omap(struct super_block *sb)
 	/* Get the volume's object map */
 	omap_root_blk = le64_to_cpu(omap_raw->om_tree_oid);
 	brelse(bh);
-	omap_root = apfs_read_table(sb, omap_root_blk);
+	omap_root = apfs_read_node(sb, omap_root_blk);
 	if (IS_ERR(omap_root)) {
 		apfs_err(sb, "unable to read the omap root node");
 		return PTR_ERR(omap_root);
@@ -276,16 +276,16 @@ static int apfs_read_catalog(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
-	struct apfs_table *root_table;
+	struct apfs_node *root_node;
 	u64 root_id;
 
 	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
-	root_table = apfs_omap_read_table(sb, root_id);
-	if (IS_ERR(root_table)) {
+	root_node = apfs_omap_read_node(sb, root_id);
+	if (IS_ERR(root_node)) {
 		apfs_err(sb, "unable to read catalog root node");
-		return PTR_ERR(root_table);
+		return PTR_ERR(root_node);
 	}
-	sbi->s_cat_root = root_table;
+	sbi->s_cat_root = root_node;
 	return 0;
 }
 
@@ -293,8 +293,8 @@ static void apfs_put_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 
-	apfs_table_put(sbi->s_cat_root);
-	apfs_table_put(sbi->s_omap_root);
+	apfs_node_put(sbi->s_cat_root);
+	apfs_node_put(sbi->s_omap_root);
 
 	apfs_unmap_main_super(sb);
 	apfs_unmap_volume_super(sb);
@@ -371,7 +371,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
-	struct apfs_table *vtable;
+	struct apfs_node *vnode;
 	struct apfs_omap_phys *msb_omap_raw;
 	struct apfs_superblock *vsb_raw;
 	struct buffer_head *bh;
@@ -393,19 +393,19 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	msb_omap_raw = NULL;
 	brelse(bh);
 	bh = NULL;
-	vtable = apfs_read_table(sb, vb);
-	if (IS_ERR(vtable)) {
+	vnode = apfs_read_node(sb, vb);
+	if (IS_ERR(vnode)) {
 		apfs_err(sb, "unable to read volume block");
-		return PTR_ERR(vtable);
+		return PTR_ERR(vnode);
 	}
 
 	/* Iterate through the checkpoint superblocks and add the used blocks */
 	*count = 0;
-	for (i = 0; i < vtable->t_records; i++) {
+	for (i = 0; i < vnode->records; i++) {
 		int len, off;
 		__le64 *block;
 
-		len = apfs_table_locate_data(vtable, i, &off);
+		len = apfs_node_locate_data(vnode, i, &off);
 		if (len != 16) {
 			err = -EIO;
 			apfs_err(sb, "bad index in volume block");
@@ -413,7 +413,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 		}
 
 		/* The block number is in the second 64 bits of data */
-		block = (__le64 *)(vtable->t_node.bh->b_data + off + 8);
+		block = (__le64 *)(vnode->object.bh->b_data + off + 8);
 		vsb = le64_to_cpu(*block);
 
 		bh = sb_bread(sb, vsb);
@@ -429,7 +429,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	}
 
 cleanup:
-	apfs_table_put(vtable);
+	apfs_node_put(vnode);
 	return err;
 }
 
@@ -589,9 +589,9 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (err)
 		goto failed_main_super;
 
-	/* For now we only support nodesize < PAGE_SIZE */
-	sbi->s_nodesize = sb->s_blocksize;
-	sbi->s_nodesize_bits = sb->s_blocksize_bits;
+	/* For now we only support blocksize < PAGE_SIZE */
+	sbi->s_blocksize = sb->s_blocksize;
+	sbi->s_blocksize_bits = sb->s_blocksize_bits;
 
 	err = parse_options(sb, data);
 	if (err)
@@ -630,9 +630,9 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 failed_mount:
-	apfs_table_put(sbi->s_cat_root);
+	apfs_node_put(sbi->s_cat_root);
 failed_cat:
-	apfs_table_put(sbi->s_omap_root);
+	apfs_node_put(sbi->s_omap_root);
 failed_omap:
 	apfs_unmap_volume_super(sb);
 failed_volume_super:

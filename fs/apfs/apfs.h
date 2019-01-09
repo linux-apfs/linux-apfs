@@ -76,18 +76,16 @@ struct apfs_obj_phys {
 } __packed;
 
 /*
- * In-memory representation of an APFS node
+ * In-memory representation of an APFS object
  */
-struct apfs_node {
+struct apfs_object {
 	struct super_block *sb;
 	u64 block_nr;
-	u64 node_id;		/* Often the same as the block number */
+	u64 oid;		/* Often the same as the block number */
 
 	/*
-	 * Buffer head containing the first block of the node. If the true
-	 * blocksize of the file system is above PAGE_SIZE, then sb->blocksize
-	 * should be set to PAGE_SIZE and more than one buffer head will be
-	 * needed for each node. This is not yet implemented.
+	 * Buffer head containing the one block of the object.  TODO: support
+	 * objects with more than one block.
 	 */
 	struct buffer_head *bh;
 };

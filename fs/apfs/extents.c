@@ -13,8 +13,8 @@
 #include "inode.h"
 #include "key.h"
 #include "message.h"
+#include "node.h"
 #include "super.h"
-#include "table.h"
 
 /**
  * apfs_extent_from_query - Read the extent found by a successful query
@@ -28,10 +28,10 @@
 int apfs_extent_from_query(struct apfs_query *query,
 			   struct apfs_file_extent *extent)
 {
-	struct super_block *sb = query->table->t_node.sb;
+	struct super_block *sb = query->node->object.sb;
 	struct apfs_file_extent_val *ext;
 	struct apfs_file_extent_key *ext_key;
-	char *raw = query->table->t_node.bh->b_data;
+	char *raw = query->node->object.bh->b_data;
 	u64 ext_len;
 
 	if (query->len != sizeof(*ext) || query->key_len != sizeof(*ext_key))

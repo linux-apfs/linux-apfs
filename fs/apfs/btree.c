@@ -12,8 +12,8 @@
 #include "dir.h"
 #include "key.h"
 #include "message.h"
+#include "node.h"
 #include "super.h"
-#include "table.h"
 
 /**
  * apfs_child_from_query - Read the child id found by a successful nonleaf query
@@ -26,7 +26,7 @@
  */
 static int apfs_child_from_query(struct apfs_query *query, u64 *child)
 {
-	char *raw = query->table->t_node.bh->b_data;
+	char *raw = query->node->object.bh->b_data;
 
 	if (query->len != 8) /* The data on a nonleaf node is the child id */
 		return -EFSCORRUPTED;
@@ -44,7 +44,7 @@ static int apfs_child_from_query(struct apfs_query *query, u64 *child)
  *
  * Returns 0 on success or a negative error code in case of failure.
  */
-int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
+int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 			   u64 id, u64 *block)
 {
 	struct apfs_query *query;
@@ -66,7 +66,7 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_table *tbl,
 	ret = apfs_bno_from_query(query, block);
 	if (ret)
 		apfs_alert(sb, "bad object map leaf block: 0x%llx",
-			   query->table->t_node.block_nr);
+			   query->node->object.block_nr);
 
 fail:
 	apfs_free_query(sb, query);
@@ -75,16 +75,16 @@ fail:
 
 /**
  * apfs_alloc_query - Allocates a query structure
- * @table:	table to be searched
- * @parent:	query for the parent table
+ * @node:	node to be searched
+ * @parent:	query for the parent node
  *
- * Callers other than apfs_btree_query() should set @parent to NULL, and @table
+ * Callers other than apfs_btree_query() should set @parent to NULL, and @node
  * to the root of the b-tree. They should also initialize most of the query
  * fields themselves; when @parent is not NULL the query will inherit them.
  *
  * Returns the allocated query, or NULL in case of failure.
  */
-struct apfs_query *apfs_alloc_query(struct apfs_table *table,
+struct apfs_query *apfs_alloc_query(struct apfs_node *node,
 				    struct apfs_query *parent)
 {
 	struct apfs_query *query;
@@ -94,14 +94,14 @@ struct apfs_query *apfs_alloc_query(struct apfs_table *table,
 		return NULL;
 
 	/* To be released by free_query. */
-	apfs_table_get(table);
-	query->table = table;
+	apfs_node_get(node);
+	query->node = node;
 	query->key = parent ? parent->key : NULL;
 	query->flags = parent ?
 		parent->flags & ~(APFS_QUERY_DONE | APFS_QUERY_NEXT) : 0;
 	query->parent = parent;
 	/* Start the search with the last record and go backwards */
-	query->index = table->t_records;
+	query->index = node->records;
 	query->depth = parent ? parent->depth + 1 : 0;
 
 	return query;
@@ -119,7 +119,7 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 	while (query) {
 		struct apfs_query *parent = query->parent;
 
-		apfs_table_put(query->table);
+		apfs_node_put(query->node);
 		kfree(query);
 		query = parent;
 	}
@@ -130,11 +130,11 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
  * @sb:		filesystem superblock
  * @query:	the query to execute
  *
- * Searches the b-tree starting at @query->index in @query->table, looking for
+ * Searches the b-tree starting at @query->index in @query->node, looking for
  * the record corresponding to @query->key.
  *
  * Returns 0 in case of success and sets the @query->len, @query->off and
- * @query->index fields to the results of the query. @query->table will now
+ * @query->index fields to the results of the query. @query->node will now
  * point to the leaf node holding the record.
  *
  * In case of failure returns an appropriate error code.
@@ -142,7 +142,7 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
 int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *table;
+	struct apfs_node *node;
 	struct apfs_query *parent;
 	u64 child_id, child_blk;
 	int err;
@@ -158,7 +158,7 @@ next_node:
 		return -EFSCORRUPTED;
 	}
 
-	err = apfs_table_query(sb, *query);
+	err = apfs_node_query(sb, *query);
 	if (err == -EAGAIN) {
 		if (!(*query)->parent) /* We are at the root of the tree */
 			return -ENODATA;
@@ -173,13 +173,13 @@ next_node:
 	}
 	if (err)
 		return err;
-	if (apfs_table_is_leaf((*query)->table)) /* All done */
+	if (apfs_node_is_leaf((*query)->node)) /* All done */
 		return 0;
 
 	err = apfs_child_from_query(*query, &child_id);
 	if (err) {
 		apfs_alert(sb, "bad index block: 0x%llx",
-			   (*query)->table->t_node.block_nr);
+			   (*query)->node->object.block_nr);
 		return err;
 	}
 
@@ -201,41 +201,41 @@ next_node:
 	}
 
 	/* Now go a level deeper and search the child */
-	table = apfs_read_table(sb, child_blk);
-	if (IS_ERR(table))
-		return PTR_ERR(table);
+	node = apfs_read_node(sb, child_blk);
+	if (IS_ERR(node))
+		return PTR_ERR(node);
 
-	if (table->t_node.node_id != child_id)
+	if (node->object.oid != child_id)
 		apfs_debug(sb, "corrupt b-tree");
 
 	if ((*query)->flags & APFS_QUERY_MULTIPLE) {
 		/*
 		 * We are looking for multiple entries, so we must remember
-		 * the parent table and index to continue the search later.
+		 * the parent node and index to continue the search later.
 		 */
-		*query = apfs_alloc_query(table, *query);
-		apfs_table_put(table);
+		*query = apfs_alloc_query(node, *query);
+		apfs_node_put(node);
 	} else {
 		/* Reuse the same query structure to search the child */
-		apfs_table_put((*query)->table);
-		(*query)->table = table;
-		(*query)->index = table->t_records;
+		apfs_node_put((*query)->node);
+		(*query)->node = node;
+		(*query)->index = node->records;
 		(*query)->depth++;
 	}
 	goto next_node;
 }
 
 /**
- * apfs_omap_read_table - Find and read a table from a b-tree
- * @id:		node id for the seeked table
+ * apfs_omap_read_node - Find and read a node from a b-tree
+ * @id:		id for the seeked node
  *
  * Returns NULL is case of failure, otherwise a pointer to the resulting
- * apfs_table structure.
+ * apfs_node structure.
  */
-struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id)
+struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_table *result;
+	struct apfs_node *result;
 	u64 block;
 	int err;
 
@@ -243,11 +243,11 @@ struct apfs_table *apfs_omap_read_table(struct super_block *sb, u64 id)
 	if (err)
 		return ERR_PTR(err);
 
-	result = apfs_read_table(sb, block);
+	result = apfs_read_node(sb, block);
 	if (IS_ERR(result))
 		return result;
 
-	if (result->t_node.node_id != id)
+	if (result->object.oid != id)
 		apfs_debug(sb, "corrupt b-tree");
 
 	return result;

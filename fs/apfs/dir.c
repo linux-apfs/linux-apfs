@@ -12,8 +12,8 @@
 #include "dir.h"
 #include "key.h"
 #include "message.h"
+#include "node.h"
 #include "super.h"
-#include "table.h"
 
 /**
  * apfs_drec_from_query - Read the directory record found by a successful query
@@ -29,7 +29,7 @@
  */
 int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
 {
-	char *raw = query->table->t_node.bh->b_data;
+	char *raw = query->node->object.bh->b_data;
 	struct apfs_drec_hashed_key *de_key;
 	struct apfs_drec_val *de;
 	int namelen = query->key_len - sizeof(*de_key);

@@ -12,7 +12,7 @@
 #include "extents.h"
 #include "key.h"
 #include "super.h"
-#include "table.h"
+#include "node.h"
 #include "message.h"
 #include "xattr.h"
 
@@ -33,7 +33,7 @@ static int apfs_xattr_from_query(struct apfs_query *query,
 {
 	struct apfs_xattr_val *xattr_val;
 	struct apfs_xattr_key *xattr_key;
-	char *raw = query->table->t_node.bh->b_data;
+	char *raw = query->node->object.bh->b_data;
 	int datalen = query->len - sizeof(*xattr_val);
 	int namelen = query->key_len - sizeof(*xattr_key);
 

@@ -16,8 +16,8 @@
 #include "inode.h"
 #include "key.h"
 #include "message.h"
+#include "node.h"
 #include "super.h"
-#include "table.h"
 #include "xattr.h"
 
 static int apfs_readpage(struct file *file, struct page *page)
@@ -58,7 +58,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	struct apfs_dstream *dstream = NULL;
 	struct apfs_xf_blob *xblob;
 	struct apfs_x_field *xfield;
-	char *raw = query->table->t_node.bh->b_data;
+	char *raw = query->node->object.bh->b_data;
 	int rest, i;
 	u64 secs;
 

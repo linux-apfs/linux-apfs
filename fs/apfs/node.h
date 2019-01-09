@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- *  linux/fs/apfs/table.h
+ *  linux/fs/apfs/node.h
  *
  * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
-#ifndef _APFS_TABLE_H
-#define _APFS_TABLE_H
+#ifndef _APFS_NODE_H
+#define _APFS_NODE_H
 
 #include <linux/fs.h>
 #include <linux/kref.h>
@@ -112,57 +112,57 @@ struct apfs_btree_info {
 } __packed;
 
 /*
- * In-memory representation of an APFS table
+ * In-memory representation of an APFS node
  */
-struct apfs_table {
-	u16 t_flags;		/* Table flags */
-	u32 t_records;		/* Number of records in the table */
+struct apfs_node {
+	u16 flags;		/* Node flags */
+	u32 records;		/* Number of records in the node */
 
-	int t_key;		/* Offset of the key area in the block */
-	int t_free;		/* Offset of the free area in the block */
-	int t_data;		/* Offset of the data area in the block */
+	int key;		/* Offset of the key area in the block */
+	int free;		/* Offset of the free area in the block */
+	int data;		/* Offset of the data area in the block */
 
-	struct apfs_node t_node;/* Node holding the table */
+	struct apfs_object object; /* Object holding the node */
 
 	struct kref refcount;
 };
 
 /**
- * apfs_table_is_leaf - Check if a b-tree table is a leaf node
- * @table: the table to check
+ * apfs_node_is_leaf - Check if a b-tree node is a leaf
+ * @node: the node to check
  */
-static inline bool apfs_table_is_leaf(struct apfs_table *table)
+static inline bool apfs_node_is_leaf(struct apfs_node *node)
 {
-	return (table->t_flags & APFS_BTNODE_LEAF) != 0;
+	return (node->flags & APFS_BTNODE_LEAF) != 0;
 }
 
 /**
- * apfs_table_is_root - Check if a b-tree table is a root node
- * @table: the table to check
+ * apfs_node_is_root - Check if a b-tree node is the root
+ * @node: the node to check
  */
-static inline bool apfs_table_is_root(struct apfs_table *table)
+static inline bool apfs_node_is_root(struct apfs_node *node)
 {
-	return (table->t_flags & APFS_BTNODE_ROOT) != 0;
+	return (node->flags & APFS_BTNODE_ROOT) != 0;
 }
 
 /**
- * apfs_table_has_fixed_kv_size - Check if a b-tree table has fixed key/value
+ * apfs_node_has_fixed_kv_size - Check if a b-tree node has fixed key/value
  * sizes
- * @table: the table to check
+ * @node: the node to check
  */
-static inline bool apfs_table_has_fixed_kv_size(struct apfs_table *table)
+static inline bool apfs_node_has_fixed_kv_size(struct apfs_node *node)
 {
-	return (table->t_flags & APFS_BTNODE_FIXED_KV_SIZE) != 0;
+	return (node->flags & APFS_BTNODE_FIXED_KV_SIZE) != 0;
 }
 
-extern struct apfs_table *apfs_read_table(struct super_block *sb, u64 block);
-extern int apfs_table_locate_key(struct apfs_table *table,
+extern struct apfs_node *apfs_read_node(struct super_block *sb, u64 block);
+extern int apfs_node_locate_key(struct apfs_node *node,
+				int index, int *off);
+extern int apfs_node_locate_data(struct apfs_node *node,
 				 int index, int *off);
-extern int apfs_table_locate_data(struct apfs_table *table,
-				  int index, int *off);
-extern int apfs_table_query(struct super_block *sb, struct apfs_query *query);
+extern int apfs_node_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_bno_from_query(struct apfs_query *query, u64 *bno);
 
-void apfs_table_get(struct apfs_table *table);
-void apfs_table_put(struct apfs_table *table);
-#endif	/* _APFS_TABLE_H */
+void apfs_node_get(struct apfs_node *node);
+void apfs_node_put(struct apfs_node *node);
+#endif	/* _APFS_NODE_H */
