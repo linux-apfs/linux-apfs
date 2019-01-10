@@ -125,14 +125,12 @@ int apfs_node_locate_key(struct apfs_node *node, int index, int *off)
 {
 	struct super_block *sb = node->object.sb;
 	struct apfs_btree_node_phys *raw;
-	int flags;
 	int len;
 
 	if (index >= node->records)
 		return 0;
 
 	raw = (struct apfs_btree_node_phys *)node->object.bh->b_data;
-	flags = node->flags;
 	if (apfs_node_has_fixed_kv_size(node)) {
 		struct apfs_kvoff *entry;
 
@@ -171,14 +169,12 @@ int apfs_node_locate_data(struct apfs_node *node, int index, int *off)
 {
 	struct super_block *sb = node->object.sb;
 	struct apfs_btree_node_phys *raw;
-	int flags;
 	int len;
 
 	if (index >= node->records)
 		return 0;
 
 	raw = (struct apfs_btree_node_phys *)node->object.bh->b_data;
-	flags = node->flags;
 	if (apfs_node_has_fixed_kv_size(node)) {
 		/* These node types have fixed length keys and data */
 		struct apfs_kvoff *entry;
