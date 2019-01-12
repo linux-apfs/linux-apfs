@@ -372,9 +372,8 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
 	struct apfs_node *vnode;
 	struct apfs_omap_phys *msb_omap_raw;
-	struct apfs_superblock *vsb_raw;
 	struct buffer_head *bh;
-	u64 msb_omap, vb, vsb;
+	u64 msb_omap, vb;
 	int i;
 	int err = 0;
 
@@ -400,34 +399,29 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 
 	/* Iterate through the checkpoint superblocks and add the used blocks */
 	*count = 0;
-	for (i = 0; i < vnode->records; i++) {
-		int len, off;
-		__le64 *block;
+	for (i = 0; i < APFS_NX_MAX_FILE_SYSTEMS; i++) {
+		struct apfs_superblock *vsb_raw;
+		u64 vol_id;
+		u64 vol_bno;
 
-		len = apfs_node_locate_data(vnode, i, &off);
-		if (len != 16) {
-			err = -EIO;
-			apfs_err(sb, "bad index in volume block");
-			goto cleanup;
-		}
+		vol_id = le64_to_cpu(msb_raw->nx_fs_oid[i]);
+		if (vol_id == 0) /* All volumes have been checked */
+			break;
+		err = apfs_omap_lookup_block(sb, vnode, vol_id, &vol_bno);
+		if (err)
+			break;
 
-		/* The block number is in the second 64 bits of data */
-		block = (__le64 *)(vnode->object.bh->b_data + off + 8);
-		vsb = le64_to_cpu(*block);
-
-		bh = sb_bread(sb, vsb);
+		bh = sb_bread(sb, vol_bno);
 		if (!bh) {
 			err = -EIO;
 			apfs_err(sb, "unable to read volume superblock");
-			goto cleanup;
+			break;
 		}
-
 		vsb_raw = (struct apfs_superblock *)bh->b_data;
 		*count += le64_to_cpu(vsb_raw->apfs_fs_alloc_count);
 		brelse(bh);
 	}
 
-cleanup:
 	apfs_node_put(vnode);
 	return err;
 }
