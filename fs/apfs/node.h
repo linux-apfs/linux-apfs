@@ -156,10 +156,6 @@ static inline bool apfs_node_has_fixed_kv_size(struct apfs_node *node)
 }
 
 extern struct apfs_node *apfs_read_node(struct super_block *sb, u64 block);
-extern int apfs_node_locate_key(struct apfs_node *node,
-				int index, int *off);
-extern int apfs_node_locate_data(struct apfs_node *node,
-				 int index, int *off);
 extern int apfs_node_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_bno_from_query(struct apfs_query *query, u64 *bno);
 

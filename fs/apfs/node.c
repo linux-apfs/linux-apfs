@@ -121,7 +121,7 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 block)
  * that this length fits within the block; callers must use the returned value
  * to make sure they never operate outside its bounds.
  */
-int apfs_node_locate_key(struct apfs_node *node, int index, int *off)
+static int apfs_node_locate_key(struct apfs_node *node, int index, int *off)
 {
 	struct super_block *sb = node->object.sb;
 	struct apfs_btree_node_phys *raw;
@@ -165,7 +165,7 @@ int apfs_node_locate_key(struct apfs_node *node, int index, int *off)
  * that this length fits within the block; callers must use the returned value
  * to make sure they never operate outside its bounds.
  */
-int apfs_node_locate_data(struct apfs_node *node, int index, int *off)
+static int apfs_node_locate_data(struct apfs_node *node, int index, int *off)
 {
 	struct super_block *sb = node->object.sb;
 	struct apfs_btree_node_phys *raw;
