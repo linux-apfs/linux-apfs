@@ -159,6 +159,7 @@ extern struct apfs_node *apfs_read_node(struct super_block *sb, u64 block);
 extern int apfs_node_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_bno_from_query(struct apfs_query *query, u64 *bno);
 
-void apfs_node_get(struct apfs_node *node);
-void apfs_node_put(struct apfs_node *node);
+extern void apfs_node_get(struct apfs_node *node);
+extern void apfs_node_put(struct apfs_node *node);
+
 #endif	/* _APFS_NODE_H */
