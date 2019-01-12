@@ -13,6 +13,7 @@
 #include <linux/types.h>
 #include "apfs.h"
 #include "btree.h"
+#include "object.h"
 
 /*
  * On-disk representation of an object map

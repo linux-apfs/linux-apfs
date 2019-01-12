@@ -11,6 +11,7 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 #include "apfs.h"
+#include "object.h"
 
 /*
  * Structure used to store a range of physical blocks
