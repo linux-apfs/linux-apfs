@@ -157,8 +157,7 @@ static int apfs_map_volume_super(struct super_block *sb)
 	int err;
 
 	/* Get the id for the requested volume number */
-	if (sizeof(*msb_raw) + 8 * (sbi->s_vol_nr + 1) >= sb->s_blocksize) {
-		/* For now we assume that blocksize <= PAGE_SIZE */
+	if (sbi->s_vol_nr >= APFS_NX_MAX_FILE_SYSTEMS) {
 		apfs_err(sb, "volume number out of range");
 		return -EINVAL;
 	}
