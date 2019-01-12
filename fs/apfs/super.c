@@ -111,6 +111,7 @@ static int apfs_map_main_super(struct super_block *sb)
 	}
 	if (!apfs_obj_verify_csum(sb, &msb_raw->nx_o)) {
 		apfs_err(sb, "inconsistent container superblock");
+		err = -EFSBADCRC;
 		goto fail;
 	}
 

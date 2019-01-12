@@ -11,6 +11,7 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 
+#define EFSBADCRC	EBADMSG		/* Bad CRC detected */
 #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
 
 /* APFS Objects */
