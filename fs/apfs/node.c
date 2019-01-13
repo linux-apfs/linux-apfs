@@ -12,6 +12,7 @@
 #include "key.h"
 #include "message.h"
 #include "node.h"
+#include "object.h"
 #include "super.h"
 
 /**
@@ -71,6 +72,7 @@ void apfs_node_put(struct apfs_node *node)
  */
 struct apfs_node *apfs_read_node(struct super_block *sb, u64 block)
 {
+	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct buffer_head *bh;
 	struct apfs_btree_node_phys *raw;
 	struct apfs_node *node;
@@ -102,6 +104,12 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 block)
 
 	kref_init(&node->refcount);
 
+	if (sbi->s_flags & APFS_CHECK_NODES &&
+	    !apfs_obj_verify_csum(sb, &raw->btn_o)) {
+		apfs_alert(sb, "bad checksum for node in block 0x%llx", block);
+		apfs_node_put(node);
+		return ERR_PTR(-EFSBADCRC);
+	}
 	if (!apfs_node_is_valid(sb, node)) {
 		apfs_alert(sb, "bad node in block 0x%llx", block);
 		apfs_node_put(node);

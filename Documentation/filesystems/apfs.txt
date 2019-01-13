@@ -38,6 +38,10 @@ When mounting an APFS filesystem, the following options are accepted:
   uid=n, gid=n
 	Override on-disk inode ownership data with given uid/gid.
 
+  cknodes
+	Verify the checksum on all metadata nodes. Right now this has
+	a severe performance cost, so it's not recommended.
+
 Credits
 =======
 

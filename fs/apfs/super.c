@@ -142,6 +142,11 @@ static int apfs_map_volume_super(struct super_block *sb)
 		return -EINVAL;
 	}
 	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
+	if (!apfs_obj_verify_csum(sb, &msb_omap_raw->om_o)) {
+		apfs_err(sb, "bad checksum for the container object map");
+		err = -EFSBADCRC;
+		goto fail;
+	}
 
 	/* Get the Volume Block */
 	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
@@ -170,8 +175,13 @@ static int apfs_map_volume_super(struct super_block *sb)
 	vsb_raw = (struct apfs_superblock *)bh->b_data;
 	if (le32_to_cpu(vsb_raw->apfs_magic) != APFS_MAGIC) {
 		apfs_err(sb, "wrong magic in volume superblock");
-		brelse(bh);
-		return -EINVAL;
+		err = -EINVAL;
+		goto fail;
+	}
+	if (!apfs_obj_verify_csum(sb, &vsb_raw->apfs_o)) {
+		apfs_err(sb, "inconsistent volume superblock");
+		err = -EFSBADCRC;
+		goto fail;
 	}
 
 	sbi->s_vsb_raw = vsb_raw;
@@ -180,6 +190,10 @@ static int apfs_map_volume_super(struct super_block *sb)
 	sbi->s_vobject.oid = le64_to_cpu(vsb_raw->apfs_o.o_oid);
 	sbi->s_vobject.bh = bh;
 	return 0;
+
+fail:
+	brelse(bh);
+	return err;
 }
 
 /**
@@ -217,6 +231,11 @@ static int apfs_read_omap(struct super_block *sb)
 		return -EINVAL;
 	}
 	omap_raw = (struct apfs_omap_phys *)bh->b_data;
+	if (!apfs_obj_verify_csum(sb, &omap_raw->om_o)) {
+		apfs_err(sb, "bad checksum for the volume object map");
+		brelse(bh);
+		return -EFSBADCRC;
+	}
 
 	/* Get the volume's object map */
 	omap_root_blk = le64_to_cpu(omap_raw->om_tree_oid);
@@ -448,6 +467,8 @@ static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 	if (sbi->s_flags & APFS_GID_OVERRIDE)
 		seq_printf(seq, ",gid=%u", from_kgid(&init_user_ns,
 						     sbi->s_gid));
+	if (sbi->s_flags & APFS_CHECK_NODES)
+		seq_puts(seq, ",cknodes");
 
 	return 0;
 }
@@ -461,10 +482,11 @@ static const struct super_operations apfs_sops = {
 };
 
 enum {
-	Opt_uid, Opt_gid, Opt_vol, Opt_err,
+	Opt_cknodes, Opt_uid, Opt_gid, Opt_vol, Opt_err,
 };
 
 static const match_table_t tokens = {
+	{Opt_cknodes, "cknodes"},
 	{Opt_uid, "uid=%u"},
 	{Opt_gid, "gid=%u"},
 	{Opt_vol, "vol=%u"},
@@ -497,6 +519,13 @@ static int parse_options(struct super_block *sb, char *options)
 			continue;
 		token = match_token(p, tokens, args);
 		switch (token) {
+		case Opt_cknodes:
+			/*
+			 * Right now, node checksums are too costly to enable
+			 * by default.  TODO: try to improve this.
+			 */
+			sbi->s_flags |= APFS_CHECK_NODES;
+			break;
 		case Opt_uid:
 			err = match_int(&args[0], &option);
 			if (err)
