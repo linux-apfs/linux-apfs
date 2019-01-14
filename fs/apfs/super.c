@@ -86,7 +86,7 @@ fail:
 }
 
 /**
- * apfs_map_main_super - Verify the container superblock and map it into memory
+ * apfs_map_main_super - Find the container superblock and map it into memory
  * @sb:	superblock structure
  *
  * Returns a negative error code in case of failure.  On success, returns 0
@@ -96,19 +96,72 @@ static int apfs_map_main_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct buffer_head *bh;
+	struct buffer_head *desc_bh = NULL;
 	struct apfs_nx_superblock *msb_raw;
+	u64 xid, bno = APFS_NX_BLOCK_NUM;
+	u64 desc_base;
+	u32 desc_blocks;
+	int err = -EINVAL;
+	int i;
 
+	/* Read the superblock from the last clean unmount */
 	bh = apfs_read_super_copy(sb);
 	if (IS_ERR(bh))
 		return PTR_ERR(bh);
 	msb_raw = (struct apfs_nx_superblock *)bh->b_data;
 
+	/* We want to mount the latest valid checkpoint among the descriptors */
+	desc_base = le64_to_cpu(msb_raw->nx_xp_desc_base);
+	if (desc_base >> 63 != 0) {
+		/* The highest bit is set when checkpoints are not contiguous */
+		apfs_err(sb, "checkpoint descriptor tree not yet supported");
+		goto fail;
+	}
+	desc_blocks = le32_to_cpu(msb_raw->nx_xp_desc_blocks);
+	if (desc_blocks > 10000) { /* Arbitrary loop limit, is it enough? */
+		apfs_err(sb, "too many checkpoint descriptors?");
+		err = -EFSCORRUPTED;
+		goto fail;
+	}
+
+	/* Now we go through the checkpoints one by one */
+	xid = le64_to_cpu(msb_raw->nx_o.o_xid);
+	for (i = 0; i < desc_blocks; ++i) {
+		struct apfs_nx_superblock *desc_raw;
+
+		brelse(desc_bh);
+		desc_bh = sb_bread(sb, desc_base + i);
+		if (!desc_bh) {
+			apfs_err(sb, "unable to read checkpoint descriptor");
+			goto fail;
+		}
+		desc_raw = (struct apfs_nx_superblock *)desc_bh->b_data;
+
+		if (le32_to_cpu(desc_raw->nx_magic) != APFS_NX_MAGIC)
+			continue; /* Not a superblock */
+		if (le64_to_cpu(desc_raw->nx_o.o_xid) <= xid)
+			continue; /* Old */
+		if (!apfs_obj_verify_csum(sb, &desc_raw->nx_o))
+			continue; /* Corrupted */
+
+		xid = le64_to_cpu(desc_raw->nx_o.o_xid);
+		msb_raw = desc_raw;
+		bno = desc_base + i;
+		brelse(bh);
+		bh = desc_bh;
+		desc_bh = NULL;
+	}
+
 	sbi->s_msb_raw = msb_raw;
 	sbi->s_mobject.sb = sb;
-	sbi->s_mobject.block_nr = APFS_NX_BLOCK_NUM;
+	sbi->s_mobject.block_nr = bno;
 	sbi->s_mobject.oid = le64_to_cpu(msb_raw->nx_o.o_oid);
 	sbi->s_mobject.bh = bh;
 	return 0;
+
+fail:
+	brelse(bh);
+	return err;
 }
 
 /**
