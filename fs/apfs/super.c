@@ -25,17 +25,15 @@
 #include "xattr.h"
 
 /**
- * apfs_map_main_super - Verify the container superblock and map it into memory
- * @sb:	superblock structure
+ * apfs_read_super_copy - Read the copy of the container superblock in block 0
+ * @sb: superblock structure
  *
- * Returns a negative error code in case of failure.  On success, returns 0
- * and sets APFS_SB(@sb)->s_msb_raw and APFS_SB(@sb)->s_mobject.
+ * Returns a pointer to the buffer head, or an error pointer in case of failure.
  */
-static int apfs_map_main_super(struct super_block *sb)
+static struct buffer_head *apfs_read_super_copy(struct super_block *sb)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_nx_superblock *msb_raw;
 	struct buffer_head *bh;
+	struct apfs_nx_superblock *msb_raw;
 	int blocksize;
 	int err = -EINVAL;
 
@@ -45,12 +43,12 @@ static int apfs_map_main_super(struct super_block *sb)
 	 */
 	if (!sb_set_blocksize(sb, APFS_NX_DEFAULT_BLOCK_SIZE)) {
 		apfs_err(sb, "unable to set blocksize");
-		return err;
+		return ERR_PTR(err);
 	}
 	bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
 	if (!bh) {
 		apfs_err(sb, "unable to read superblock");
-		return err;
+		return ERR_PTR(err);
 	}
 	msb_raw = (struct apfs_nx_superblock *)bh->b_data;
 	blocksize = le32_to_cpu(msb_raw->nx_block_size);
@@ -60,12 +58,12 @@ static int apfs_map_main_super(struct super_block *sb)
 
 		if (!sb_set_blocksize(sb, blocksize)) {
 			apfs_err(sb, "bad blocksize %d", blocksize);
-			return err;
+			return ERR_PTR(err);
 		}
 		bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
 		if (!bh) {
 			apfs_err(sb, "unable to read superblock 2nd time");
-			return err;
+			return ERR_PTR(err);
 		}
 		msb_raw = (struct apfs_nx_superblock *)bh->b_data;
 	}
@@ -80,6 +78,30 @@ static int apfs_map_main_super(struct super_block *sb)
 		err = -EFSBADCRC;
 		goto fail;
 	}
+	return bh;
+
+fail:
+	brelse(bh);
+	return ERR_PTR(err);
+}
+
+/**
+ * apfs_map_main_super - Verify the container superblock and map it into memory
+ * @sb:	superblock structure
+ *
+ * Returns a negative error code in case of failure.  On success, returns 0
+ * and sets APFS_SB(@sb)->s_msb_raw and APFS_SB(@sb)->s_mobject.
+ */
+static int apfs_map_main_super(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct buffer_head *bh;
+	struct apfs_nx_superblock *msb_raw;
+
+	bh = apfs_read_super_copy(sb);
+	if (IS_ERR(bh))
+		return PTR_ERR(bh);
+	msb_raw = (struct apfs_nx_superblock *)bh->b_data;
 
 	sbi->s_msb_raw = msb_raw;
 	sbi->s_mobject.sb = sb;
@@ -87,10 +109,6 @@ static int apfs_map_main_super(struct super_block *sb)
 	sbi->s_mobject.oid = le64_to_cpu(msb_raw->nx_o.o_oid);
 	sbi->s_mobject.bh = bh;
 	return 0;
-
-fail:
-	brelse(bh);
-	return err;
 }
 
 /**
