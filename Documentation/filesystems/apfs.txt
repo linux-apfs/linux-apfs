@@ -14,7 +14,7 @@ should be no risk of data corruption, but do not expect everything to be read
 correctly. Testing in general has been limited so far, so you may experience
 crashes. Please report any issues that you find.
 
-Apple has realeased other versions of the filesystem to the public before the
+Apple has released other versions of the filesystem to the public before the
 current one. I would not expect them to be compatible with this module at all,
 but I am open to fixing that if requested.
 
