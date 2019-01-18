@@ -277,8 +277,7 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 	struct apfs_inode_info *ai = APFS_I(inode);
 
 	stat->result_mask |= STATX_BTIME;
-	stat->btime.tv_sec = ai->i_crtime.tv_sec;
-	stat->btime.tv_nsec = ai->i_crtime.tv_nsec;
+	stat->btime = ai->i_crtime;
 
 	if (apfs_xattr_get(inode, APFS_XATTR_NAME_COMPRESSED, NULL, 0) >= 0)
 		stat->attributes |= STATX_ATTR_COMPRESSED;
