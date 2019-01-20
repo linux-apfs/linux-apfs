@@ -9,7 +9,6 @@
 #include <linux/slab.h>
 #include "apfs.h"
 #include "btree.h"
-#include "dir.h"
 #include "key.h"
 #include "message.h"
 #include "node.h"

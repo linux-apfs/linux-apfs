@@ -5,9 +5,9 @@
  * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
+#include <linux/fs.h>
 #include <linux/slab.h>
 #include "apfs.h"
-#include "inode.h"
 #include "message.h"
 #include "xattr.h"
 

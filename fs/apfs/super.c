@@ -17,7 +17,6 @@
 #include "apfs.h"
 #include "btree.h"
 #include "inode.h"
-#include "key.h"
 #include "message.h"
 #include "node.h"
 #include "object.h"
