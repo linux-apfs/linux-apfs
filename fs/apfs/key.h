@@ -10,6 +10,8 @@
 
 #include <linux/types.h>
 
+struct super_block;
+
 /*
  * Structure of a key in an object map B-tree
  */

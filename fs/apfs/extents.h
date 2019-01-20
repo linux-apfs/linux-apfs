@@ -10,6 +10,8 @@
 
 #include <linux/types.h>
 
+struct inode;
+struct buffer_head;
 struct apfs_query;
 
 /* File extent records */

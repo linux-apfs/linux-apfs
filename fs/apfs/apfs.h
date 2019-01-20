@@ -8,8 +8,6 @@
 #ifndef _APFS_H
 #define _APFS_H
 
-#include <linux/fs.h>
-
 #define EFSBADCRC	EBADMSG		/* Bad CRC detected */
 #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
 

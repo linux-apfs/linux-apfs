@@ -8,7 +8,7 @@
 #ifndef _APFS_MESSAGE_H
 #define _APFS_MESSAGE_H
 
-#include <linux/fs.h>
+struct super_block;
 
 extern __printf(3, 4)
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...);

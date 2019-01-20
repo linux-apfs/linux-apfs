@@ -8,7 +8,6 @@
 #ifndef _OBJECT_H
 #define _OBJECT_H
 
-#include <linux/fs.h>
 #include <linux/types.h>
 
 /* Object identifiers constants */

@@ -8,8 +8,9 @@
 #ifndef _APFS_BTREE_H
 #define _APFS_BTREE_H
 
-#include <linux/fs.h>
 #include <linux/types.h>
+
+struct super_block;
 
 /* Flags for the query structure */
 #define APFS_QUERY_TREE_MASK	0007	/* Which b-tree we query */

@@ -8,12 +8,11 @@
 #ifndef _APFS_NODE_H
 #define _APFS_NODE_H
 
-#include <linux/fs.h>
 #include <linux/kref.h>
 #include <linux/types.h>
-#include "apfs.h"
-#include "btree.h"
 #include "object.h"
+
+struct apfs_query;
 
 /*
  * On-disk representation of an object map

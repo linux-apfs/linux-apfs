@@ -8,9 +8,10 @@
 #ifndef _APFS_DIR_H
 #define _APFS_DIR_H
 
-#include <linux/fs.h>
 #include <linux/types.h>
 
+struct inode;
+struct qstr;
 struct apfs_query;
 
 /*
