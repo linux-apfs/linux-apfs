@@ -168,7 +168,6 @@ next_node:
 		(*query)->parent = NULL; /* Don't free the parent */
 		apfs_free_query(sb, *query);
 		*query = parent;
-		/* TODO: a crafted fs could have us spinning for too long */
 		goto next_node;
 	}
 	if (err)
