@@ -5,8 +5,8 @@
  * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
-#ifndef _OBJECT_H
-#define _OBJECT_H
+#ifndef _APFS_OBJECT_H
+#define _APFS_OBJECT_H
 
 #include <linux/types.h>
 
@@ -90,4 +90,4 @@ struct apfs_object {
 extern int apfs_obj_verify_csum(struct super_block *sb,
 				struct apfs_obj_phys *obj);
 
-#endif	/* _OBJECT_H */
+#endif	/* _APFS_OBJECT_H */
