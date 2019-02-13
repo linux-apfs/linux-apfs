@@ -6,6 +6,10 @@ The Apple File System (APFS) is a copy-on-write filesystem apparently intended
 to replace HFS+ on all Apple devices in the near future. This modules provides
 a degree of experimental read-only support on Linux.
 
+The long-term goal is to support writes as well. To help with testing, a set
+of userland tools is under development. The git tree can be retrieved from
+<git://github.com/eafer/apfsprogs.git>.
+
 Known limitations
 =================
 
