@@ -269,6 +269,7 @@ struct apfs_sb_info {
 	struct apfs_nx_superblock *s_msb_raw;		/* On-disk main sb */
 	struct apfs_superblock *s_vsb_raw;		/* On-disk volume sb */
 
+	u64 s_xid;			/* Latest transaction id */
 	struct apfs_node *s_cat_root;	/* Root of the catalog tree */
 	struct apfs_node *s_omap_root;	/* Root of the object map tree */
 

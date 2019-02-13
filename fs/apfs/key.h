@@ -110,7 +110,7 @@ struct apfs_xattr_key {
  */
 struct apfs_key {
 	u64		id;
-	u64		number;	/* Extent offset or name hash */
+	u64		number;	/* Extent offset, name hash or transaction id */
 	const char	*name;	/* On-disk name string */
 	u8		type;	/* Record type (0 for the omap) */
 };
@@ -118,13 +118,14 @@ struct apfs_key {
 /**
  * apfs_init_omap_key - Initialize an in-memory key for an omap query
  * @oid:	object id
+ * @xid:	latest transaction id
  * @key:	apfs_key structure to initialize
  */
-static inline void apfs_init_omap_key(u64 oid, struct apfs_key *key)
+static inline void apfs_init_omap_key(u64 oid, u64 xid, struct apfs_key *key)
 {
 	key->id = oid;
 	key->type = 0;
-	key->number = 0;
+	key->number = xid;
 	key->name = NULL;
 }
 

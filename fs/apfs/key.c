@@ -163,7 +163,7 @@ int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
 
 	key->id = le64_to_cpu(((struct apfs_omap_key *)raw)->ok_oid);
 	key->type = 0;
-	key->number = 0;
+	key->number = le64_to_cpu(((struct apfs_omap_key *)raw)->ok_xid);
 	key->name = NULL;
 
 	return 0;

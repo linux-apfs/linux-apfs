@@ -89,7 +89,7 @@ fail:
  * @sb:	superblock structure
  *
  * Returns a negative error code in case of failure.  On success, returns 0
- * and sets APFS_SB(@sb)->s_msb_raw and APFS_SB(@sb)->s_mobject.
+ * and sets the s_msb_raw, s_mobject and s_xid fields of APFS_SB(@sb).
  */
 static int apfs_map_main_super(struct super_block *sb)
 {
@@ -151,6 +151,7 @@ static int apfs_map_main_super(struct super_block *sb)
 		desc_bh = NULL;
 	}
 
+	sbi->s_xid = xid;
 	sbi->s_msb_raw = msb_raw;
 	sbi->s_mobject.sb = sb;
 	sbi->s_mobject.block_nr = bno;

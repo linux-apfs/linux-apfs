@@ -46,6 +46,7 @@ static int apfs_child_from_query(struct apfs_query *query, u64 *child)
 int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 			   u64 id, u64 *block)
 {
+	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
 	struct apfs_key key;
 	int ret = 0;
@@ -54,9 +55,9 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 	if (!query)
 		return -ENOMEM;
 
-	apfs_init_omap_key(id, &key);
+	apfs_init_omap_key(id, sbi->s_xid, &key);
 	query->key = &key;
-	query->flags |= APFS_QUERY_OMAP | APFS_QUERY_EXACT;
+	query->flags |= APFS_QUERY_OMAP;
 
 	ret = apfs_btree_query(sb, &query);
 	if (ret)
