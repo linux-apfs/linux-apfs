@@ -42,7 +42,8 @@ int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
 	de = (struct apfs_drec_val *)(raw + query->off);
 	de_key = (struct apfs_drec_hashed_key *)(raw + query->key_off);
 
-	if (namelen != (le32_to_cpu(de_key->name_len_and_hash) & 0x3FF))
+	if (namelen != (le32_to_cpu(de_key->name_len_and_hash) &
+			APFS_DREC_LEN_MASK))
 		return -EFSCORRUPTED;
 
 	/* Filename must be NULL-terminated */

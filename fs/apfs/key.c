@@ -207,6 +207,7 @@ void apfs_init_drec_hashed_key(struct super_block *sb, u64 ino,
 	/* APFS counts the NULL termination for the filename length */
 	namelen = cursor.utf8curr - name;
 
-	key->number = ((hash & 0x3FFFFF) << 10) | (namelen & 0x3FF);
+	key->number = (hash << APFS_DREC_HASH_SHIFT) |
+		      (namelen & APFS_DREC_LEN_MASK);
 	key->name = name;
 }
