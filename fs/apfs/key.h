@@ -171,7 +171,7 @@ static inline void apfs_init_xattr_key(u64 ino, const char *name,
 {
 	key->id = ino;
 	key->type = APFS_TYPE_XATTR;
-	key->number = 0; /* Maybe use the name length here, for speed? */
+	key->number = 0;
 	key->name = name;
 }
 

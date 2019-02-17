@@ -259,11 +259,12 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 			   query->node->object.block_nr);
 	}
 
-	if (query->flags & APFS_QUERY_MULTIPLE) {
-		/* A multiple query must ignore these fields */
-		key->number = 0;
+	/* A multiple query must ignore some of these fields */
+	if (query->flags & APFS_QUERY_ANY_NAME)
 		key->name = NULL;
-	}
+	if (query->flags & APFS_QUERY_ANY_NUMBER)
+		key->number = 0;
+
 	return err;
 }
 

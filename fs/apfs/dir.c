@@ -85,16 +85,24 @@ int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
 	if (!query)
 		return -ENOMEM;
 	query->key = &key;
-	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
-	err = apfs_btree_query(sb, &query);
-	if (err)
-		goto out;
+	/*
+	 * Distinct filenames in the same directory may (rarely) share the same
+	 * hash.  The query code cannot handle that because their order in the
+	 * b-tree would	depend on their unnormalized original names.  Just get
+	 * all the candidates and check them one by one.
+	 */
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_ANY_NAME | APFS_QUERY_EXACT;
+	do {
+		err = apfs_btree_query(sb, &query);
+		if (err)
+			goto out;
+		err = apfs_drec_from_query(query, &drec);
+		if (err)
+			goto out;
+	} while (unlikely(apfs_filename_cmp(sb, child->name, drec.name)));
 
-	err = apfs_drec_from_query(query, &drec);
-	if (!err)
-		*ino = drec.ino;
-
+	*ino = drec.ino;
 out:
 	apfs_free_query(sb, query);
 	return err;

@@ -42,8 +42,8 @@ static inline u64 apfs_cat_cnid(struct apfs_key_header *key)
  * @name1, @name2:	names to compare
  *
  * returns   0 if @name1 and @name2 are equal
- *	   < 0 if @name1 comes before @name2 in the btree
- *	   > 0 if @name1 comes after @name2 in the btree
+ *	   < 0 if @name1 comes before @name2
+ *	   > 0 if @name1 comes after @name2
  */
 int apfs_filename_cmp(struct super_block *sb,
 		      const char *name1, const char *name2)
@@ -85,16 +85,11 @@ int apfs_keycmp(struct super_block *sb,
 		return k1->type < k2->type ? -1 : 1;
 	if (k1->number != k2->number)
 		return k1->number < k2->number ? -1 : 1;
-	if (!k1->name) /* Keys of this type have no name */
+	if (!k1->name)
 		return 0;
 
-	if (k1->type == APFS_TYPE_XATTR) {
-		/* xattr names seem to be always case sensitive */
-		return strcmp(k1->name, k2->name);
-	}
-
-	/* Only guessing, I've never seen two names with the same hash. TODO */
-	return apfs_filename_cmp(sb, k1->name, k2->name);
+	/* Normalization seems to be ignored here, even for directory records */
+	return strcmp(k1->name, k2->name);
 }
 
 /**
@@ -119,8 +114,12 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 			/* Filename must have NULL-termination */
 			return -EFSCORRUPTED;
 		}
+
+		/* Name length is not used in key comparisons, only the hash */
 		key->number = le32_to_cpu(
-		       ((struct apfs_drec_hashed_key *)raw)->name_len_and_hash);
+		      ((struct apfs_drec_hashed_key *)raw)->name_len_and_hash) &
+							    APFS_DREC_HASH_MASK;
+
 		key->name = ((struct apfs_drec_hashed_key *)raw)->name;
 		break;
 	case APFS_TYPE_XATTR:
@@ -182,13 +181,15 @@ void apfs_init_drec_hashed_key(struct super_block *sb, u64 ino,
 	struct apfs_unicursor cursor;
 	bool case_fold = apfs_is_case_insensitive(sb);
 	u32 hash = 0xFFFFFFFF;
-	int namelen;
 
 	key->id = ino;
 	key->type = APFS_TYPE_DIR_REC;
+
+	/* To respect normalization, queries can only consider the hash */
+	key->name = NULL;
+
 	if (!name) {
 		key->number = 0;
-		key->name = NULL;
 		return;
 	}
 
@@ -204,10 +205,6 @@ void apfs_init_drec_hashed_key(struct super_block *sb, u64 ino,
 		hash = crc32c(hash, &utf32, sizeof(utf32));
 	}
 
-	/* APFS counts the NULL termination for the filename length */
-	namelen = cursor.utf8curr - name;
-
-	key->number = (hash << APFS_DREC_HASH_SHIFT) |
-		      (namelen & APFS_DREC_LEN_MASK);
-	key->name = name;
+	/* The filename length doesn't matter, so it's left as zero */
+	key->number = hash << APFS_DREC_HASH_SHIFT;
 }

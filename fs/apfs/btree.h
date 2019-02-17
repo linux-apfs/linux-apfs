@@ -16,10 +16,12 @@ struct super_block;
 #define APFS_QUERY_TREE_MASK	0007	/* Which b-tree we query */
 #define APFS_QUERY_OMAP		0001	/* This is a b-tree object map query */
 #define APFS_QUERY_CAT		0002	/* This is a catalog tree query */
-#define APFS_QUERY_MULTIPLE	0010	/* Search for multiple matches */
-#define APFS_QUERY_NEXT		0020	/* Find next of multiple matches */
-#define APFS_QUERY_EXACT	0040	/* Search for an exact match */
-#define APFS_QUERY_DONE		0100	/* The search at this level is over */
+#define APFS_QUERY_NEXT		0010	/* Find next of multiple matches */
+#define APFS_QUERY_EXACT	0020	/* Search for an exact match */
+#define APFS_QUERY_DONE		0040	/* The search at this level is over */
+#define APFS_QUERY_ANY_NAME	0100	/* Multiple search for any name */
+#define APFS_QUERY_ANY_NUMBER	0200	/* Multiple search for any number */
+#define APFS_QUERY_MULTIPLE	(APFS_QUERY_ANY_NAME | APFS_QUERY_ANY_NUMBER)
 
 /*
  * Structure used to retrieve data from an APFS B-Tree. For now only used
