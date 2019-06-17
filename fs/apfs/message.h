@@ -22,9 +22,11 @@ void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...);
 #define apfs_info(sb, fmt, ...) apfs_msg(sb, KERN_INFO, fmt, ##__VA_ARGS__)
 
 #ifdef CONFIG_APFS_DEBUG
+#define ASSERT(expr)	BUG_ON(!(expr))
 #define apfs_debug(sb, fmt, ...) apfs_msg(sb, KERN_DEBUG, fmt, ##__VA_ARGS__)
 #else
+#define ASSERT(expr)	((void)0)
 #define apfs_debug(sb, fmt, ...) no_printk(fmt, ##__VA_ARGS__)
-#endif
+#endif /* CONFIG_APFS_DEBUG */
 
 #endif	/* _APFS_MESSAGE_H */
