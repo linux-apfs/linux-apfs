@@ -4,17 +4,17 @@ Apple File System
 
 The Apple File System (APFS) is a copy-on-write filesystem apparently intended
 to replace HFS+ on all Apple devices in the near future. This modules provides
-a degree of experimental read-only support on Linux.
+a degree of read-only support on Linux.
 
-The long-term goal is to support writes as well. To help with testing, a set
+Experimental write support is also available. To help with testing, a set
 of userland tools is under development. The git tree can be retrieved from
 <git://github.com/eafer/apfsprogs.git>.
 
 Known limitations
 =================
 
-This module is the result of reverse engineering. As it is read-only there
-should be no risk of data corruption, but do not expect everything to be read
+This module is the result of reverse engineering. Write support is disabled
+by default to prevent data corruption, but do not expect everything to be read
 correctly. Testing in general has been limited so far, so you may experience
 crashes. Please report any issues that you find.
 
@@ -45,6 +45,9 @@ When mounting an APFS filesystem, the following options are accepted:
   cknodes
 	Verify the checksum on all metadata nodes. Right now this has
 	a severe performance cost, so it's not recommended.
+
+  readwrite
+	Enable the experimental write support. This WILL corrupt the container.
 
 Credits
 =======

@@ -559,10 +559,11 @@ static const struct super_operations apfs_sops = {
 };
 
 enum {
-	Opt_cknodes, Opt_uid, Opt_gid, Opt_vol, Opt_err,
+	Opt_readwrite, Opt_cknodes, Opt_uid, Opt_gid, Opt_vol, Opt_err,
 };
 
 static const match_table_t tokens = {
+	{Opt_readwrite, "readwrite"},
 	{Opt_cknodes, "cknodes"},
 	{Opt_uid, "uid=%u"},
 	{Opt_gid, "gid=%u"},
@@ -581,13 +582,15 @@ static int parse_options(struct super_block *sb, char *options)
 	substring_t args[MAX_OPT_ARGS];
 	int option;
 	int err = 0;
+	bool readwrite;
 
 	/* Set default values before parsing */
 	sbi->s_vol_nr = 0;
 	sbi->s_flags = 0;
+	readwrite = false;
 
 	if (!options)
-		return 0;
+		goto out;
 
 	while ((p = strsep(&options, ",")) != NULL) {
 		int token;
@@ -596,6 +599,13 @@ static int parse_options(struct super_block *sb, char *options)
 			continue;
 		token = match_token(p, tokens, args);
 		switch (token) {
+		case Opt_readwrite:
+			/*
+			 * Write support is not safe yet, so keep it disabled
+			 * unless the user requests it explicitly.
+			 */
+			readwrite = true;
+			break;
 		case Opt_cknodes:
 			/*
 			 * Right now, node checksums are too costly to enable
@@ -634,6 +644,12 @@ static int parse_options(struct super_block *sb, char *options)
 			return -EINVAL;
 		}
 	}
+
+out:
+	if (readwrite && !(sb->s_flags & SB_RDONLY))
+		apfs_notice(sb, "experimental write support is enabled");
+	else
+		sb->s_flags |= SB_RDONLY;
 	return 0;
 }
 
@@ -642,9 +658,6 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	struct apfs_sb_info *sbi;
 	struct inode *root;
 	int err;
-
-	apfs_notice(sb, "this module is read-only");
-	sb->s_flags |= SB_RDONLY;
 
 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
