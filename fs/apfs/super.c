@@ -194,6 +194,8 @@ static int apfs_map_volume_super(struct super_block *sb)
 	u64 msb_omap, vb, vsb;
 	int err;
 
+	ASSERT(sbi->s_msb_raw);
+
 	/* Get the id for the requested volume number */
 	if (sbi->s_vol_nr >= APFS_NX_MAX_FILE_SYSTEMS) {
 		apfs_err(sb, "volume number out of range");
@@ -294,6 +296,8 @@ static int apfs_read_omap(struct super_block *sb)
 	struct buffer_head *bh;
 	u64 omap_blk, omap_root_blk;
 
+	ASSERT(sbi->s_vsb_raw);
+
 	/* Get the block holding the volume omap information */
 	omap_blk = le64_to_cpu(vsb_raw->apfs_omap_oid);
 	bh = sb_bread(sb, omap_blk);
@@ -334,6 +338,8 @@ static int apfs_read_catalog(struct super_block *sb)
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
 	struct apfs_node *root_node;
 	u64 root_id;
+
+	ASSERT(sbi->s_omap_root);
 
 	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
 	root_node = apfs_omap_read_node(sb, root_id);
