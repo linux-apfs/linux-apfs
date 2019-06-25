@@ -41,3 +41,16 @@ int apfs_obj_verify_csum(struct super_block *sb, struct apfs_obj_phys *obj)
 		 apfs_fletcher64((char *) obj + APFS_MAX_CKSUM_SIZE,
 				 sb->s_blocksize - APFS_MAX_CKSUM_SIZE));
 }
+
+/**
+ * apfs_obj_set_csum - Set the fletcher checksum in an object header
+ * @sb:		superblock structure
+ * @obj:	the object header
+ */
+void apfs_obj_set_csum(struct super_block *sb, struct apfs_obj_phys *obj)
+{
+	u64 cksum = apfs_fletcher64((char *)obj + APFS_MAX_CKSUM_SIZE,
+				    sb->s_blocksize - APFS_MAX_CKSUM_SIZE);
+
+	obj->o_cksum = cpu_to_le64(cksum);
+}

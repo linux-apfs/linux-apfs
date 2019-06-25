@@ -89,5 +89,7 @@ struct apfs_object {
 
 extern int apfs_obj_verify_csum(struct super_block *sb,
 				struct apfs_obj_phys *obj);
+extern void apfs_obj_set_csum(struct super_block *sb,
+			      struct apfs_obj_phys *obj);
 
 #endif	/* _APFS_OBJECT_H */

@@ -5,6 +5,7 @@
  * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
+#include <linux/blkdev.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/magic.h>
@@ -82,6 +83,28 @@ static struct buffer_head *apfs_read_super_copy(struct super_block *sb)
 fail:
 	brelse(bh);
 	return ERR_PTR(err);
+}
+
+/**
+ * apfs_make_super_copy - Write a copy of the checkpoint superblock to block 0
+ * @sb:	superblock structure
+ */
+static void apfs_make_super_copy(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct buffer_head *bh;
+
+	if (sb->s_flags & SB_RDONLY)
+		return;
+
+	bh = sb_bread(sb, APFS_NX_BLOCK_NUM);
+	if (!bh) {
+		apfs_err(sb, "failed to write block zero");
+		return;
+	}
+	memcpy(bh->b_data, sbi->s_msb_raw, sb->s_blocksize);
+	mark_buffer_dirty(bh);
+	brelse(bh);
 }
 
 /**
@@ -281,6 +304,297 @@ static inline void apfs_unmap_volume_super(struct super_block *sb)
 }
 
 /**
+ * apfs_cpoint_init_area - Initialize the new blocks of a checkpoint area
+ * @sb:		superblock structure
+ * @base:	first block of the area
+ * @blks:	block count for the area
+ * @next:	first block for the new checkpoint
+ * @len:	block count for the new checkpoint
+ *
+ * Copies the blocks belonging to the last checkpoint to the area assigned for
+ * the new one, updating their xids, oids and checksums.  Returns 0 on success,
+ * or a negative error code in case of failure.
+ */
+static int apfs_cpoint_init_area(struct super_block *sb, u64 base, u32 blks,
+				 u32 next, u32 len)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	u32 i;
+
+	for (i = 0; i < len; ++i) {
+		struct buffer_head *new_bh, *old_bh;
+		struct apfs_obj_phys *new_obj;
+		u32 new_index = (next + i) % blks;
+		u32 old_index = (blks + new_index - len) % blks;
+		u32 type;
+
+		new_bh = sb_bread(sb, base + new_index);
+		old_bh = sb_bread(sb, base + old_index);
+		if (!new_bh || !old_bh) {
+			apfs_err(sb, "unable to read the checkpoint areas");
+			brelse(new_bh);
+			brelse(old_bh);
+			return -EINVAL;
+		}
+		memcpy(new_bh->b_data, old_bh->b_data, sb->s_blocksize);
+		brelse(old_bh);
+
+		new_obj = (struct apfs_obj_phys *)new_bh->b_data;
+		type = le32_to_cpu(new_obj->o_type);
+		if ((type & APFS_OBJ_STORAGETYPE_MASK) == APFS_OBJ_PHYSICAL)
+			new_obj->o_oid = cpu_to_le64(new_bh->b_blocknr);
+
+		ASSERT(sbi->s_xid == le64_to_cpu(new_obj->o_xid) + 1);
+		new_obj->o_xid = cpu_to_le64(sbi->s_xid);
+
+		/* The transaction isn't over, don't commit the superblock */
+		if ((type & APFS_OBJECT_TYPE_MASK) !=
+		    APFS_OBJECT_TYPE_NX_SUPERBLOCK)
+			apfs_obj_set_csum(sb, new_obj);
+
+		mark_buffer_dirty(new_bh);
+		new_obj = NULL;
+		brelse(new_bh);
+	}
+	return 0;
+}
+
+/**
+ * apfs_cpoint_init_desc - Initialize the descriptor area for a new checkpoint
+ * @sb: superblock structure
+ *
+ * Copies the latest descriptor and mapping blocks into the new checkpoint;
+ * updates both the on-disk and in-memory superblocks to refer to the new
+ * transaction.  Returns 0 on success, or a negative error code in case of
+ * failure.
+ */
+static int apfs_cpoint_init_desc(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	struct buffer_head *new_sb_bh = NULL;
+	u64 desc_base = le64_to_cpu(raw_sb->nx_xp_desc_base);
+	u32 desc_next = le32_to_cpu(raw_sb->nx_xp_desc_next);
+	u32 desc_blks = le32_to_cpu(raw_sb->nx_xp_desc_blocks);
+	u32 desc_len = le32_to_cpu(raw_sb->nx_xp_desc_len);
+	u32 new_sb_index;
+	int err;
+
+	if (!desc_blks || !desc_len)
+		return -EFSCORRUPTED;
+
+	err = apfs_cpoint_init_area(sb, desc_base, desc_blks,
+				    desc_next, desc_len);
+	if (err)
+		return err;
+
+	/* Now update the superblock with the new checkpoint */
+
+	new_sb_index = (desc_next + desc_len - 1) % desc_blks;
+	new_sb_bh = sb_bread(sb, desc_base + new_sb_index);
+	if (!new_sb_bh) {
+		apfs_err(sb, "unable to read the new checkpoint superblock");
+		brelse(new_sb_bh);
+		return -EINVAL;
+	}
+
+	brelse(sbi->s_mobject.bh);
+	sbi->s_mobject.bh = new_sb_bh;
+	raw_sb = (struct apfs_nx_superblock *)new_sb_bh->b_data;
+	sbi->s_msb_raw = raw_sb;
+	sbi->s_mobject.block_nr = new_sb_bh->b_blocknr;
+
+	ASSERT(sbi->s_xid == le64_to_cpu(raw_sb->nx_next_xid));
+	raw_sb->nx_next_xid = cpu_to_le64(sbi->s_xid + 1);
+
+	/* Apparently the previous checkpoint gets invalidated right away */
+	raw_sb->nx_xp_desc_index = cpu_to_le32(desc_next);
+	desc_next = (new_sb_index + 1) % desc_blks;
+	raw_sb->nx_xp_desc_next = cpu_to_le32(desc_next);
+
+	mark_buffer_dirty(new_sb_bh);
+	return 0;
+}
+
+/**
+ * apfs_cpoint_init_data - Initialize the data area for a new checkpoint
+ * @sb: superblock structure
+ *
+ * Copies the latest data blocks into the new checkpoint, updating the fields
+ * related to this change of location.  Returns 0 on success, or a negative
+ * error code in case of failure.
+ */
+static int apfs_cpoint_init_data(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	struct buffer_head *sb_bh = sbi->s_mobject.bh;
+	u64 data_base = le64_to_cpu(raw_sb->nx_xp_data_base);
+	u32 data_next = le32_to_cpu(raw_sb->nx_xp_data_next);
+	u32 data_blks = le32_to_cpu(raw_sb->nx_xp_data_blocks);
+	u32 data_len = le32_to_cpu(raw_sb->nx_xp_data_len);
+	int err;
+
+	if (!data_blks || !data_len)
+		return -EFSCORRUPTED;
+
+	err = apfs_cpoint_init_area(sb, data_base, data_blks,
+				    data_next, data_len);
+	if (err)
+		return err;
+
+	/* Apparently the previous checkpoint gets invalidated right away */
+	ASSERT(sbi->s_xid == le64_to_cpu(raw_sb->nx_o.o_xid));
+	raw_sb->nx_xp_data_index = cpu_to_le32(data_next);
+	data_next = (data_next + data_len) % data_blks;
+	raw_sb->nx_xp_data_next = cpu_to_le32(data_next);
+
+	/* It's dirty already, but this looks better */
+	mark_buffer_dirty(sb_bh);
+	return 0;
+}
+
+/**
+ * apfs_update_mapping - Update a single checkpoint mapping
+ * @sb:		superblock structure
+ * @map:	checkpoint mapping to update
+ *
+ * Remaps @map to point to the address of the same ephemeral object in the next
+ * checkpoint data area.
+ */
+static void apfs_update_mapping(struct super_block *sb,
+				struct apfs_checkpoint_mapping *map)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	u64 data_base = le64_to_cpu(raw_sb->nx_xp_data_base);
+	u32 data_blks = le32_to_cpu(raw_sb->nx_xp_data_blocks);
+	u32 data_len = le32_to_cpu(raw_sb->nx_xp_data_len);
+	u64 old_paddr, new_paddr;
+	u32 old_index, new_index;
+
+	old_paddr = le64_to_cpu(map->cpm_paddr);
+	old_index = old_paddr - data_base;
+	new_index = (old_index + data_len) % data_blks;
+	new_paddr = data_base + new_index;
+
+	map->cpm_paddr = cpu_to_le64(new_paddr);
+}
+
+/**
+ * apfs_max_maps_per_block - Find the maximum map count for a mapping block
+ * @sb: superblock structure
+ */
+static inline int apfs_max_maps_per_block(struct super_block *sb)
+{
+	unsigned long maps_size;
+
+	maps_size = (sb->s_blocksize - sizeof(struct apfs_checkpoint_map_phys));
+	return maps_size / sizeof(struct apfs_checkpoint_mapping);
+}
+
+/**
+ * apfs_update_mapping_blocks - Update all checkpoint mappings
+ * @sb: superblock structure
+ *
+ * Updates the mappings in the checkpoint descriptor area to point to the
+ * address of the ephemeral objects for the new checkpoint.  Returns 0 on
+ * success, or a negative error code in case of failure.
+ */
+static int apfs_update_mapping_blocks(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	u64 desc_base = le64_to_cpu(raw_sb->nx_xp_desc_base);
+	u32 desc_index = le32_to_cpu(raw_sb->nx_xp_desc_index);
+	u32 desc_blks = le32_to_cpu(raw_sb->nx_xp_desc_blocks);
+	u32 desc_len = le32_to_cpu(raw_sb->nx_xp_desc_len);
+	u32 i;
+
+	/* Last block in the area is superblock; the rest are mapping blocks */
+	for (i = 0; i < desc_len - 1; ++i) {
+		struct buffer_head *bh;
+		struct apfs_checkpoint_map_phys *cpm;
+		u32 desc_curr = (desc_index + i) % desc_blks;
+		u32 map_count;
+		int j;
+
+		bh = sb_bread(sb, desc_base + desc_curr);
+		if (!bh)
+			return -EINVAL;
+		cpm = (struct apfs_checkpoint_map_phys *)bh->b_data;
+		ASSERT(sbi->s_xid == le64_to_cpu(cpm->cpm_o.o_xid));
+
+		map_count = le32_to_cpu(cpm->cpm_count);
+		if (map_count > apfs_max_maps_per_block(sb)) {
+			brelse(bh);
+			return -EFSCORRUPTED;
+		}
+
+		for (j = 0; j < map_count; ++j)
+			apfs_update_mapping(sb, &cpm->cpm_map[j]);
+		apfs_obj_set_csum(sb, &cpm->cpm_o);
+		mark_buffer_dirty(bh);
+		brelse(bh);
+	}
+	return 0;
+}
+
+/**
+ * apfs_checkpoint_start - Start a new checkpoint
+ * @sb: superblock structure
+ *
+ * Sets the descriptor and data areas for a new checkpoint.  Returns 0 on
+ * success, or a negative error code in case of failure.
+ */
+static int apfs_checkpoint_start(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	int err = 0;
+
+	if (sb->s_flags & SB_RDONLY)
+		return 0;
+	++sbi->s_xid;
+
+	err = apfs_cpoint_init_desc(sb);
+	if (err)
+		return err;
+	err = apfs_cpoint_init_data(sb);
+	if (err)
+		return err;
+	err = apfs_update_mapping_blocks(sb);
+
+	return err;
+}
+
+/**
+ * apfs_checkpoint_end - End the new checkpoint
+ * @sb:	filesystem superblock
+ *
+ * Flushes all changes to disk, and commits the new checkpoint by setting the
+ * fletcher checksum on its superblock.  On failure, discards all writes.
+ */
+static void apfs_checkpoint_end(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_obj_phys *obj = &sbi->s_msb_raw->nx_o;
+	struct buffer_head *bh = sbi->s_mobject.bh;
+
+	if (sb->s_flags & SB_RDONLY)
+		return;
+
+	if (blkdev_issue_flush(sb->s_bdev, GFP_KERNEL, NULL)) {
+		/* Don't commit a potentially inconsistent checkpoint */
+		apfs_alert(sb, "device flush failed - all changes are lost");
+		return;
+	}
+
+	apfs_obj_set_csum(sb, obj);
+	mark_buffer_dirty(bh);
+	sync_dirty_buffer(bh);
+}
+
+/**
  * apfs_read_omap - Find and read the omap root node
  * @sb:	superblock structure
  *
@@ -358,8 +672,10 @@ static void apfs_put_super(struct super_block *sb)
 	apfs_node_put(sbi->s_cat_root);
 	apfs_node_put(sbi->s_omap_root);
 
-	apfs_unmap_main_super(sb);
 	apfs_unmap_volume_super(sb);
+	apfs_checkpoint_end(sb);
+	apfs_make_super_copy(sb);
+	apfs_unmap_main_super(sb);
 
 	sb->s_fs_info = NULL;
 	kfree(sbi);
@@ -673,6 +989,11 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_blocksize_bits = sb->s_blocksize_bits;
 
 	err = parse_options(sb, data);
+	if (err)
+		goto failed_volume_super;
+
+	/* For now, all writes are done in a single transaction */
+	err = apfs_checkpoint_start(sb);
 	if (err)
 		goto failed_volume_super;
 
