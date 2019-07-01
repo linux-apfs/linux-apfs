@@ -324,4 +324,16 @@ static inline bool apfs_is_case_insensitive(struct super_block *sb)
 	       cpu_to_le64(APFS_INCOMPAT_CASE_INSENSITIVE)) != 0;
 }
 
+/**
+ * apfs_max_maps_per_block - Find the maximum map count for a mapping block
+ * @sb: superblock structure
+ */
+static inline int apfs_max_maps_per_block(struct super_block *sb)
+{
+	unsigned long maps_size;
+
+	maps_size = (sb->s_blocksize - sizeof(struct apfs_checkpoint_map_phys));
+	return maps_size / sizeof(struct apfs_checkpoint_mapping);
+}
+
 #endif	/* _APFS_SUPER_H */

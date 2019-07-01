@@ -5,8 +5,11 @@
  * Checksum routines for an APFS object
  */
 
+#include <linux/buffer_head.h>
 #include <linux/fs.h>
+#include "apfs.h"
 #include "object.h"
+#include "super.h"
 
 /*
  * Note that this is not a generic implementation of fletcher64, as it assumes
@@ -53,4 +56,85 @@ void apfs_obj_set_csum(struct super_block *sb, struct apfs_obj_phys *obj)
 				    sb->s_blocksize - APFS_MAX_CKSUM_SIZE);
 
 	obj->o_cksum = cpu_to_le64(cksum);
+}
+
+/**
+ * apfs_cpm_lookup_oid - Search a checkpoint-mapping block for a given oid
+ * @sb:		superblock structure
+ * @cpm:	checkpoint-mapping block (on disk)
+ * @oid:	the ephemeral object id to look up
+ * @bno:	on return, the block number for the object
+ *
+ * Returns -EFSCORRUPTED in case of corruption, or -EAGAIN if @oid is not
+ * listed in @cpm; returns 0 on success.
+ */
+static int apfs_cpm_lookup_oid(struct super_block *sb,
+			       struct apfs_checkpoint_map_phys *cpm,
+			       u64 oid, u64 *bno)
+{
+	u32 map_count = le32_to_cpu(cpm->cpm_count);
+	int i;
+
+	if (map_count > apfs_max_maps_per_block(sb))
+		return -EFSCORRUPTED;
+
+	for (i = 0; i < map_count; ++i) {
+		struct apfs_checkpoint_mapping *map = &cpm->cpm_map[i];
+
+		if (le64_to_cpu(map->cpm_oid) == oid) {
+			*bno = le64_to_cpu(map->cpm_paddr);
+			return 0;
+		}
+	}
+	return -EAGAIN; /* The mapping may still be in the next block */
+}
+
+/**
+ * apfs_read_ephemeral_object - Find and map an ephemeral object
+ * @sb:		superblock structure
+ * @oid:	ephemeral object id
+ *
+ * Returns the mapped buffer head for the object, or an error pointer in case
+ * of failure.
+ */
+struct buffer_head *apfs_read_ephemeral_object(struct super_block *sb, u64 oid)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	u64 desc_base = le64_to_cpu(raw_sb->nx_xp_desc_base);
+	u32 desc_index = le32_to_cpu(raw_sb->nx_xp_desc_index);
+	u32 desc_blks = le32_to_cpu(raw_sb->nx_xp_desc_blocks);
+	u32 desc_len = le32_to_cpu(raw_sb->nx_xp_desc_len);
+	u32 i;
+
+	if (!desc_blks || !desc_len)
+		return ERR_PTR(-EFSCORRUPTED);
+
+	/* Last block in the area is superblock; the rest are mapping blocks */
+	for (i = 0; i < desc_len - 1; ++i) {
+		struct buffer_head *bh;
+		struct apfs_checkpoint_map_phys *cpm;
+		u64 cpm_bno = desc_base + (desc_index + i) % desc_blks;
+		u64 obj_bno;
+		int err;
+
+		bh = sb_bread(sb, cpm_bno);
+		if (!bh)
+			return ERR_PTR(-EIO);
+		cpm = (struct apfs_checkpoint_map_phys *)bh->b_data;
+
+		err = apfs_cpm_lookup_oid(sb, cpm, oid, &obj_bno);
+		brelse(bh);
+		cpm = NULL;
+		if (err == -EAGAIN) /* Search the next mapping block */
+			continue;
+		if (err)
+			return ERR_PTR(err);
+
+		bh = sb_bread(sb, obj_bno);
+		if (!bh)
+			return ERR_PTR(-EIO);
+		return bh;
+	}
+	return ERR_PTR(-EFSCORRUPTED); /* The mapping is missing */
 }

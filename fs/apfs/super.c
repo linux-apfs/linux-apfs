@@ -482,18 +482,6 @@ static void apfs_update_mapping(struct super_block *sb,
 }
 
 /**
- * apfs_max_maps_per_block - Find the maximum map count for a mapping block
- * @sb: superblock structure
- */
-static inline int apfs_max_maps_per_block(struct super_block *sb)
-{
-	unsigned long maps_size;
-
-	maps_size = (sb->s_blocksize - sizeof(struct apfs_checkpoint_map_phys));
-	return maps_size / sizeof(struct apfs_checkpoint_mapping);
-}
-
-/**
  * apfs_update_mapping_blocks - Update all checkpoint mappings
  * @sb: superblock structure
  *
@@ -592,6 +580,48 @@ static void apfs_checkpoint_end(struct super_block *sb)
 	apfs_obj_set_csum(sb, obj);
 	mark_buffer_dirty(bh);
 	sync_dirty_buffer(bh);
+}
+
+/**
+ * apfs_read_spaceman - Find and read the space manager
+ * @sb: superblock structure
+ *
+ * For now only reads the space manager structure from disk and runs a few
+ * checks for testing.  Returns 0 on success, or a negative error code in
+ * case of failure.
+ */
+static int apfs_read_spaceman(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	struct buffer_head *bh;
+	struct apfs_obj_phys *obj;
+	u64 oid = le64_to_cpu(raw_sb->nx_spaceman_oid);
+	int err = 0;
+
+	if (sb->s_flags & SB_RDONLY) /* The space manager won't be needed */
+		return 0;
+
+	bh = apfs_read_ephemeral_object(sb, oid);
+	if (IS_ERR(bh))
+		return PTR_ERR(bh);
+	obj = (struct apfs_obj_phys *)bh->b_data;
+
+	if (sbi->s_flags & APFS_CHECK_NODES && !apfs_obj_verify_csum(sb, obj)) {
+		apfs_err(sb, "bad checksum for the space manager");
+		err = -EFSBADCRC;
+		goto fail;
+	}
+
+	if (le64_to_cpu(obj->o_oid) != oid)
+		err = -EFSCORRUPTED;
+	if (le32_to_cpu(obj->o_type) != (APFS_OBJECT_TYPE_SPACEMAN |
+					 APFS_OBJ_EPHEMERAL))
+		err = -EFSCORRUPTED;
+
+fail:
+	brelse(bh);
+	return err;
 }
 
 /**
@@ -994,6 +1024,10 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	/* For now, all writes are done in a single transaction */
 	err = apfs_checkpoint_start(sb);
+	if (err)
+		goto failed_volume_super;
+
+	err = apfs_read_spaceman(sb);
 	if (err)
 		goto failed_volume_super;
 
