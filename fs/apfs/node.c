@@ -32,9 +32,6 @@ static bool apfs_node_is_valid(struct super_block *sb,
 	int index_size = node->key - sizeof(struct apfs_btree_node_phys);
 	int entry_size;
 
-	if (!records) /* Empty nodes could keep a multiple query spinning */
-		return false;
-
 	if (node->key > sb->s_blocksize)
 		return false;
 
