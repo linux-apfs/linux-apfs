@@ -11,6 +11,7 @@
 #include <linux/fs.h>
 #include <linux/types.h>
 #include "object.h"
+#include "spaceman.h"
 
 /*
  * Structure used to store a range of physical blocks
@@ -311,6 +312,8 @@ struct apfs_sb_info {
 	/* TODO: handle block sizes above the maximum of PAGE_SIZE? */
 	unsigned long s_blocksize;
 	unsigned char s_blocksize_bits;
+
+	struct apfs_spaceman s_spaceman;
 };
 
 static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)

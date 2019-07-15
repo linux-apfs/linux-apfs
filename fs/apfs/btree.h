@@ -16,6 +16,7 @@ struct super_block;
 #define APFS_QUERY_TREE_MASK	0007	/* Which b-tree we query */
 #define APFS_QUERY_OMAP		0001	/* This is a b-tree object map query */
 #define APFS_QUERY_CAT		0002	/* This is a catalog tree query */
+#define APFS_QUERY_FREE_QUEUE	0004	/* This is a free queue query */
 #define APFS_QUERY_NEXT		0010	/* Find next of multiple matches */
 #define APFS_QUERY_EXACT	0020	/* Search for an exact match */
 #define APFS_QUERY_DONE		0040	/* The search at this level is over */
@@ -51,5 +52,7 @@ extern int apfs_btree_query(struct super_block *sb, struct apfs_query **query);
 extern struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id);
 extern int apfs_omap_lookup_block(struct super_block *sb,
 				  struct apfs_node *tbl, u64 id, u64 *block);
+extern int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
+			     void *val, int val_len);
 
 #endif	/* _APFS_BTREE_H */

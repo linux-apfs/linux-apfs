@@ -13,6 +13,14 @@
 struct super_block;
 
 /*
+ * Structure of a key in a free-space queue b-tree
+ */
+struct apfs_spaceman_free_queue_key {
+	__le64 sfqk_xid;
+	__le64 sfqk_paddr;
+} __packed;
+
+/*
  * Structure of a key in an object map B-tree
  */
 struct apfs_omap_key {
@@ -116,6 +124,21 @@ struct apfs_key {
 };
 
 /**
+ * apfs_init_free_queue_key - Initialize an in-memory key for a free queue query
+ * @xid:	transaction id
+ * @paddr:	block number
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_free_queue_key(u64 xid, u64 paddr,
+					    struct apfs_key *key)
+{
+	key->id = xid;
+	key->type = 0;
+	key->number = paddr;
+	key->name = NULL;
+}
+
+/**
  * apfs_init_omap_key - Initialize an in-memory key for an omap query
  * @oid:	object id
  * @xid:	latest transaction id
@@ -180,6 +203,7 @@ extern int apfs_filename_cmp(struct super_block *sb,
 extern int apfs_keycmp(struct super_block *sb,
 		       struct apfs_key *k1, struct apfs_key *k2);
 extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
+extern int apfs_read_free_queue_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_omap_key(void *raw, int size, struct apfs_key *key);
 
 #endif	/* _APFS_KEY_H */

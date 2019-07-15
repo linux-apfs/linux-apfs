@@ -251,3 +251,63 @@ struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
 
 	return result;
 }
+
+/**
+ * apfs_btree_insert - Insert a new record into a b-tree
+ * @query:	query run to search for the record
+ * @key:	on-disk record key
+ * @key_len:	length of @key
+ * @val:	on-disk record value (NULL for ghost records)
+ * @val_len:	length of @val (0 for ghost records)
+ *
+ * The new record is placed right before the one found by @query.  Returns 0 on
+ * success, or a negative error code in case of failure.
+ */
+int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
+		      void *val, int val_len)
+{
+	struct apfs_node *node = query->node;
+	struct super_block *sb = node->object.sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_btree_node_phys *node_raw;
+	struct apfs_kvoff *toc_entry;
+	struct apfs_btree_info *info;
+
+	/*
+	 * This function is a very rough first draft; all we need is to add
+	 * a few records to an empty free queue tree.
+	 */
+	ASSERT(apfs_node_has_fixed_kv_size(node));
+	ASSERT(!val && !val_len);
+	ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
+
+	node_raw = (void *)query->node->object.bh->b_data;
+	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
+
+	/* TODO: support toc resizing and record fragmentation */
+	if (sizeof(*node_raw) +
+	    (node->records + 1) * sizeof(*toc_entry) > node->key)
+		return -ENOSPC;
+	if (node->free + key_len > node->data)
+		return -ENOSPC;
+
+	query->index++; /* The query returned the record right before @key */
+	toc_entry = (struct apfs_kvoff *)node_raw->btn_data + query->index;
+	memmove(toc_entry + 1, toc_entry,
+		(node->records - query->index) * sizeof(*toc_entry));
+	toc_entry->v = cpu_to_le16(APFS_BTOFF_INVALID); /* Ghost record */
+
+	memcpy((void *)node_raw + node->free, key, key_len);
+	toc_entry->k = cpu_to_le16(node->free - node->key);
+	node->free += key_len;
+	le16_add_cpu(&node_raw->btn_free_space.off, key_len);
+	le16_add_cpu(&node_raw->btn_free_space.len, -key_len);
+
+	node_raw->btn_nkeys = cpu_to_le32(++node->records);
+	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
+	le64_add_cpu(&info->bt_key_count, 1);
+
+	apfs_obj_set_csum(sb, &node_raw->btn_o);
+	mark_buffer_dirty(node->object.bh);
+	return 0;
+}

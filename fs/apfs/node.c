@@ -169,9 +169,10 @@ static int apfs_node_locate_key(struct apfs_node *node, int index, int *off)
  * @index:	number of the entry to locate
  * @off:	on return will hold the offset in the block
  *
- * Returns the length of the data, or 0 in case of failure. The function checks
- * that this length fits within the block; callers must use the returned value
- * to make sure they never operate outside its bounds.
+ * Returns the length of the data, which may be 0 in case of corruption or if
+ * the record is a ghost. The function checks that this length fits within the
+ * block; callers must use the returned value to make sure they never operate
+ * outside its bounds.
  */
 static int apfs_node_locate_data(struct apfs_node *node, int index, int *off)
 {
@@ -186,10 +187,18 @@ static int apfs_node_locate_data(struct apfs_node *node, int index, int *off)
 	if (apfs_node_has_fixed_kv_size(node)) {
 		/* These node types have fixed length keys and data */
 		struct apfs_kvoff *entry;
+		u32 subtype = le32_to_cpu(raw->btn_o.o_subtype);
 
 		entry = (struct apfs_kvoff *)raw->btn_data + index;
-		/* Node type decides length */
-		len = apfs_node_is_leaf(node) ? 16 : 8;
+		if (subtype == APFS_OBJECT_TYPE_SPACEMAN_FREE_QUEUE) {
+			/* A free-space queue record may have no value */
+			if (le16_to_cpu(entry->v) == APFS_BTOFF_INVALID)
+				return 0;
+			len = 8;
+		} else {
+			/* This is an object-map node */
+			len = apfs_node_is_leaf(node) ? 16 : 8;
+		}
 		/*
 		 * Data offsets are counted backwards from the end of the
 		 * block, or from the beginning of the footer when it exists
@@ -245,6 +254,9 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 		break;
 	case APFS_QUERY_OMAP:
 		err = apfs_read_omap_key(raw_key, query->key_len, key);
+		break;
+	case APFS_QUERY_FREE_QUEUE:
+		err = apfs_read_free_queue_key(raw_key, query->key_len, key);
 		break;
 	default:
 		/* Not implemented yet */
@@ -358,8 +370,10 @@ int apfs_node_query(struct super_block *sb, struct apfs_query *query)
 		struct apfs_key curr_key;
 		if (cmp > 0) {
 			right = query->index - 1;
-			if (right < left)
+			if (right < left) {
+				query->index = -1;
 				return -ENODATA;
+			}
 			query->index = (left + right) / 2;
 		} else {
 			left = query->index;
@@ -377,8 +391,10 @@ int apfs_node_query(struct super_block *sb, struct apfs_query *query)
 			break;
 	} while (left != right);
 
-	if (cmp > 0)
+	if (cmp > 0) {
+		query->index = -1;
 		return -ENODATA;
+	}
 
 	if (cmp != 0 && apfs_node_is_leaf(query->node) &&
 	    query->flags & APFS_QUERY_EXACT)
@@ -391,8 +407,6 @@ int apfs_node_query(struct super_block *sb, struct apfs_query *query)
 	}
 
 	query->len = apfs_node_locate_data(node, query->index, &query->off);
-	if (query->len == 0)
-		return -EFSCORRUPTED;
 	return 0;
 }
 

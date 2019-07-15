@@ -148,6 +148,30 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 }
 
 /**
+ * apfs_read_free_queue_key - Parse an on-disk free queue key
+ * @raw:	pointer to the raw key
+ * @size:	size of the raw key
+ * @key:	apfs_key structure to store the result
+ *
+ * Returns 0 on success, or a negative error code otherwise.
+ */
+int apfs_read_free_queue_key(void *raw, int size, struct apfs_key *key)
+{
+	struct apfs_spaceman_free_queue_key *raw_key;
+
+	if (size < sizeof(struct apfs_spaceman_free_queue_key))
+		return -EFSCORRUPTED;
+	raw_key = raw;
+
+	key->id = le64_to_cpu(raw_key->sfqk_xid);
+	key->type = 0;
+	key->number = le64_to_cpu(raw_key->sfqk_paddr);
+	key->name = NULL;
+
+	return 0;
+}
+
+/**
  * apfs_read_omap_key - Parse an on-disk object map key
  * @raw:	pointer to the raw key
  * @size:	size of the raw key
