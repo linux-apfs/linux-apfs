@@ -252,6 +252,10 @@ struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
 	return result;
 }
 
+/* Constants used in managing the size of a node's table of contents */
+#define BTREE_TOC_ENTRY_INCREMENT	8
+#define BTREE_TOC_ENTRY_MAX_UNUSED	(2 * BTREE_TOC_ENTRY_INCREMENT)
+
 /**
  * apfs_btree_insert - Insert a new record into a b-tree
  * @query:	query run to search for the record
@@ -284,12 +288,29 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	node_raw = (void *)query->node->object.bh->b_data;
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 
-	/* TODO: support toc resizing and record fragmentation */
-	if (sizeof(*node_raw) +
-	    (node->records + 1) * sizeof(*toc_entry) > node->key)
-		return -ENOSPC;
+	/* TODO: support record fragmentation */
 	if (node->free + key_len > node->data)
 		return -ENOSPC;
+
+	/* Expand the table of contents if necessary */
+	if (sizeof(*node_raw) +
+	    (node->records + 1) * sizeof(*toc_entry) > node->key) {
+		int new_key_base = node->key;
+		int new_free_base = node->free;
+		int inc = BTREE_TOC_ENTRY_INCREMENT * sizeof(*toc_entry);
+
+		new_key_base += inc;
+		new_free_base += inc;
+		if (new_free_base + key_len > node->data)
+			return -ENOSPC;
+		memmove((void *)node_raw + new_key_base,
+			(void *)node_raw + node->key, node->free - node->key);
+
+		node->key = new_key_base;
+		node->free = new_free_base;
+		le16_add_cpu(&node_raw->btn_table_space.len, inc);
+		le16_add_cpu(&node_raw->btn_free_space.len, -inc);
+	}
 
 	query->index++; /* The query returned the record right before @key */
 	toc_entry = (struct apfs_kvoff *)node_raw->btn_data + query->index;
