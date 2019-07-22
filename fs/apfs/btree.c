@@ -40,11 +40,12 @@ static int apfs_child_from_query(struct apfs_query *query, u64 *child)
  * @tbl:	Root of the object map to be searched
  * @id:		id of the node
  * @block:	on return, the found block number
+ * @write:	get write access to the object?
  *
  * Returns 0 on success or a negative error code in case of failure.
  */
 int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
-			   u64 id, u64 *block)
+			   u64 id, u64 *block, bool write)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_query *query;
@@ -64,9 +65,63 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 		goto fail;
 
 	ret = apfs_bno_from_query(query, block);
-	if (ret)
+	if (ret) {
 		apfs_alert(sb, "bad object map leaf block: 0x%llx",
 			   query->node->object.block_nr);
+		goto fail;
+	}
+
+	if (write) {
+		struct apfs_node *node = query->node;
+		struct buffer_head *node_bh = node->object.bh;
+		struct apfs_btree_node_phys *node_raw;
+		struct apfs_omap_key *key;
+		struct apfs_omap_val *val;
+		struct buffer_head *old_bh;
+		struct buffer_head *new_bh;
+		struct apfs_obj_phys *new_obj;
+		u64 new_bno;
+
+		/* TODO: update parent nodes */
+		ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
+
+		node_raw = (void *)node_bh->b_data;
+		ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
+
+		ret = apfs_spaceman_allocate_block(sb, &new_bno);
+		if (ret)
+			goto fail;
+		old_bh = sb_bread(sb, *block);
+		new_bh = sb_bread(sb, new_bno);
+		if (!new_bh || !old_bh) {
+			brelse(new_bh);
+			brelse(old_bh);
+			ret = -EIO;
+			goto fail;
+		}
+		memcpy(new_bh->b_data, old_bh->b_data, sb->s_blocksize);
+
+		ret = apfs_free_queue_insert(sb, old_bh->b_blocknr);
+		brelse(old_bh);
+		old_bh = NULL;
+		new_obj = (struct apfs_obj_phys *)new_bh->b_data;
+		new_obj->o_xid = cpu_to_le64(sbi->s_xid);
+		apfs_obj_set_csum(sb, new_obj);
+		mark_buffer_dirty(new_bh);
+		brelse(new_bh);
+		new_bh = NULL;
+		if (ret)
+			goto fail;
+
+		key = (void *)node_raw + query->key_off;
+		key->ok_xid = cpu_to_le64(sbi->s_xid); /* TODO: snapshots? */
+		val = (void *)node_raw + query->off;
+		val->ov_paddr = cpu_to_le64(new_bno);
+		*block = new_bno;
+
+		apfs_obj_set_csum(sb, (struct apfs_obj_phys *)node_bh->b_data);
+		mark_buffer_dirty(node_bh);
+	}
 
 fail:
 	apfs_free_query(sb, query);
@@ -193,8 +248,8 @@ next_node:
 		 * we are always performing lookup from omap root. Might
 		 * need improvement in the future.
 		 */
-		err = apfs_omap_lookup_block(sb, sbi->s_omap_root,
-					     child_id, &child_blk);
+		err = apfs_omap_lookup_block(sb, sbi->s_omap_root, child_id,
+					     &child_blk, false /* write */);
 		if (err)
 			return err;
 	}
@@ -238,7 +293,8 @@ struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
 	u64 block;
 	int err;
 
-	err = apfs_omap_lookup_block(sb, sbi->s_omap_root, id, &block);
+	err = apfs_omap_lookup_block(sb, sbi->s_omap_root, id, &block,
+				     false /* write */);
 	if (err)
 		return ERR_PTR(err);
 

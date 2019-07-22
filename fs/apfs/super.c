@@ -280,6 +280,41 @@ static int apfs_map_volume_super(struct super_block *sb)
 
 	/* Get the Volume Block */
 	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
+	if (!(sb->s_flags & SB_RDONLY)) {
+		struct buffer_head *old_bh = NULL;
+		struct buffer_head *new_bh = NULL;
+		struct apfs_obj_phys *new_obj;
+		u64 new_bno;
+
+		err = apfs_spaceman_allocate_block(sb, &new_bno);
+		if (err)
+			goto fail;
+		old_bh = sb_bread(sb, vb);
+		new_bh = sb_bread(sb, new_bno);
+		if (!new_bh || !old_bh) {
+			brelse(new_bh);
+			brelse(old_bh);
+			err = -EINVAL;
+			goto fail;
+		}
+		memcpy(new_bh->b_data, old_bh->b_data, sb->s_blocksize);
+
+		err = apfs_free_queue_insert(sb, old_bh->b_blocknr);
+		brelse(old_bh);
+		new_obj = (struct apfs_obj_phys *)new_bh->b_data;
+		new_obj->o_xid = cpu_to_le64(sbi->s_xid);
+		new_obj->o_oid = cpu_to_le64(new_bno);
+		apfs_obj_set_csum(sb, new_obj);
+		mark_buffer_dirty(new_bh);
+		brelse(new_bh);
+		if (err)
+			goto fail;
+
+		vb = new_bno;
+		msb_omap_raw->om_tree_oid = cpu_to_le64(new_bno);
+		apfs_obj_set_csum(sb, (struct apfs_obj_phys *)bh->b_data);
+		mark_buffer_dirty(bh);
+	}
 	msb_omap_raw = NULL;
 	brelse(bh);
 
@@ -289,7 +324,8 @@ static int apfs_map_volume_super(struct super_block *sb)
 		return PTR_ERR(vnode);
 	}
 
-	err = apfs_omap_lookup_block(sb, vnode, vol_id, &vsb);
+	err = apfs_omap_lookup_block(sb, vnode, vol_id, &vsb,
+				     !(sb->s_flags & SB_RDONLY));
 	apfs_node_put(vnode);
 	if (err) {
 		apfs_err(sb, "volume not found, likely corruption");
@@ -694,6 +730,16 @@ static void apfs_put_super(struct super_block *sb)
 	apfs_node_put(sbi->s_cat_root);
 	apfs_node_put(sbi->s_omap_root);
 
+	if (!(sb->s_flags & SB_RDONLY)) {
+		struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+		struct buffer_head *vsb_bh = sbi->s_vobject.bh;
+
+		ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+		vsb_raw->apfs_unmount_time = cpu_to_le64(ktime_get_real_ns());
+		apfs_obj_set_csum(sb, &vsb_raw->apfs_o);
+		mark_buffer_dirty(vsb_bh);
+	}
+
 	apfs_unmap_volume_super(sb);
 	apfs_checkpoint_end(sb);
 	apfs_make_super_copy(sb);
@@ -808,7 +854,8 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 		vol_id = le64_to_cpu(msb_raw->nx_fs_oid[i]);
 		if (vol_id == 0) /* All volumes have been checked */
 			break;
-		err = apfs_omap_lookup_block(sb, vnode, vol_id, &vol_bno);
+		err = apfs_omap_lookup_block(sb, vnode, vol_id, &vol_bno,
+					     false /* write */);
 		if (err)
 			break;
 

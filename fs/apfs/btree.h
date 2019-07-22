@@ -50,8 +50,8 @@ extern struct apfs_query *apfs_alloc_query(struct apfs_node *node,
 extern void apfs_free_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_btree_query(struct super_block *sb, struct apfs_query **query);
 extern struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id);
-extern int apfs_omap_lookup_block(struct super_block *sb,
-				  struct apfs_node *tbl, u64 id, u64 *block);
+extern int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
+				  u64 id, u64 *block, bool write);
 extern int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 			     void *val, int val_len);
 
