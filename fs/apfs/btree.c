@@ -13,6 +13,7 @@
 #include "message.h"
 #include "node.h"
 #include "super.h"
+#include "transaction.h"
 
 /**
  * apfs_child_from_query - Read the child id found by a successful nonleaf query
@@ -98,7 +99,7 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 		*block = new_bh->b_blocknr;
 		brelse(new_bh);
 
-		apfs_obj_set_csum(sb, (struct apfs_obj_phys *)node_bh->b_data);
+		set_buffer_csum(node_bh);
 		mark_buffer_dirty(node_bh);
 	}
 

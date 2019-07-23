@@ -12,6 +12,7 @@
 #include "object.h"
 #include "spaceman.h"
 #include "super.h"
+#include "transaction.h"
 
 /*
  * Note that this is not a generic implementation of fletcher64, as it assumes
@@ -202,7 +203,11 @@ struct buffer_head *apfs_read_object_block(struct super_block *sb, u64 bno,
 	if (type & APFS_OBJ_PHYSICAL)
 		obj->o_oid = cpu_to_le64(new_bno);
 	obj->o_xid = cpu_to_le64(sbi->s_xid);
-	apfs_obj_set_csum(sb, obj);
+	err = apfs_transaction_join(sb, bh);
+	if (err)
+		goto fail;
+
+	set_buffer_csum(bh);
 	mark_buffer_dirty(bh);
 	return bh;
 

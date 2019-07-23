@@ -12,6 +12,7 @@
 #include <linux/types.h>
 #include "object.h"
 #include "spaceman.h"
+#include "transaction.h"
 
 /*
  * Structure used to store a range of physical blocks
@@ -314,6 +315,7 @@ struct apfs_sb_info {
 	unsigned char s_blocksize_bits;
 
 	struct apfs_spaceman s_spaceman;
+	struct apfs_transaction s_transaction;
 };
 
 static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)
@@ -338,5 +340,7 @@ static inline int apfs_max_maps_per_block(struct super_block *sb)
 	maps_size = (sb->s_blocksize - sizeof(struct apfs_checkpoint_map_phys));
 	return maps_size / sizeof(struct apfs_checkpoint_mapping);
 }
+
+extern int apfs_map_volume_super(struct super_block *sb, bool write);
 
 #endif	/* _APFS_SUPER_H */
