@@ -8,7 +8,9 @@
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include "apfs.h"
+#include "message.h"
 #include "object.h"
+#include "spaceman.h"
 #include "super.h"
 
 /*
@@ -137,4 +139,74 @@ struct buffer_head *apfs_read_ephemeral_object(struct super_block *sb, u64 oid)
 		return bh;
 	}
 	return ERR_PTR(-EFSCORRUPTED); /* The mapping is missing */
+}
+
+/**
+ * apfs_read_object_block - Map a non-ephemeral object block
+ * @sb:		superblock structure
+ * @bno:	block number for the object
+ * @write:	request write access?
+ *
+ * On success returns the mapped buffer head for the object, which may now be
+ * in a new location if write access was requested.  Returns an error pointer
+ * in case of failure.
+ */
+struct buffer_head *apfs_read_object_block(struct super_block *sb, u64 bno,
+					   bool write)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct buffer_head *bh, *new_bh;
+	struct apfs_obj_phys *obj;
+	u32 type;
+	u64 new_bno;
+	int err;
+
+	bh = sb_bread(sb, bno);
+	if (!bh)
+		return ERR_PTR(-EIO);
+
+	obj = (struct apfs_obj_phys *)bh->b_data;
+	type = le32_to_cpu(obj->o_type);
+	ASSERT(!(type & APFS_OBJ_EPHEMERAL));
+	if (sbi->s_flags & APFS_CHECK_NODES && !apfs_obj_verify_csum(sb, obj)) {
+		err = -EFSBADCRC;
+		goto fail;
+	}
+
+	if (!write)
+		return bh;
+	ASSERT(!(sb->s_flags & SB_RDONLY));
+
+	/* Is the object already part of the current transaction? */
+	if (obj->o_xid == cpu_to_le64(sbi->s_xid))
+		return bh;
+
+	err = apfs_spaceman_allocate_block(sb, &new_bno);
+	if (err)
+		goto fail;
+	new_bh = sb_bread(sb, new_bno);
+	if (!new_bh) {
+		err = -EIO;
+		goto fail;
+	}
+	memcpy(new_bh->b_data, bh->b_data, sb->s_blocksize);
+
+	err = apfs_free_queue_insert(sb, bh->b_blocknr);
+	brelse(bh);
+	bh = new_bh;
+	new_bh = NULL;
+	if (err)
+		goto fail;
+	obj = (struct apfs_obj_phys *)bh->b_data;
+
+	if (type & APFS_OBJ_PHYSICAL)
+		obj->o_oid = cpu_to_le64(new_bno);
+	obj->o_xid = cpu_to_le64(sbi->s_xid);
+	apfs_obj_set_csum(sb, obj);
+	mark_buffer_dirty(bh);
+	return bh;
+
+fail:
+	brelse(bh);
+	return ERR_PTR(err);
 }

@@ -212,9 +212,9 @@ static int apfs_map_volume_super(struct super_block *sb)
 	struct apfs_superblock *vsb_raw;
 	struct apfs_omap_phys *msb_omap_raw;
 	struct apfs_node *vnode;
-	struct buffer_head *bh;
+	struct buffer_head *bh, *bh_tmp;
 	u64 vol_id;
-	u64 msb_omap, vb, vsb;
+	u64 vb, vsb;
 	int err;
 
 	ASSERT(sbi->s_msb_raw);
@@ -231,93 +231,37 @@ static int apfs_map_volume_super(struct super_block *sb)
 	}
 
 	/* Get the container's object map */
-	msb_omap = le64_to_cpu(msb_raw->nx_omap_oid);
-	bh = sb_bread(sb, msb_omap);
-	if (!bh) {
+	bh = apfs_read_object_block(sb, le64_to_cpu(msb_raw->nx_omap_oid),
+				    !(sb->s_flags & SB_RDONLY));
+	if (IS_ERR(bh)) {
 		apfs_err(sb, "unable to read container object map");
-		return -EINVAL;
+		return PTR_ERR(bh);
 	}
-	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
-	if (!apfs_obj_verify_csum(sb, &msb_omap_raw->om_o)) {
-		apfs_err(sb, "bad checksum for the container object map");
-		err = -EFSBADCRC;
-		goto fail;
-	}
-
-	/* Add the object map to the next transaction */
-	if (!(sb->s_flags & SB_RDONLY)) {
-		struct buffer_head *new_bh;
-		struct apfs_obj_phys *new_obj;
-		u64 new_bno;
-
-		err = apfs_spaceman_allocate_block(sb, &new_bno);
-		if (err)
-			goto fail;
-		new_bh = sb_bread(sb, new_bno);
-		if (!new_bh) {
-			err = -EINVAL;
-			goto fail;
-		}
-		memcpy(new_bh->b_data, bh->b_data, sb->s_blocksize);
-
-		err = apfs_free_queue_insert(sb, bh->b_blocknr);
-		brelse(bh);
-		msb_omap_raw = (struct apfs_omap_phys *)new_bh->b_data;
-		bh = new_bh;
-		new_bh = NULL;
-		if (err)
-			goto fail;
-
-		new_obj = &msb_omap_raw->om_o;
-		new_obj->o_xid = cpu_to_le64(sbi->s_xid);
-		new_obj->o_oid = cpu_to_le64(new_bno);
-		apfs_obj_set_csum(sb, new_obj);
-		mark_buffer_dirty(bh);
-
-		msb_raw->nx_omap_oid = cpu_to_le64(new_bno);
+	if (msb_raw->nx_omap_oid != cpu_to_le64(bh->b_blocknr)) {
+		msb_raw->nx_omap_oid = cpu_to_le64(bh->b_blocknr);
 		mark_buffer_dirty(sbi->s_mobject.bh);
 	}
+	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
 
-	/* Get the Volume Block */
+	/* Get the root node for the container's omap */
 	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
-	if (!(sb->s_flags & SB_RDONLY)) {
-		struct buffer_head *old_bh = NULL;
-		struct buffer_head *new_bh = NULL;
-		struct apfs_obj_phys *new_obj;
-		u64 new_bno;
-
-		err = apfs_spaceman_allocate_block(sb, &new_bno);
-		if (err)
-			goto fail;
-		old_bh = sb_bread(sb, vb);
-		new_bh = sb_bread(sb, new_bno);
-		if (!new_bh || !old_bh) {
-			brelse(new_bh);
-			brelse(old_bh);
-			err = -EINVAL;
-			goto fail;
-		}
-		memcpy(new_bh->b_data, old_bh->b_data, sb->s_blocksize);
-
-		err = apfs_free_queue_insert(sb, old_bh->b_blocknr);
-		brelse(old_bh);
-		new_obj = (struct apfs_obj_phys *)new_bh->b_data;
-		new_obj->o_xid = cpu_to_le64(sbi->s_xid);
-		new_obj->o_oid = cpu_to_le64(new_bno);
-		apfs_obj_set_csum(sb, new_obj);
-		mark_buffer_dirty(new_bh);
-		brelse(new_bh);
-		if (err)
-			goto fail;
-
-		vb = new_bno;
-		msb_omap_raw->om_tree_oid = cpu_to_le64(new_bno);
+	bh_tmp = apfs_read_object_block(sb, vb, !(sb->s_flags & SB_RDONLY));
+	if (IS_ERR(bh_tmp)) {
+		apfs_err(sb, "unable to read volume block");
+		err = PTR_ERR(bh_tmp);
+		goto fail;
+	}
+	vb = bh_tmp->b_blocknr;
+	if (msb_omap_raw->om_tree_oid != cpu_to_le64(vb)) {
+		msb_omap_raw->om_tree_oid = cpu_to_le64(vb);
 		apfs_obj_set_csum(sb, (struct apfs_obj_phys *)bh->b_data);
 		mark_buffer_dirty(bh);
 	}
 	msb_omap_raw = NULL;
 	brelse(bh);
+	brelse(bh_tmp);
 
+	/* This is very redundant: read_node() must be reconsidered */
 	vnode = apfs_read_node(sb, vb);
 	if (IS_ERR(vnode)) {
 		apfs_err(sb, "unable to read volume block");

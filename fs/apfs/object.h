@@ -93,5 +93,7 @@ extern void apfs_obj_set_csum(struct super_block *sb,
 			      struct apfs_obj_phys *obj);
 extern struct buffer_head *apfs_read_ephemeral_object(struct super_block *sb,
 						      u64 oid);
+extern struct buffer_head *apfs_read_object_block(struct super_block *sb,
+						  u64 bno, bool write);
 
 #endif	/* _APFS_OBJECT_H */

@@ -77,10 +77,7 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 		struct apfs_btree_node_phys *node_raw;
 		struct apfs_omap_key *key;
 		struct apfs_omap_val *val;
-		struct buffer_head *old_bh;
 		struct buffer_head *new_bh;
-		struct apfs_obj_phys *new_obj;
-		u64 new_bno;
 
 		/* TODO: update parent nodes */
 		ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
@@ -88,36 +85,18 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 		node_raw = (void *)node_bh->b_data;
 		ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 
-		ret = apfs_spaceman_allocate_block(sb, &new_bno);
-		if (ret)
-			goto fail;
-		old_bh = sb_bread(sb, *block);
-		new_bh = sb_bread(sb, new_bno);
-		if (!new_bh || !old_bh) {
-			brelse(new_bh);
-			brelse(old_bh);
-			ret = -EIO;
+		new_bh = apfs_read_object_block(sb, *block, write);
+		if (IS_ERR(new_bh)) {
+			ret = PTR_ERR(new_bh);
 			goto fail;
 		}
-		memcpy(new_bh->b_data, old_bh->b_data, sb->s_blocksize);
-
-		ret = apfs_free_queue_insert(sb, old_bh->b_blocknr);
-		brelse(old_bh);
-		old_bh = NULL;
-		new_obj = (struct apfs_obj_phys *)new_bh->b_data;
-		new_obj->o_xid = cpu_to_le64(sbi->s_xid);
-		apfs_obj_set_csum(sb, new_obj);
-		mark_buffer_dirty(new_bh);
-		brelse(new_bh);
-		new_bh = NULL;
-		if (ret)
-			goto fail;
 
 		key = (void *)node_raw + query->key_off;
 		key->ok_xid = cpu_to_le64(sbi->s_xid); /* TODO: snapshots? */
 		val = (void *)node_raw + query->off;
-		val->ov_paddr = cpu_to_le64(new_bno);
-		*block = new_bno;
+		val->ov_paddr = cpu_to_le64(new_bh->b_blocknr);
+		*block = new_bh->b_blocknr;
+		brelse(new_bh);
 
 		apfs_obj_set_csum(sb, (struct apfs_obj_phys *)node_bh->b_data);
 		mark_buffer_dirty(node_bh);
