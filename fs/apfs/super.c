@@ -564,10 +564,14 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
-	struct apfs_superblock *vol = sbi->s_vsb_raw;
+	struct apfs_nx_superblock *msb_raw;
+	struct apfs_superblock *vol;
 	u64 fsid, used_blocks = 0;
 	int err;
+
+	down_read(&sbi->s_big_sem);
+	msb_raw = sbi->s_msb_raw;
+	vol = sbi->s_vsb_raw;
 
 	buf->f_type = APFS_SUPER_MAGIC;
 	/* Nodes are assumed to fit in a page, for now */
@@ -577,7 +581,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_blocks = le64_to_cpu(msb_raw->nx_block_count);
 	err = apfs_count_used_blocks(sb, &used_blocks);
 	if (err)
-		return err;
+		goto fail;
 	buf->f_bfree = buf->f_blocks - used_blocks;
 	buf->f_bavail = buf->f_bfree; /* I don't know any better */
 
@@ -600,7 +604,9 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_fsid.val[0] = fsid & 0xFFFFFFFFUL;
 	buf->f_fsid.val[1] = (fsid >> 32) & 0xFFFFFFFFUL;
 
-	return 0;
+fail:
+	up_read(&sbi->s_big_sem);
+	return err;
 }
 
 static int apfs_show_options(struct seq_file *seq, struct dentry *root)
@@ -734,6 +740,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!sbi)
 		return -ENOMEM;
 	sb->s_fs_info = sbi;
+	init_rwsem(&sbi->s_big_sem);
 
 	err = apfs_map_main_super(sb);
 	if (err)

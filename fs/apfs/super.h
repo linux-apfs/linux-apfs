@@ -316,6 +316,9 @@ struct apfs_sb_info {
 
 	struct apfs_spaceman s_spaceman;
 	struct apfs_transaction s_transaction;
+
+	/* For now, a single semaphore for every operation */
+	struct rw_semaphore s_big_sem;
 };
 
 static inline struct apfs_sb_info *APFS_SB(struct super_block *sb)

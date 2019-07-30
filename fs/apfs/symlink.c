@@ -9,6 +9,7 @@
 #include <linux/slab.h>
 #include "apfs.h"
 #include "message.h"
+#include "super.h"
 #include "xattr.h"
 
 /**
@@ -24,40 +25,52 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 				 struct delayed_call *done)
 {
 	struct super_block *sb = inode->i_sb;
-	char *target, *err;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	char *target = NULL;
+	int err;
 	int size;
 
-	if (!dentry)
-		return ERR_PTR(-ECHILD);
+	down_read(&sbi->s_big_sem);
 
-	size = apfs_xattr_get(inode, APFS_XATTR_NAME_SYMLINK,
-			      NULL /* buffer */, 0 /* size */);
-	if (size < 0) /* TODO: return a better error code */
-		return ERR_PTR(size);
+	if (!dentry) {
+		err = -ECHILD;
+		goto fail;
+	}
+
+	size = __apfs_xattr_get(inode, APFS_XATTR_NAME_SYMLINK,
+				NULL /* buffer */, 0 /* size */);
+	if (size < 0) { /* TODO: return a better error code */
+		err = size;
+		goto fail;
+	}
 
 	target = kmalloc(size, GFP_KERNEL);
-	if (!target)
-		return ERR_PTR(-ENOMEM);
+	if (!target) {
+		err = -ENOMEM;
+		goto fail;
+	}
 
-	size = apfs_xattr_get(inode, APFS_XATTR_NAME_SYMLINK, target, size);
+	size = __apfs_xattr_get(inode, APFS_XATTR_NAME_SYMLINK, target, size);
 	if (size < 0) {
-		err = ERR_PTR(size);
+		err = size;
 		goto fail;
 	}
 	if (size == 0 || *(target + size - 1) != 0) {
 		/* Target path must be NULL-terminated */
 		apfs_alert(sb, "bad link target in inode 0x%llx",
 			   (unsigned long long) inode->i_ino);
-		err = ERR_PTR(-EFSCORRUPTED);
+		err = -EFSCORRUPTED;
 		goto fail;
 	}
 
+	up_read(&sbi->s_big_sem);
 	set_delayed_call(done, kfree_link, target);
 	return target;
 
 fail:
 	kfree(target);
-	return err;
+	up_read(&sbi->s_big_sem);
+	return ERR_PTR(err);
 }
 
 const struct inode_operations apfs_symlink_inode_operations = {

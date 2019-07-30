@@ -197,20 +197,16 @@ static int apfs_xattr_inline_read(struct inode *parent,
 }
 
 /**
- * apfs_xattr_get - Find and read a named attribute
+ * __apfs_xattr_get - Find and read a named attribute
  * @inode:	inode the attribute belongs to
  * @name:	name of the attribute
  * @buffer:	where to copy the attribute value
  * @size:	size of @buffer
  *
- * Finds an extended attribute and copies its value to @buffer, if provided. If
- * @buffer is NULL, just computes the size of the buffer required.
- *
- * Returns the number of bytes used/required, or a negative error code in case
- * of failure.
+ * This does the same as apfs_xattr_get(), but without taking any locks.
  */
-int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
-		   size_t size)
+int __apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
+		     size_t size)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -248,6 +244,32 @@ done:
 	return ret;
 }
 
+/**
+ * apfs_xattr_get - Find and read a named attribute
+ * @inode:	inode the attribute belongs to
+ * @name:	name of the attribute
+ * @buffer:	where to copy the attribute value
+ * @size:	size of @buffer
+ *
+ * Finds an extended attribute and copies its value to @buffer, if provided. If
+ * @buffer is NULL, just computes the size of the buffer required.
+ *
+ * Returns the number of bytes used/required, or a negative error code in case
+ * of failure.
+ */
+int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
+		   size_t size)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	int ret;
+
+	down_read(&sbi->s_big_sem);
+	ret = __apfs_xattr_get(inode, name, buffer, size);
+	up_read(&sbi->s_big_sem);
+	return ret;
+}
+
 static int apfs_xattr_osx_get(const struct xattr_handler *handler,
 				struct dentry *unused, struct inode *inode,
 				const char *name, void *buffer, size_t size)
@@ -278,9 +300,13 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	size_t free = size;
 	ssize_t ret;
 
+	down_read(&sbi->s_big_sem);
+
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query)
-		return -ENOMEM;
+	if (!query) {
+		ret = -ENOMEM;
+		goto fail;
+	}
 
 	/* We want all the xattrs for the cnid, regardless of the name */
 	apfs_init_xattr_key(cnid, NULL /* name */, &key);
@@ -320,6 +346,8 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 		free -= xattr.name_len + XATTR_MAC_OSX_PREFIX_LEN + 1;
 	}
 
+fail:
 	apfs_free_query(sb, query);
+	up_read(&sbi->s_big_sem);
 	return ret;
 }

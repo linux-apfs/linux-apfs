@@ -300,13 +300,16 @@ static int apfs_checkpoint_end(struct super_block *sb)
  * apfs_transaction_start - Begin a new transaction
  * @sb: superblock structure
  *
- * Returns 0 on success or a negative error code in case of failure.
+ * Also locks the filesystem for writing; returns 0 on success or a negative
+ * error code in case of failure.
  */
 int apfs_transaction_start(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_transaction *trans = &sbi->s_transaction;
 	int err;
+
+	down_write(&sbi->s_big_sem);
 
 	ASSERT(!(sb->s_flags & SB_RDONLY));
 	ASSERT(!trans->t_old_msb && !trans->t_old_vsb);
@@ -347,7 +350,8 @@ fail:
  * apfs_transaction_commit - Commit the current transaction
  * @sb: superblock structure
  *
- * Returns 0 on success or a negative error code in case of failure.
+ * Also releases the big filesystem lock; returns 0 on success or a negative
+ * error code in case of failure.
  */
 int apfs_transaction_commit(struct super_block *sb)
 {
@@ -390,6 +394,8 @@ int apfs_transaction_commit(struct super_block *sb)
 	trans->t_old_msb = NULL;
 	brelse(trans->t_old_vsb);
 	trans->t_old_vsb = NULL;
+
+	up_write(&sbi->s_big_sem);
 	return 0;
 
 fail:
@@ -431,8 +437,9 @@ int apfs_transaction_join(struct super_block *sb, struct buffer_head *bh)
  * apfs_transaction_abort - Abort the current transaction
  * @sb: superblock structure
  *
- * Only clears the in-memory transaction data; the on-disk changes are
- * irrelevant because the superblock checksum hasn't been written yet.
+ * Releases the big filesystem lock and clears the in-memory transaction data;
+ * the on-disk changes are irrelevant because the superblock checksum hasn't
+ * been written yet.
  */
 void apfs_transaction_abort(struct super_block *sb)
 {
@@ -469,4 +476,6 @@ void apfs_transaction_abort(struct super_block *sb)
 	sbi->s_vobject.block_nr = trans->t_old_vsb->b_blocknr;
 	sbi->s_vsb_raw = (void *)trans->t_old_vsb;
 	trans->t_old_vsb = NULL;
+
+	up_write(&sbi->s_big_sem);
 }

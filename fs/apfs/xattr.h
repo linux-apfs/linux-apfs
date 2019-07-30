@@ -54,6 +54,8 @@ struct apfs_xattr {
 	bool has_dstream;
 };
 
+extern int __apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
+			    size_t size);
 extern int apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 			  size_t size);
 extern ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size);

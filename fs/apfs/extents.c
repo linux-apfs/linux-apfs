@@ -114,13 +114,16 @@ int apfs_get_block(struct inode *inode, sector_t iblock,
 		   struct buffer_head *bh_result, int create)
 {
 	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_file_extent ext;
 	u64 blk_off, bno, map_len;
 	int ret;
 
+	down_read(&sbi->s_big_sem);
+
 	ret = apfs_extent_read(inode, iblock, &ext);
 	if (ret)
-		return ret;
+		goto fail;
 
 	/* Find the block offset of iblock within the extent */
 	blk_off = iblock - (ext.logical_addr >> inode->i_blkbits);
@@ -141,7 +144,9 @@ int apfs_get_block(struct inode *inode, sector_t iblock,
 		bno = ext.phys_block_num + blk_off;
 		map_bh(bh_result, sb, bno);
 	}
-
 	bh_result->b_size = map_len;
-	return 0;
+
+fail:
+	up_read(&sbi->s_big_sem);
+	return ret;
 }

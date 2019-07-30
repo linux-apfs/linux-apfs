@@ -239,7 +239,9 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	if (!(inode->i_state & I_NEW))
 		return inode;
 
+	down_read(&sbi->s_big_sem);
 	err = apfs_inode_lookup(inode);
+	up_read(&sbi->s_big_sem);
 	if (err) {
 		iget_failed(inode);
 		return ERR_PTR(err);
