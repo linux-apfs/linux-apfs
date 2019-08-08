@@ -329,71 +329,108 @@ static inline void apfs_unmap_volume_super(struct super_block *sb)
 
 /**
  * apfs_read_omap - Find and read the omap root node
- * @sb:	superblock structure
+ * @sb:		superblock structure
+ * @write:	request write access?
  *
  * On success, returns 0 and sets APFS_SB(@sb)->s_omap_root; on failure returns
  * a negative error code.
  */
-static int apfs_read_omap(struct super_block *sb)
+int apfs_read_omap(struct super_block *sb, bool write)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
 	struct apfs_omap_phys *omap_raw;
 	struct apfs_node *omap_root;
-	struct buffer_head *bh;
+	struct buffer_head *bh, *bh_tmp;
 	u64 omap_blk, omap_root_blk;
+	int err;
 
 	ASSERT(sbi->s_vsb_raw);
 
 	/* Get the block holding the volume omap information */
 	omap_blk = le64_to_cpu(vsb_raw->apfs_omap_oid);
-	bh = sb_bread(sb, omap_blk);
-	if (!bh) {
+	bh = apfs_read_object_block(sb, omap_blk, write);
+	if (IS_ERR(bh)) {
 		apfs_err(sb, "unable to read the volume object map");
-		return -EINVAL;
+		return PTR_ERR(bh);
+	}
+	if (write) {
+		ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+		vsb_raw->apfs_omap_oid = cpu_to_le64(bh->b_blocknr);
+		mark_buffer_dirty(sbi->s_vobject.bh);
 	}
 	omap_raw = (struct apfs_omap_phys *)bh->b_data;
-	if (!apfs_obj_verify_csum(sb, &omap_raw->om_o)) {
-		apfs_err(sb, "bad checksum for the volume object map");
-		brelse(bh);
-		return -EFSBADCRC;
-	}
 
 	/* Get the volume's object map */
 	omap_root_blk = le64_to_cpu(omap_raw->om_tree_oid);
+	bh_tmp = apfs_read_object_block(sb, omap_root_blk, write);
+	if (IS_ERR(bh_tmp)) {
+		apfs_err(sb, "unable to read the omap root node");
+		err = PTR_ERR(bh_tmp);
+		goto fail;
+	}
+	omap_root_blk = bh_tmp->b_blocknr;
+	if (write) {
+		ASSERT(sbi->s_xid == le64_to_cpu(omap_raw->om_o.o_xid));
+		ASSERT(buffer_trans(bh));
+		omap_raw->om_tree_oid = cpu_to_le64(omap_root_blk);
+		mark_buffer_dirty(bh);
+	}
+	omap_raw = NULL;
 	brelse(bh);
+	brelse(bh_tmp);
+
+	/* This is very redundant: read_node() must be reconsidered */
 	omap_root = apfs_read_node(sb, omap_root_blk);
 	if (IS_ERR(omap_root)) {
 		apfs_err(sb, "unable to read the omap root node");
 		return PTR_ERR(omap_root);
 	}
 
+	if (sbi->s_omap_root)
+		apfs_node_put(sbi->s_omap_root);
 	sbi->s_omap_root = omap_root;
 	return 0;
+
+fail:
+	brelse(bh);
+	return err;
 }
 
 /**
  * apfs_read_catalog - Find and read the catalog root node
- * @sb:	superblock structure
+ * @sb:		superblock structure
+ * @write:	request write access?
  *
  * On success, returns 0 and sets APFS_SB(@sb)->s_cat_root; on failure returns
  * a negative error code.
  */
-static int apfs_read_catalog(struct super_block *sb)
+int apfs_read_catalog(struct super_block *sb, bool write)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
 	struct apfs_node *root_node;
-	u64 root_id;
+	u64 root_id, root_bno;
+	int err;
 
 	ASSERT(sbi->s_omap_root);
 
 	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
-	root_node = apfs_omap_read_node(sb, root_id);
+	err = apfs_omap_lookup_block(sb, sbi->s_omap_root, root_id,
+				     &root_bno, write);
+	if (err) {
+		apfs_err(sb, "unable to read catalog root node");
+		return err;
+	}
+
+	root_node = apfs_read_node(sb, root_bno);
 	if (IS_ERR(root_node)) {
 		apfs_err(sb, "unable to read catalog root node");
 		return PTR_ERR(root_node);
 	}
+
+	if (sbi->s_cat_root)
+		apfs_node_put(sbi->s_cat_root);
 	sbi->s_cat_root = root_node;
 	return 0;
 }
@@ -401,9 +438,6 @@ static int apfs_read_catalog(struct super_block *sb)
 static void apfs_put_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-
-	apfs_node_put(sbi->s_cat_root);
-	apfs_node_put(sbi->s_omap_root);
 
 	/* Update the volume's unmount time */
 	if (!(sb->s_flags & SB_RDONLY)) {
@@ -428,6 +462,9 @@ static void apfs_put_super(struct super_block *sb)
 	}
 
 fail:
+	apfs_node_put(sbi->s_cat_root);
+	apfs_node_put(sbi->s_omap_root);
+
 	apfs_unmap_volume_super(sb);
 	apfs_unmap_main_super(sb);
 
@@ -759,11 +796,11 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_volume_super;
 
 	/* The omap needs to be set before the call to apfs_read_catalog() */
-	err = apfs_read_omap(sb);
+	err = apfs_read_omap(sb, false /* write */);
 	if (err)
 		goto failed_omap;
 
-	err = apfs_read_catalog(sb);
+	err = apfs_read_catalog(sb, false /* write */);
 	if (err)
 		goto failed_cat;
 
@@ -771,6 +808,7 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_d_op = &apfs_dentry_operations;
 	sb->s_xattr = apfs_xattr_handlers;
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
+	sb->s_time_gran = 1; /* Nanosecond granularity */
 
 	root = apfs_iget(sb, APFS_ROOT_DIR_INO_NUM);
 	if (IS_ERR(root)) {

@@ -11,6 +11,7 @@
 #include <linux/types.h>
 
 struct inode;
+struct dentry;
 struct qstr;
 struct apfs_query;
 
@@ -39,6 +40,8 @@ extern int apfs_drec_from_query(struct apfs_query *query,
 				struct apfs_drec *drec);
 extern int apfs_inode_by_name(struct inode *dir, const struct qstr *child,
 			      u64 *ino);
+extern int apfs_mknod(struct inode *dir, struct dentry *dentry,
+		      umode_t mode, dev_t rdev);
 
 extern const struct file_operations apfs_dir_operations;
 

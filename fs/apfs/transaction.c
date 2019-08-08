@@ -319,6 +319,11 @@ int apfs_transaction_start(struct super_block *sb)
 	get_bh(trans->t_old_msb);
 	trans->t_old_vsb = sbi->s_vobject.bh;
 	get_bh(trans->t_old_vsb);
+	/* Backup the old tree roots; the node struct issues make this ugly */
+	trans->t_old_cat_root = *sbi->s_cat_root;
+	get_bh(trans->t_old_cat_root.object.bh);
+	trans->t_old_omap_root = *sbi->s_omap_root;
+	get_bh(trans->t_old_omap_root.object.bh);
 
 	++sbi->s_xid;
 	INIT_LIST_HEAD(&trans->t_buffers);
@@ -336,6 +341,14 @@ int apfs_transaction_start(struct super_block *sb)
 		goto fail;
 
 	err = apfs_map_volume_super(sb, true /* write */);
+	if (err)
+		goto fail;
+
+	/* TODO: don't copy these nodes for transactions that don't use them */
+	err = apfs_read_omap(sb, true /* write */);
+	if (err)
+		goto fail;
+	err = apfs_read_catalog(sb, true /* write */);
 	if (err)
 		goto fail;
 
@@ -380,7 +393,13 @@ int apfs_transaction_commit(struct super_block *sb)
 		list_del(&bhi->list);
 		kfree(bhi);
 	}
-	/* We still hold a reference to the volume superblock */
+	/* We still hold references to these buffer heads */
+	err = sync_dirty_buffer(sbi->s_omap_root->object.bh);
+	if (err)
+		goto fail;
+	err = sync_dirty_buffer(sbi->s_cat_root->object.bh);
+	if (err)
+		goto fail;
 	err = sync_dirty_buffer(sbi->s_vobject.bh);
 	if (err)
 		goto fail;
@@ -394,6 +413,11 @@ int apfs_transaction_commit(struct super_block *sb)
 	trans->t_old_msb = NULL;
 	brelse(trans->t_old_vsb);
 	trans->t_old_vsb = NULL;
+	/* XXX: forget the buffers for the b-tree roots */
+	brelse(trans->t_old_omap_root.object.bh);
+	trans->t_old_omap_root.object.bh = NULL;
+	brelse(trans->t_old_cat_root.object.bh);
+	trans->t_old_cat_root.object.bh = NULL;
 
 	up_write(&sbi->s_big_sem);
 	return 0;
@@ -476,6 +500,14 @@ void apfs_transaction_abort(struct super_block *sb)
 	sbi->s_vobject.block_nr = trans->t_old_vsb->b_blocknr;
 	sbi->s_vsb_raw = (void *)trans->t_old_vsb;
 	trans->t_old_vsb = NULL;
+
+	/* XXX: restore the old b-tree root nodes */
+	brelse(sbi->s_omap_root->object.bh);
+	*(sbi->s_omap_root) = trans->t_old_omap_root;
+	trans->t_old_omap_root.object.bh = NULL;
+	brelse(sbi->s_cat_root->object.bh);
+	*(sbi->s_cat_root) = trans->t_old_cat_root;
+	trans->t_old_cat_root.object.bh = NULL;
 
 	up_write(&sbi->s_big_sem);
 }

@@ -345,5 +345,7 @@ static inline int apfs_max_maps_per_block(struct super_block *sb)
 }
 
 extern int apfs_map_volume_super(struct super_block *sb, bool write);
+extern int apfs_read_omap(struct super_block *sb, bool write);
+extern int apfs_read_catalog(struct super_block *sb, bool write);
 
 #endif	/* _APFS_SUPER_H */

@@ -67,6 +67,16 @@ struct apfs_inode_val {
 #define APFS_INO_EXT_TYPE_SPARSE_BYTES 13
 #define APFS_INO_EXT_TYPE_RDEV 14
 
+/* Extended field flags */
+#define APFS_XF_DATA_DEPENDENT		0x01
+#define APFS_XF_DO_NOT_COPY		0x02
+#define APFS_XF_RESERVED_4		0x04
+#define APFS_XF_CHILDREN_INHERIT	0x08
+#define APFS_XF_USER_FIELD		0x10
+#define APFS_XF_SYSTEM_FIELD		0x20
+#define APFS_XF_RESERVED_40		0x40
+#define APFS_XF_RESERVED_80		0x80
+
 /*
  * Structure used to store the number and size of extended fields of an inode
  */
@@ -127,5 +137,8 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
 extern int apfs_getattr(const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int query_flags);
+extern struct inode *apfs_new_inode(struct inode *dir, umode_t mode);
+extern int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
+				 struct dentry *dentry);
 
 #endif	/* _APFS_INODE_H */

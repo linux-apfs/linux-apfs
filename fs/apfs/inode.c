@@ -301,3 +301,207 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 #endif
 	return 0;
 }
+
+/**
+ * apfs_new_inode - Create a new in-memory inode
+ * @dir:	parent inode
+ * @mode:	mode bits for the new inode
+ *
+ * Returns a pointer to the new vfs inode on success, or an error pointer in
+ * case of failure.
+ */
+struct inode *apfs_new_inode(struct inode *dir, umode_t mode)
+{
+	struct super_block *sb = dir->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+	struct inode *inode;
+	struct apfs_inode_info *ai;
+	u64 cnid;
+
+	/* Updating on-disk structures here is odd, but it works for now */
+	ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+
+	inode = new_inode(sb);
+	if (!inode)
+		return ERR_PTR(-ENOMEM);
+	ai = APFS_I(inode);
+
+	cnid = le64_to_cpu(vsb_raw->apfs_next_obj_id);
+	le64_add_cpu(&vsb_raw->apfs_next_obj_id, 1);
+	inode->i_ino = cnid;
+#if BITS_PER_LONG == 32
+	ai->ino = cnid;
+#endif
+	inode_init_owner(inode, dir, mode); /* TODO: handle override */
+	set_nlink(inode, 1);
+
+	ai->i_crtime = current_time(inode);
+	inode->i_atime = inode->i_mtime = inode->i_ctime = ai->i_crtime;
+	vsb_raw->apfs_last_mod_time = cpu_to_le64(
+		     ai->i_crtime.tv_sec * NSEC_PER_SEC + ai->i_crtime.tv_nsec);
+
+	/* Only special files are supported for now */
+	ASSERT(!S_ISDIR(mode) && !S_ISREG(mode) && !S_ISLNK(mode));
+	le64_add_cpu(&vsb_raw->apfs_num_other_fsobjects, 1);
+
+	/* TODO: use insert_inode_locked4() on 32-bit architectures */
+	if (insert_inode_locked(inode)) {
+		/* The inode number should have been free, but wasn't */
+		make_bad_inode(inode);
+		iput(inode);
+		return ERR_PTR(-EFSCORRUPTED);
+	}
+
+	/* No need to dirty the inode, we'll write it to disk right away */
+	return inode;
+}
+
+/**
+ * apfs_build_inode_val - Allocate and initialize the value for an inode record
+ * @inode:	vfs inode to record
+ * @dentry:	dentry for primary link
+ * @val_p:	on return, a pointer to the new on-disk value structure
+ *
+ * Returns the length of the value, or a negative error code in case of failure.
+ */
+static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
+				struct apfs_inode_val **val_p)
+{
+	struct apfs_inode_val *val;
+	struct inode *parent = d_inode(dentry->d_parent);
+	struct apfs_xf_blob *xblob;
+	struct apfs_x_field *xcurrent;
+	char *xdata;
+	int xfield_num, xfield_used_data;
+	struct qstr *qname = &dentry->d_name;
+	int namelen, padded_namelen;
+	int val_len;
+	struct timespec64 time;
+	u64 timestamp;
+	__le32 *rdev;
+
+	val_len = sizeof(*val) + sizeof(*xblob);
+
+	/* The name is stored in an xfield, padded with zeroes */
+	namelen = qname->len + 1; /* We count the null-termination */
+	padded_namelen = round_up(namelen, 8);
+	val_len += sizeof(struct apfs_x_field) + padded_namelen;
+	xfield_used_data = padded_namelen;
+	xfield_num = 1;
+
+	/* Device files have another xfield for the id */
+	if (inode->i_rdev) {
+		/* TODO: is this xfield actually padded? */
+		val_len += sizeof(struct apfs_x_field) +
+			   round_up(sizeof(*rdev), 8);
+		xfield_used_data += round_up(sizeof(*rdev), 8);
+		++xfield_num;
+	}
+
+	val = kzalloc(val_len, GFP_KERNEL);
+	if (!val)
+		return -ENOMEM;
+
+	val->parent_id = cpu_to_le64(parent->i_ino);
+	val->private_id = cpu_to_le64(inode->i_ino);
+
+	/* APFS stores the time as unsigned nanoseconds since the epoch */
+	time = inode->i_mtime;
+	timestamp = time.tv_sec * NSEC_PER_SEC + time.tv_nsec;
+	val->create_time = val->mod_time = val->change_time =
+			   val->access_time = cpu_to_le64(timestamp);
+
+	val->nlink = cpu_to_le32(1);
+	val->owner = cpu_to_le32(i_uid_read(inode));
+	val->group = cpu_to_le32(i_gid_read(inode));
+	val->mode = cpu_to_le16(inode->i_mode);
+
+	xblob = (struct apfs_xf_blob *)val->xfields;
+	xblob->xf_num_exts = cpu_to_le16(xfield_num);
+	/* The official reference seems to be wrong here */
+	xblob->xf_used_data = cpu_to_le16(xfield_used_data);
+
+	/* Set the metadata for the name xfield */
+	xcurrent = (struct apfs_x_field *)xblob->xf_data;
+	xcurrent->x_type = APFS_INO_EXT_TYPE_NAME;
+	xcurrent->x_flags = APFS_XF_DO_NOT_COPY;
+	xcurrent->x_size = cpu_to_le16(namelen);
+
+	if (inode->i_rdev) {
+		/* Set the metadata for the device id xfield */
+		++xcurrent;
+		xcurrent->x_type = APFS_INO_EXT_TYPE_RDEV;
+		xcurrent->x_flags = 0; /* TODO: proper flags here? */
+		xcurrent->x_size = cpu_to_le16(sizeof(*rdev));
+	}
+
+	/* Now comes the xfield data, in the same order */
+	xdata = (char *)(xcurrent + 1);
+	strcpy(xdata, qname->name);
+	xdata += padded_namelen;
+	if (inode->i_rdev) {
+		rdev = (__le32 *)xdata;
+		*rdev = cpu_to_le32(inode->i_rdev);
+		xdata += round_up(sizeof(*rdev), 8);
+	}
+	ASSERT(xdata - (char *)val == val_len);
+
+	*val_p = val;
+	return val_len;
+}
+
+/**
+ * apfs_create_inode_rec - Create an inode record in the catalog b-tree
+ * @sb:		filesystem superblock
+ * @inode:	vfs inode to record
+ * @dentry:	dentry for primary link
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
+			  struct dentry *dentry)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query;
+	struct apfs_inode_key raw_key;
+	struct apfs_inode_val *raw_val;
+	u64 cnid;
+	int val_len;
+	int ret;
+
+#if BITS_PER_LONG == 64
+	cnid = inode->i_ino;
+#else
+	cnid = ai->i_ino;
+#endif
+
+	apfs_init_inode_key(cnid, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret && ret != -ENODATA)
+		goto fail;
+
+	/* TODO: move this to a wrapper function in key.c */
+	raw_key.hdr.obj_id_and_type =
+		cpu_to_le64(cnid | (u64)APFS_TYPE_INODE << APFS_OBJ_TYPE_SHIFT);
+
+	val_len = apfs_build_inode_val(inode, dentry, &raw_val);
+	if (val_len < 0) {
+		ret = val_len;
+		goto fail;
+	}
+
+	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
+				raw_val, val_len);
+
+fail:
+	apfs_free_query(sb, query);
+	return ret;
+}

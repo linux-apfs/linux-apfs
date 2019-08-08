@@ -10,6 +10,7 @@
 
 #include <linux/buffer_head.h>
 #include <linux/list.h>
+#include "node.h"
 
 /*
  * Structure that keeps track of a transaction.
@@ -17,6 +18,10 @@
 struct apfs_transaction {
 	struct buffer_head *t_old_msb;  /* Main superblock being replaced */
 	struct buffer_head *t_old_vsb;  /* Volume superblock being replaced */
+
+	struct apfs_node t_old_omap_root; /* Omap root node being replaced */
+	struct apfs_node t_old_cat_root;  /* Catalog root node being replaced */
+
 	struct list_head t_buffers;	/* List of buffers in the transaction */
 };
 

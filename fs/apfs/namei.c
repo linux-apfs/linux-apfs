@@ -38,6 +38,7 @@ static struct dentry *apfs_lookup(struct inode *dir, struct dentry *dentry,
 
 const struct inode_operations apfs_dir_inode_operations = {
 	.lookup		= apfs_lookup,
+	.mknod		= apfs_mknod,
 	.getattr	= apfs_getattr,
 	.listxattr      = apfs_listxattr,
 };

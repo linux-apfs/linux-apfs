@@ -310,34 +310,39 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	struct super_block *sb = node->object.sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_btree_node_phys *node_raw;
-	struct apfs_kvoff *toc_entry;
 	struct apfs_btree_info *info;
+	int toc_entry_size;
 
 	/*
 	 * This function is a very rough first draft; all we need is to add
-	 * a few records to an empty free queue tree.
+	 * a few records to an empty tree.
 	 */
-	ASSERT(apfs_node_has_fixed_kv_size(node));
-	ASSERT(!val && !val_len);
 	ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
 
 	node_raw = (void *)query->node->object.bh->b_data;
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 
 	/* TODO: support record fragmentation */
-	if (node->free + key_len > node->data)
+	if (node->free + key_len + val_len > node->data)
 		return -ENOSPC;
+
+	if (apfs_node_has_fixed_kv_size(node))
+		toc_entry_size = sizeof(struct apfs_kvoff);
+	else
+		toc_entry_size = sizeof(struct apfs_kvloc);
 
 	/* Expand the table of contents if necessary */
 	if (sizeof(*node_raw) +
-	    (node->records + 1) * sizeof(*toc_entry) > node->key) {
+	    (node->records + 1) * toc_entry_size > node->key) {
 		int new_key_base = node->key;
 		int new_free_base = node->free;
-		int inc = BTREE_TOC_ENTRY_INCREMENT * sizeof(*toc_entry);
+		int inc;
+
+		inc = BTREE_TOC_ENTRY_INCREMENT * toc_entry_size;
 
 		new_key_base += inc;
 		new_free_base += inc;
-		if (new_free_base + key_len > node->data)
+		if (new_free_base + key_len + val_len > node->data)
 			return -ENOSPC;
 		memmove((void *)node_raw + new_key_base,
 			(void *)node_raw + node->key, node->free - node->key);
@@ -349,20 +354,57 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	}
 
 	query->index++; /* The query returned the record right before @key */
-	toc_entry = (struct apfs_kvoff *)node_raw->btn_data + query->index;
-	memmove(toc_entry + 1, toc_entry,
-		(node->records - query->index) * sizeof(*toc_entry));
-	toc_entry->v = cpu_to_le16(APFS_BTOFF_INVALID); /* Ghost record */
 
+	/* Insert the new entry in the table of contents */
+	if (apfs_node_has_fixed_kv_size(node)) {
+		struct apfs_kvoff *toc_entry;
+
+		toc_entry = (struct apfs_kvoff *)node_raw->btn_data +
+								query->index;
+		memmove(toc_entry + 1, toc_entry,
+			(node->records - query->index) * sizeof(*toc_entry));
+
+		if (!val) /* Ghost record */
+			toc_entry->v = cpu_to_le16(APFS_BTOFF_INVALID);
+		else
+			toc_entry->v = cpu_to_le16(val_len);
+		toc_entry->k = cpu_to_le16(node->free - node->key);
+	} else {
+		struct apfs_kvloc *toc_entry;
+
+		toc_entry = (struct apfs_kvloc *)node_raw->btn_data +
+								query->index;
+		memmove(toc_entry + 1, toc_entry,
+			(node->records - query->index) * sizeof(*toc_entry));
+
+		toc_entry->v.off = cpu_to_le16(sb->s_blocksize - node->data -
+					       sizeof(*info) + val_len);
+		toc_entry->v.len = cpu_to_le16(val_len);
+		toc_entry->k.off = cpu_to_le16(node->free - node->key);
+		toc_entry->k.len = cpu_to_le16(key_len);
+	}
+
+	/* Write the record key to the end of the key area */
 	memcpy((void *)node_raw + node->free, key, key_len);
-	toc_entry->k = cpu_to_le16(node->free - node->key);
 	node->free += key_len;
 	le16_add_cpu(&node_raw->btn_free_space.off, key_len);
 	le16_add_cpu(&node_raw->btn_free_space.len, -key_len);
 
-	node_raw->btn_nkeys = cpu_to_le32(++node->records);
+	if (val) {
+		/* Write the record value to the beginning of the value area */
+		memcpy((void *)node_raw + node->data - val_len, val, val_len);
+		node->data -= val_len;
+		le16_add_cpu(&node_raw->btn_free_space.len, -val_len);
+	}
+
 	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
 	le64_add_cpu(&info->bt_key_count, 1);
+	node_raw->btn_nkeys = cpu_to_le32(++node->records);
+
+	if (key_len > le32_to_cpu(info->bt_longest_key))
+		info->bt_longest_key = cpu_to_le32(key_len);
+	if (val_len > le32_to_cpu(info->bt_longest_val))
+		info->bt_longest_val = cpu_to_le32(val_len);
 
 	apfs_obj_set_csum(sb, &node_raw->btn_o);
 	mark_buffer_dirty(node->object.bh);
