@@ -61,6 +61,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	char *raw = query->node->object.bh->b_data;
 	int rest, i;
 	u64 secs;
+	u32 rdev = 0;
 
 	if (query->len < sizeof(*inode_val))
 		return -EFSCORRUPTED;
@@ -111,12 +112,19 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 		attrlen = round_up(le16_to_cpu(xfield[i].x_size), 8);
 		if (attrlen > rest)
 			break;
+
+		/* These are the only xfields we care about, for now */
 		if (xfield[i].x_type == APFS_INO_EXT_TYPE_DSTREAM) {
-			/* The only optional attr we care about, for now */
 			dstream = (struct apfs_dstream *)
 					((char *)inode_val + query->len - rest);
 			break;
 		}
+		if (xfield[i].x_type == APFS_INO_EXT_TYPE_RDEV) {
+			__le32 *rdev_p = (void *)inode_val + query->len - rest;
+
+			rdev = le32_to_cpu(*rdev_p);
+		}
+
 		rest -= attrlen;
 	}
 
@@ -130,6 +138,21 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 		 * in com.apple.ResourceFork
 		 */
 		inode->i_size = inode->i_blocks = 0;
+	}
+
+	/* A lot of operations still missing, of course */
+	if (S_ISREG(inode->i_mode)) {
+		inode->i_op = &apfs_file_inode_operations;
+		inode->i_fop = &apfs_file_operations;
+		inode->i_mapping->a_ops = &apfs_aops;
+	} else if (S_ISDIR(inode->i_mode)) {
+		inode->i_op = &apfs_dir_inode_operations;
+		inode->i_fop = &apfs_dir_operations;
+	} else if (S_ISLNK(inode->i_mode)) {
+		inode->i_op = &apfs_symlink_inode_operations;
+	} else {
+		inode->i_op = &apfs_special_inode_operations;
+		init_special_inode(inode, inode->i_mode, rdev);
 	}
 
 	return 0;
@@ -252,20 +275,6 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		inode->i_uid = sbi->s_uid;
 	if (sbi->s_flags & APFS_GID_OVERRIDE)
 		inode->i_gid = sbi->s_gid;
-
-	/* A lot of operations still missing, of course */
-	if (S_ISREG(inode->i_mode)) {
-		inode->i_op = &apfs_file_inode_operations;
-		inode->i_fop = &apfs_file_operations;
-		inode->i_mapping->a_ops = &apfs_aops;
-	} else if (S_ISDIR(inode->i_mode)) {
-		inode->i_op = &apfs_dir_inode_operations;
-		inode->i_fop = &apfs_dir_operations;
-	} else if (S_ISLNK(inode->i_mode)) {
-		inode->i_op = &apfs_symlink_inode_operations;
-	} else {
-		inode->i_op = &apfs_special_inode_operations;
-	}
 
 	/* Inode flags are not important for now, leave them at 0 */
 	unlock_new_inode(inode);
