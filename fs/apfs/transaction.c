@@ -493,12 +493,12 @@ void apfs_transaction_abort(struct super_block *sb)
 	brelse(sbi->s_mobject.bh);
 	sbi->s_mobject.bh = trans->t_old_msb;
 	sbi->s_mobject.block_nr = trans->t_old_msb->b_blocknr;
-	sbi->s_msb_raw = (void *)trans->t_old_msb;
+	sbi->s_msb_raw = (void *)trans->t_old_msb->b_data;
 	trans->t_old_msb = NULL;
 	brelse(sbi->s_vobject.bh);
 	sbi->s_vobject.bh = trans->t_old_vsb;
 	sbi->s_vobject.block_nr = trans->t_old_vsb->b_blocknr;
-	sbi->s_vsb_raw = (void *)trans->t_old_vsb;
+	sbi->s_vsb_raw = (void *)trans->t_old_vsb->b_data;
 	trans->t_old_vsb = NULL;
 
 	/* XXX: restore the old b-tree root nodes */
