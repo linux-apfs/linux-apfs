@@ -137,7 +137,8 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
 extern int apfs_getattr(const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int query_flags);
-extern struct inode *apfs_new_inode(struct inode *dir, umode_t mode);
+extern struct inode *apfs_new_inode(struct inode *dir, umode_t mode,
+				    dev_t rdev);
 extern int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 				 struct dentry *dentry);
 

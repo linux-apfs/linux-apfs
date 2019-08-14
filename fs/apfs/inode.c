@@ -322,11 +322,12 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
  * apfs_new_inode - Create a new in-memory inode
  * @dir:	parent inode
  * @mode:	mode bits for the new inode
+ * @rdev:	device id (0 if not a device file)
  *
  * Returns a pointer to the new vfs inode on success, or an error pointer in
  * case of failure.
  */
-struct inode *apfs_new_inode(struct inode *dir, umode_t mode)
+struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 {
 	struct super_block *sb = dir->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -357,9 +358,12 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode)
 	vsb_raw->apfs_last_mod_time = cpu_to_le64(
 		     ai->i_crtime.tv_sec * NSEC_PER_SEC + ai->i_crtime.tv_nsec);
 
-	/* Only special files are supported for now */
-	ASSERT(!S_ISDIR(mode) && !S_ISREG(mode) && !S_ISLNK(mode));
-	le64_add_cpu(&vsb_raw->apfs_num_other_fsobjects, 1);
+	/* Only directories and special files are supported for now */
+	ASSERT(!S_ISREG(mode) && !S_ISLNK(mode));
+	if (S_ISDIR(mode))
+		le64_add_cpu(&vsb_raw->apfs_num_directories, 1);
+	else
+		le64_add_cpu(&vsb_raw->apfs_num_other_fsobjects, 1);
 
 	/* TODO: use insert_inode_locked4() on 32-bit architectures */
 	if (insert_inode_locked(inode)) {
@@ -370,6 +374,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode)
 	}
 
 	/* No need to dirty the inode, we'll write it to disk right away */
+	apfs_inode_set_ops(inode, rdev);
 	return inode;
 }
 
@@ -428,7 +433,11 @@ static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
 	val->create_time = val->mod_time = val->change_time =
 			   val->access_time = cpu_to_le64(timestamp);
 
-	val->nlink = cpu_to_le32(1);
+	if (S_ISDIR(inode->i_mode))
+		val->nchildren = 0;
+	else
+		val->nlink = cpu_to_le32(1);
+
 	val->owner = cpu_to_le32(i_uid_read(inode));
 	val->group = cpu_to_le32(i_gid_read(inode));
 	val->mode = cpu_to_le16(inode->i_mode);

@@ -337,14 +337,11 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	if (err)
 		return err;
 
-	inode = apfs_new_inode(dir, mode);
+	inode = apfs_new_inode(dir, mode, rdev);
 	if (IS_ERR(inode)) {
 		err = PTR_ERR(inode);
 		goto out_abort;
 	}
-
-	init_special_inode(inode, inode->i_mode, rdev);
-	inode->i_op = &apfs_special_inode_operations;
 
 	err = apfs_create_inode_rec(sb, inode, dentry);
 	if (err)
@@ -368,4 +365,9 @@ out_abort:
 	if (sbi->s_transaction.t_old_msb)
 		apfs_transaction_abort(sb);
 	return err;
+}
+
+int apfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+{
+	return apfs_mknod(dir, dentry, mode | S_IFDIR, 0 /* rdev */);
 }

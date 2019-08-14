@@ -42,6 +42,7 @@ extern int apfs_inode_by_name(struct inode *dir, const struct qstr *child,
 			      u64 *ino);
 extern int apfs_mknod(struct inode *dir, struct dentry *dentry,
 		      umode_t mode, dev_t rdev);
+extern int apfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode);
 
 extern const struct file_operations apfs_dir_operations;
 
