@@ -371,3 +371,9 @@ int apfs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 {
 	return apfs_mknod(dir, dentry, mode | S_IFDIR, 0 /* rdev */);
 }
+
+int apfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+		bool excl)
+{
+	return apfs_mknod(dir, dentry, mode, 0 /* rdev */);
+}
