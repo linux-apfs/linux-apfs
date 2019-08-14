@@ -43,6 +43,36 @@ static const struct address_space_operations apfs_aops = {
 };
 
 /**
+ * apfs_inode_set_ops - Set up an inode's operations
+ * @inode:	vfs inode to set up
+ * @rdev:	device id (0 if not a device file)
+ *
+ * For device files, also sets the device id to @rdev.
+ */
+static void apfs_inode_set_ops(struct inode *inode, dev_t rdev)
+{
+	/* A lot of operations still missing, of course */
+	switch (inode->i_mode & S_IFMT) {
+	case S_IFREG:
+		inode->i_op = &apfs_file_inode_operations;
+		inode->i_fop = &apfs_file_operations;
+		inode->i_mapping->a_ops = &apfs_aops;
+		break;
+	case S_IFDIR:
+		inode->i_op = &apfs_dir_inode_operations;
+		inode->i_fop = &apfs_dir_operations;
+		break;
+	case S_IFLNK:
+		inode->i_op = &apfs_symlink_inode_operations;
+		break;
+	default:
+		inode->i_op = &apfs_special_inode_operations;
+		init_special_inode(inode, inode->i_mode, rdev);
+		break;
+	}
+}
+
+/**
  * apfs_inode_from_query - Read the inode found by a successful query
  * @query:	the query that found the record
  * @inode:	vfs inode to be filled with the read data
@@ -140,21 +170,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 		inode->i_size = inode->i_blocks = 0;
 	}
 
-	/* A lot of operations still missing, of course */
-	if (S_ISREG(inode->i_mode)) {
-		inode->i_op = &apfs_file_inode_operations;
-		inode->i_fop = &apfs_file_operations;
-		inode->i_mapping->a_ops = &apfs_aops;
-	} else if (S_ISDIR(inode->i_mode)) {
-		inode->i_op = &apfs_dir_inode_operations;
-		inode->i_fop = &apfs_dir_operations;
-	} else if (S_ISLNK(inode->i_mode)) {
-		inode->i_op = &apfs_symlink_inode_operations;
-	} else {
-		inode->i_op = &apfs_special_inode_operations;
-		init_special_inode(inode, inode->i_mode, rdev);
-	}
-
+	apfs_inode_set_ops(inode, rdev);
 	return 0;
 }
 
