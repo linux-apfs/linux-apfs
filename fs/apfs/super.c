@@ -18,6 +18,7 @@
 #include "apfs.h"
 #include "btree.h"
 #include "inode.h"
+#include "key.h"
 #include "message.h"
 #include "node.h"
 #include "object.h"
@@ -633,7 +634,7 @@ static int apfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	 * number of available cnids, like hfsplus attempts to do.
 	 */
 
-	buf->f_namelen = 255; /* Again, I don't know any better */
+	buf->f_namelen = APFS_NAME_LEN;
 
 	/* There are no clear rules for the fsid, so we follow ext2 here */
 	fsid = le64_to_cpup((void *)vol->apfs_vol_uuid) ^

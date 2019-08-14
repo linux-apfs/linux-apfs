@@ -85,8 +85,8 @@ struct apfs_dstream_id_key {
 #define APFS_DREC_HASH_MASK	0xfffffc00
 #define APFS_DREC_HASH_SHIFT	10
 
-/* The name length in the catalog key counts the terminating null byte. */
-#define APFS_NAME_LEN		(APFS_DREC_LEN_MASK - 1)
+/* We could support bigger filenames, but I don't know if Linux allows it */
+#define APFS_NAME_LEN		NAME_MAX
 
 /* Bit masks for the 'type' field of a directory entry */
 enum {
