@@ -241,13 +241,74 @@ static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
 }
 
 /**
+ * apfs_build_dentry_val - Allocate and initialize the value for a dentry record
+ * @dentry:	in-memory dentry to record
+ * @inode:	vfs inode for the dentry
+ * @sibling_id:	sibling id for this hardlink (0 for none)
+ * @val_p:	on return, a pointer to the new on-disk value structure
+ *
+ * Returns the length of the value, or a negative error code in case of failure.
+ */
+static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
+				 u64 sibling_id, struct apfs_drec_val **val_p)
+{
+	struct apfs_drec_val *val;
+	struct apfs_xf_blob *xblob;
+	struct apfs_x_field *xfield;
+	struct timespec64 time = current_time(inode);
+	int val_len;
+	u64 ino;
+	__le64 *raw_sibling_id;
+
+#if BITS_PER_LONG == 64
+	ino = inode->i_ino;
+#else
+	ino = APFS_I(inode)->i_ino;
+#endif
+
+	/* The dentry record may have one xfield: the sibling id */
+	val_len = sizeof(*val);
+	if (sibling_id)
+		val_len += sizeof(*xblob) +
+			   sizeof(*xfield) + sizeof(*raw_sibling_id);
+
+	val = kmalloc(val_len, GFP_KERNEL);
+	if (!val)
+		return -ENOMEM;
+	*val_p = val;
+
+	val->file_id = cpu_to_le64(ino);
+	val->date_added = cpu_to_le64(time.tv_sec * NSEC_PER_SEC +
+				      time.tv_nsec);
+	val->flags = cpu_to_le16((inode->i_mode >> 12) & 15); /* File type */
+
+	if (!sibling_id)
+		return val_len;
+
+	xblob = (struct apfs_xf_blob *)val->xfields;
+	xblob->xf_num_exts = cpu_to_le16(1);
+	xblob->xf_used_data = cpu_to_le16(sizeof(*raw_sibling_id));
+
+	xfield = (struct apfs_x_field *)xblob->xf_data;
+	xfield->x_type = APFS_DREC_EXT_TYPE_SIBLING_ID;
+	xfield->x_flags = 0; /* TODO: proper flags here? */
+	xfield->x_size = cpu_to_le16(sizeof(*raw_sibling_id));
+
+	raw_sibling_id = (__le64 *)(xfield + 1);
+	*raw_sibling_id = cpu_to_le64(sibling_id);
+	return val_len;
+}
+
+/**
  * apfs_create_dentry_rec - Create a dentry record in the catalog b-tree
  * @dentry:	in-memory dentry to record
  * @inode:	vfs inode for the dentry
+ * @sibling_id:	sibling id for this hardlink (0 for none)
  *
  * Returns 0 on success or a negative error code in case of failure.
  */
-static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode)
+static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
+				  u64 sibling_id)
 {
 	struct super_block *sb = dentry->d_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -255,19 +316,17 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode)
 	struct inode *parent = d_inode(dentry->d_parent);
 	struct apfs_key key;
 	struct apfs_query *query;
-	struct apfs_drec_hashed_key *raw_key;
-	struct apfs_drec_val raw_val;
-	int key_len;
-	u64 ino, parent_ino;
+	struct apfs_drec_hashed_key *raw_key = NULL;
+	struct apfs_drec_val *raw_val = NULL;
+	int key_len, val_len;
+	u64 parent_ino;
 	struct apfs_inode_val *parent_raw;
 	struct timespec64 time = current_time(inode);
 	int ret;
 
 #if BITS_PER_LONG == 64
-	ino = inode->i_ino;
 	parent_ino = parent->i_ino;
 #else
-	ino = APFS_I(inode)->i_ino;
 	parent_ino = APFS_I(parent)->i_ino;
 #endif
 
@@ -287,15 +346,14 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode)
 		ret = key_len;
 		goto fail;
 	}
-
-	raw_val.file_id = cpu_to_le64(ino);
-	raw_val.date_added = cpu_to_le64(time.tv_sec * NSEC_PER_SEC +
-					 time.tv_nsec);
-	raw_val.flags = cpu_to_le16((inode->i_mode >> 12) & 15); /* File type */
+	val_len = apfs_build_dentry_val(dentry, inode, sibling_id, &raw_val);
+	if (val_len < 0) {
+		ret = val_len;
+		goto fail;
+	}
 
 	/* TODO: deal with hash collisions */
-	ret = apfs_btree_insert(query, raw_key, key_len,
-				&raw_val, sizeof(raw_val));
+	ret = apfs_btree_insert(query, raw_key, key_len, raw_val, val_len);
 	if (ret)
 		goto fail;
 
@@ -321,8 +379,184 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode)
 	le32_add_cpu(&parent_raw->nchildren, 1);
 
 fail:
+	kfree(raw_val);
+	kfree(raw_key);
 	apfs_free_query(sb, query);
 	return ret;
+}
+
+/**
+ * apfs_build_sibling_val - Allocate and initialize a sibling link's value
+ * @dentry:	in-memory dentry for this hardlink
+ * @val_p:	on return, a pointer to the new on-disk value structure
+ *
+ * Returns the length of the value, or a negative error code in case of failure.
+ */
+static int apfs_build_sibling_val(struct dentry *dentry,
+				  struct apfs_sibling_val **val_p)
+{
+	struct apfs_sibling_val *val;
+	struct qstr *qname = &dentry->d_name;
+	u16 namelen = qname->len + 1; /* We count the null-termination */
+	struct inode *parent = d_inode(dentry->d_parent);
+	u64 parent_ino;
+	int val_len;
+
+	val_len = sizeof(*val) + namelen;
+	val = kmalloc(val_len, GFP_KERNEL);
+	if (!val)
+		return -ENOMEM;
+
+#if BITS_PER_LONG == 64
+	parent_ino = parent->i_ino;
+#else
+	parent_ino = APFS_I(parent)->i_ino;
+#endif
+
+	val->parent_id = cpu_to_le64(parent_ino);
+	val->name_len = cpu_to_le16(namelen);
+	strcpy(val->name, qname->name);
+
+	*val_p = val;
+	return val_len;
+}
+
+/**
+ * apfs_create_sibling_link_rec - Create a sibling link record for a dentry
+ * @dentry:	the in-memory dentry
+ * @inode:	vfs inode for the dentry
+ * @sibling_id:	sibling id for this hardlink
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_create_sibling_link_rec(struct dentry *dentry,
+					struct inode *inode, u64 sibling_id)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query = NULL;
+	struct apfs_sibling_link_key raw_key;
+	struct apfs_sibling_val *raw_val;
+	int val_len;
+	u64 ino;
+	int ret;
+
+#if BITS_PER_LONG == 64
+	ino = inode->i_ino;
+#else
+	ino = APFS_I(inode)->i_ino;
+#endif
+
+	apfs_init_sibling_link_key(ino, sibling_id, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret && ret != -ENODATA)
+		goto fail;
+
+	raw_key.hdr.obj_id_and_type =
+		cpu_to_le64(ino |
+			    (u64)APFS_TYPE_SIBLING_LINK << APFS_OBJ_TYPE_SHIFT);
+	raw_key.sibling_id = cpu_to_le64(sibling_id);
+	val_len = apfs_build_sibling_val(dentry, &raw_val);
+	if (val_len < 0)
+		goto fail;
+
+	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
+				raw_val, val_len);
+	kfree(raw_val);
+
+fail:
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
+ * apfs_create_sibling_map_rec - Create a sibling map record for a dentry
+ * @dentry:	the in-memory dentry
+ * @inode:	vfs inode for the dentry
+ * @sibling_id:	sibling id for this hardlink
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_create_sibling_map_rec(struct dentry *dentry,
+				       struct inode *inode, u64 sibling_id)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query = NULL;
+	struct apfs_sibling_map_key raw_key;
+	struct apfs_sibling_map_val raw_val;
+	u64 ino;
+	int ret;
+
+#if BITS_PER_LONG == 64
+	ino = inode->i_ino;
+#else
+	ino = APFS_I(inode)->i_ino;
+#endif
+
+	apfs_init_sibling_map_key(sibling_id, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret && ret != -ENODATA)
+		goto fail;
+
+	raw_key.hdr.obj_id_and_type =
+		cpu_to_le64(sibling_id |
+			    (u64)APFS_TYPE_SIBLING_MAP << APFS_OBJ_TYPE_SHIFT);
+	raw_val.file_id = cpu_to_le64(ino);
+
+	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
+				&raw_val, sizeof(raw_val));
+
+fail:
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
+ * apfs_create_sibling_recs - Create sibling link and map records for a dentry
+ * @dentry:	the in-memory dentry
+ * @inode:	vfs inode for the dentry
+ * @sibling_id:	on return, the sibling id for this hardlink
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_create_sibling_recs(struct dentry *dentry,
+				    struct inode *inode, u64 *sibling_id)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+	u64 cnid;
+	int ret;
+
+	/* Sibling ids come from the same pool as the inode numbers */
+	ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+	cnid = le64_to_cpu(vsb_raw->apfs_next_obj_id);
+	le64_add_cpu(&vsb_raw->apfs_next_obj_id, 1);
+
+	ret = apfs_create_sibling_link_rec(dentry, inode, cnid);
+	if (ret)
+		return ret;
+	ret = apfs_create_sibling_map_rec(dentry, inode, cnid);
+	if (ret)
+		return ret;
+
+	*sibling_id = cnid;
+	return 0;
 }
 
 int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
@@ -331,6 +565,7 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	struct super_block *sb = dir->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode;
+	u64 sibling_id = 0;
 	int err;
 
 	err = apfs_transaction_start(sb);
@@ -346,7 +581,14 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	err = apfs_create_inode_rec(sb, inode, dentry);
 	if (err)
 		goto out_discard_inode;
-	err = apfs_create_dentry_rec(dentry, inode);
+
+	if (!S_ISDIR(mode)) {
+		/* This isn't really mandatory for a single link... */
+		err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
+		if (err)
+			goto out_discard_inode;
+	}
+	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
 	if (err)
 		goto out_discard_inode;
 
@@ -376,4 +618,72 @@ int apfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		bool excl)
 {
 	return apfs_mknod(dir, dentry, mode, 0 /* rdev */);
+}
+
+int apfs_link(struct dentry *old_dentry, struct inode *dir,
+	      struct dentry *dentry)
+{
+	struct super_block *sb = dir->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct inode *inode = d_inode(old_dentry);
+	struct apfs_inode_val *inode_raw;
+	struct apfs_key key;
+	struct apfs_query *query = NULL;
+	struct timespec64 time = current_time(inode);
+	u64 sibling_id = 0;
+	int err;
+
+	err = apfs_transaction_start(sb);
+	if (err)
+		return err;
+
+	/* Update the inode's link count.  XXX: this should be shared code */
+	apfs_init_inode_key(inode->i_ino, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query) {
+		err = -ENOMEM;
+		goto out_abort;
+	}
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+
+	err = apfs_btree_query(sb, &query);
+	if (err)
+		goto out_abort;
+
+	/* XXX: only single-node trees are supported, so no need for cow here */
+	inode_raw = (void *)query->node->object.bh->b_data + query->off;
+	inode->i_ctime = time;
+	inode_raw->change_time = cpu_to_le64(time.tv_sec * NSEC_PER_SEC +
+					     time.tv_nsec);
+	inode_inc_link_count(inode);
+	le32_add_cpu(&inode_raw->nchildren, 1);
+	ihold(inode);
+	apfs_free_query(sb, query);
+	query = NULL;
+
+	/* TODO: create sibling records for primary link, if they don't exist */
+	err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
+	if (err)
+		goto out_iput;
+	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
+	if (err)
+		goto out_iput;
+
+	err = apfs_transaction_commit(sb);
+	if (err)
+		goto out_iput;
+
+	d_instantiate(dentry, inode);
+	return 0;
+
+out_iput:
+	inode_dec_link_count(inode);
+	iput(inode);
+out_abort:
+	apfs_free_query(sb, query);
+	/* XXX: it would be better if apfs_transaction_commit() never aborted */
+	if (sbi->s_transaction.t_old_msb)
+		apfs_transaction_abort(sb);
+	return err;
 }

@@ -80,6 +80,21 @@ struct apfs_dstream_id_key {
 	struct apfs_key_header hdr;
 } __packed;
 
+/*
+ * Structure of the key for a sibling link record
+ */
+struct apfs_sibling_link_key {
+	struct apfs_key_header hdr;
+	__le64 sibling_id;
+} __packed;
+
+/*
+ * Structure of the key for a siblink map record
+ */
+struct apfs_sibling_map_key {
+	struct apfs_key_header hdr;
+} __packed;
+
 /* Bit masks for the 'name_len_and_hash' field of a directory entry */
 #define APFS_DREC_LEN_MASK	0x000003ff
 #define APFS_DREC_HASH_MASK	0xfffffc00
@@ -177,6 +192,34 @@ static inline void apfs_init_file_extent_key(u64 id, u64 offset,
 	key->id = id;
 	key->type = APFS_TYPE_FILE_EXTENT;
 	key->number = offset;
+	key->name = NULL;
+}
+
+/**
+ * apfs_init_sibling_link_key - Initialize an in-memory key for a sibling query
+ * @ino:	inode number
+ * @id:		sibling id
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_sibling_link_key(u64 ino, u64 id,
+					      struct apfs_key *key)
+{
+	key->id = ino;
+	key->type = APFS_TYPE_SIBLING_LINK;
+	key->number = id; /* Only guessing */
+	key->name = NULL;
+}
+
+/**
+ * apfs_init_sibling_map_key - Initialize in-memory key for a sibling map query
+ * @id:		sibling id
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_sibling_map_key(u64 id, struct apfs_key *key)
+{
+	key->id = id;
+	key->type = APFS_TYPE_SIBLING_MAP;
+	key->number = 0;
 	key->name = NULL;
 }
 

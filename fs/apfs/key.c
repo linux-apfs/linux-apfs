@@ -138,6 +138,13 @@ int apfs_read_cat_key(void *raw, int size, struct apfs_key *key)
 			((struct apfs_file_extent_key *)raw)->logical_addr);
 		key->name = NULL;
 		break;
+	case APFS_TYPE_SIBLING_LINK:
+		if (size != sizeof(struct apfs_sibling_link_key))
+			return -EFSCORRUPTED;
+		key->number = le64_to_cpu(
+			((struct apfs_sibling_link_key *)raw)->sibling_id);
+		key->name = NULL;
+		break;
 	default:
 		key->number = 0;
 		key->name = NULL;
