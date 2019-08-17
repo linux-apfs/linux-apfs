@@ -187,10 +187,9 @@ static int apfs_inode_lookup(struct inode *inode)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key key;
 	struct apfs_query *query;
-	u64 cnid = inode->i_ino;
 	int ret;
 
-	apfs_init_inode_key(cnid, &key);
+	apfs_init_inode_key(apfs_ino(inode), &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
@@ -204,7 +203,8 @@ static int apfs_inode_lookup(struct inode *inode)
 
 	ret = apfs_inode_from_query(query, inode);
 	if (ret)
-		apfs_alert(sb, "bad inode record for inode 0x%llx", cnid);
+		apfs_alert(sb, "bad inode record for inode 0x%llx",
+			   apfs_ino(inode));
 
 done:
 	apfs_free_query(sb, query);
@@ -312,9 +312,7 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 	stat->attributes_mask |= STATX_ATTR_COMPRESSED;
 
 	generic_fillattr(inode, stat);
-#if BITS_PER_LONG == 32
-	stat->ino = ai->i_ino;
-#endif
+	stat->ino = apfs_ino(inode);
 	return 0;
 }
 
@@ -494,17 +492,10 @@ int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 	struct apfs_query *query;
 	struct apfs_inode_key raw_key;
 	struct apfs_inode_val *raw_val;
-	u64 cnid;
 	int val_len;
 	int ret;
 
-#if BITS_PER_LONG == 64
-	cnid = inode->i_ino;
-#else
-	cnid = ai->i_ino;
-#endif
-
-	apfs_init_inode_key(cnid, &key);
+	apfs_init_inode_key(apfs_ino(inode), &key);
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
@@ -517,7 +508,8 @@ int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 
 	/* TODO: move this to a wrapper function in key.c */
 	raw_key.hdr.obj_id_and_type =
-		cpu_to_le64(cnid | (u64)APFS_TYPE_INODE << APFS_OBJ_TYPE_SHIFT);
+		cpu_to_le64(apfs_ino(inode) |
+			    (u64)APFS_TYPE_INODE << APFS_OBJ_TYPE_SHIFT);
 
 	val_len = apfs_build_inode_val(inode, dentry, &raw_val);
 	if (val_len < 0) {

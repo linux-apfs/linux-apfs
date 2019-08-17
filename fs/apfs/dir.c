@@ -215,7 +215,6 @@ static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
 	struct qstr *qname = &dentry->d_name;
 	u16 namelen = qname->len + 1; /* We count the null-termination */
 	struct inode *parent = d_inode(dentry->d_parent);
-	u64 id;
 	int key_len;
 
 	key_len = sizeof(*key) + namelen;
@@ -223,15 +222,10 @@ static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
 	if (!key)
 		return -ENOMEM;
 
-#if BITS_PER_LONG == 64
-	id = parent->i_ino;
-#else
-	id = APFS_I(parent)->i_ino;
-#endif
-
 	/* TODO: move this to a wrapper function in key.c */
 	key->hdr.obj_id_and_type =
-		cpu_to_le64(id | (u64)APFS_TYPE_DIR_REC << APFS_OBJ_TYPE_SHIFT);
+		cpu_to_le64(apfs_ino(parent) |
+			    (u64)APFS_TYPE_DIR_REC << APFS_OBJ_TYPE_SHIFT);
 
 	key->name_len_and_hash = cpu_to_le32(namelen | hash);
 	strcpy(key->name, qname->name);
@@ -257,14 +251,7 @@ static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
 	struct apfs_x_field *xfield;
 	struct timespec64 time = current_time(inode);
 	int val_len;
-	u64 ino;
 	__le64 *raw_sibling_id;
-
-#if BITS_PER_LONG == 64
-	ino = inode->i_ino;
-#else
-	ino = APFS_I(inode)->i_ino;
-#endif
 
 	/* The dentry record may have one xfield: the sibling id */
 	val_len = sizeof(*val);
@@ -277,7 +264,7 @@ static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
 		return -ENOMEM;
 	*val_p = val;
 
-	val->file_id = cpu_to_le64(ino);
+	val->file_id = cpu_to_le64(apfs_ino(inode));
 	val->date_added = cpu_to_le64(time.tv_sec * NSEC_PER_SEC +
 				      time.tv_nsec);
 	val->flags = cpu_to_le16((inode->i_mode >> 12) & 15); /* File type */
@@ -319,18 +306,11 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	struct apfs_drec_hashed_key *raw_key = NULL;
 	struct apfs_drec_val *raw_val = NULL;
 	int key_len, val_len;
-	u64 parent_ino;
 	struct apfs_inode_val *parent_raw;
 	struct timespec64 time = current_time(inode);
 	int ret;
 
-#if BITS_PER_LONG == 64
-	parent_ino = parent->i_ino;
-#else
-	parent_ino = APFS_I(parent)->i_ino;
-#endif
-
-	apfs_init_drec_hashed_key(sb, parent_ino, qname->name, &key);
+	apfs_init_drec_hashed_key(sb, apfs_ino(parent), qname->name, &key);
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
@@ -360,7 +340,7 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	/* Now update the parent inode.  XXX: this should all be shared code */
 	apfs_free_query(sb, query);
 
-	apfs_init_inode_key(parent_ino, &key);
+	apfs_init_inode_key(apfs_ino(parent), &key);
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
@@ -399,7 +379,6 @@ static int apfs_build_sibling_val(struct dentry *dentry,
 	struct qstr *qname = &dentry->d_name;
 	u16 namelen = qname->len + 1; /* We count the null-termination */
 	struct inode *parent = d_inode(dentry->d_parent);
-	u64 parent_ino;
 	int val_len;
 
 	val_len = sizeof(*val) + namelen;
@@ -407,13 +386,7 @@ static int apfs_build_sibling_val(struct dentry *dentry,
 	if (!val)
 		return -ENOMEM;
 
-#if BITS_PER_LONG == 64
-	parent_ino = parent->i_ino;
-#else
-	parent_ino = APFS_I(parent)->i_ino;
-#endif
-
-	val->parent_id = cpu_to_le64(parent_ino);
+	val->parent_id = cpu_to_le64(apfs_ino(parent));
 	val->name_len = cpu_to_le16(namelen);
 	strcpy(val->name, qname->name);
 
@@ -439,16 +412,9 @@ static int apfs_create_sibling_link_rec(struct dentry *dentry,
 	struct apfs_sibling_link_key raw_key;
 	struct apfs_sibling_val *raw_val;
 	int val_len;
-	u64 ino;
 	int ret;
 
-#if BITS_PER_LONG == 64
-	ino = inode->i_ino;
-#else
-	ino = APFS_I(inode)->i_ino;
-#endif
-
-	apfs_init_sibling_link_key(ino, sibling_id, &key);
+	apfs_init_sibling_link_key(apfs_ino(inode), sibling_id, &key);
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
@@ -460,7 +426,7 @@ static int apfs_create_sibling_link_rec(struct dentry *dentry,
 		goto fail;
 
 	raw_key.hdr.obj_id_and_type =
-		cpu_to_le64(ino |
+		cpu_to_le64(apfs_ino(inode) |
 			    (u64)APFS_TYPE_SIBLING_LINK << APFS_OBJ_TYPE_SHIFT);
 	raw_key.sibling_id = cpu_to_le64(sibling_id);
 	val_len = apfs_build_sibling_val(dentry, &raw_val);
@@ -493,14 +459,7 @@ static int apfs_create_sibling_map_rec(struct dentry *dentry,
 	struct apfs_query *query = NULL;
 	struct apfs_sibling_map_key raw_key;
 	struct apfs_sibling_map_val raw_val;
-	u64 ino;
 	int ret;
-
-#if BITS_PER_LONG == 64
-	ino = inode->i_ino;
-#else
-	ino = APFS_I(inode)->i_ino;
-#endif
 
 	apfs_init_sibling_map_key(sibling_id, &key);
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
@@ -516,7 +475,7 @@ static int apfs_create_sibling_map_rec(struct dentry *dentry,
 	raw_key.hdr.obj_id_and_type =
 		cpu_to_le64(sibling_id |
 			    (u64)APFS_TYPE_SIBLING_MAP << APFS_OBJ_TYPE_SHIFT);
-	raw_val.file_id = cpu_to_le64(ino);
+	raw_val.file_id = cpu_to_le64(apfs_ino(inode));
 
 	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
 				&raw_val, sizeof(raw_val));

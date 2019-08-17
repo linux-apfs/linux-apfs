@@ -134,6 +134,21 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
 	return container_of(inode, struct apfs_inode_info, vfs_inode);
 }
 
+/**
+ * apfs_ino - Get the 64-bit id of an inode
+ * @inode: the vfs inode
+ *
+ * Returns all 64 bits of @inode's id, even on 32-bit architectures.
+ */
+static inline u64 apfs_ino(struct inode *inode)
+{
+#if BITS_PER_LONG == 64
+	return inode->i_ino;
+#else
+	return APFS_I(inode)->i_ino;
+#endif
+}
+
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
 extern int apfs_getattr(const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int query_flags);
