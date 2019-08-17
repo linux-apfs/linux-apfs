@@ -527,6 +527,7 @@ int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 
 	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
 				raw_val, val_len);
+	kfree(raw_val);
 
 fail:
 	apfs_free_query(sb, query);
