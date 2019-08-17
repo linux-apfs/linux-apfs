@@ -396,17 +396,17 @@ int apfs_transaction_commit(struct super_block *sb)
 	/* We still hold references to these buffer heads */
 	err = sync_dirty_buffer(sbi->s_omap_root->object.bh);
 	if (err)
-		goto fail;
+		return err;
 	err = sync_dirty_buffer(sbi->s_cat_root->object.bh);
 	if (err)
-		goto fail;
+		return err;
 	err = sync_dirty_buffer(sbi->s_vobject.bh);
 	if (err)
-		goto fail;
+		return err;
 
 	err = apfs_checkpoint_end(sb);
 	if (err)
-		goto fail;
+		return err;
 
 	/* Success: forget the old container and volume superblocks */
 	brelse(trans->t_old_msb);
@@ -421,10 +421,6 @@ int apfs_transaction_commit(struct super_block *sb)
 
 	up_write(&sbi->s_big_sem);
 	return 0;
-
-fail:
-	apfs_transaction_abort(sb);
-	return err;
 }
 
 /**

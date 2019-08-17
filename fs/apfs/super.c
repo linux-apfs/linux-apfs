@@ -457,8 +457,10 @@ static void apfs_put_super(struct super_block *sb)
 		mark_buffer_dirty(vsb_bh);
 		set_buffer_csum(vsb_bh);
 
-		if (apfs_transaction_commit(sb))
+		if (apfs_transaction_commit(sb)) {
+			apfs_transaction_abort(sb);
 			goto fail;
+		}
 		apfs_make_super_copy(sb);
 	}
 

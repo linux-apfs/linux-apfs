@@ -522,7 +522,6 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	       dev_t rdev)
 {
 	struct super_block *sb = dir->i_sb;
-	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode;
 	u64 sibling_id = 0;
 	int err;
@@ -562,9 +561,7 @@ out_discard_inode:
 	inode_dec_link_count(inode);
 	discard_new_inode(inode);
 out_abort:
-	/* XXX: it would be better if apfs_transaction_commit() never aborted */
-	if (sbi->s_transaction.t_old_msb)
-		apfs_transaction_abort(sb);
+	apfs_transaction_abort(sb);
 	return err;
 }
 
@@ -641,8 +638,6 @@ out_iput:
 	iput(inode);
 out_abort:
 	apfs_free_query(sb, query);
-	/* XXX: it would be better if apfs_transaction_commit() never aborted */
-	if (sbi->s_transaction.t_old_msb)
-		apfs_transaction_abort(sb);
+	apfs_transaction_abort(sb);
 	return err;
 }
