@@ -94,7 +94,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	u32 rdev = 0;
 
 	if (query->len < sizeof(*inode_val))
-		return -EFSCORRUPTED;
+		goto corrupted;
 
 	inode_val = (struct apfs_inode_val *)(raw + query->off);
 
@@ -134,7 +134,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	rest = query->len - (sizeof(*inode_val) + sizeof(*xblob));
 	rest -= le16_to_cpu(xblob->xf_num_exts) * sizeof(xfield[0]);
 	if (rest < 0)
-		return -EFSCORRUPTED;
+		goto corrupted;
 	for (i = 0; i < le16_to_cpu(xblob->xf_num_exts); ++i) {
 		int attrlen;
 
@@ -172,16 +172,21 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 
 	apfs_inode_set_ops(inode, rdev);
 	return 0;
+
+corrupted:
+	apfs_alert(inode->i_sb,
+		   "bad inode record for inode 0x%llx", apfs_ino(inode));
+	return -EFSCORRUPTED;
 }
 
 /**
- * apfs_inode_lookup - Lookup an inode record in the b-tree and read its data
- * @inode:	vfs inode to lookup and fill
+ * apfs_inode_lookup - Lookup an inode record in the catalog b-tree
+ * @inode:	vfs inode to lookup
  *
- * Queries the b-tree for the @inode->i_ino inode record and reads its data to
- * @inode.  Returns 0 on success or a negative error code otherwise.
+ * Runs a catalog query for the @inode->i_ino inode record; returns a pointer
+ * to the query structure on success, or an error pointer in case of failure.
  */
-static int apfs_inode_lookup(struct inode *inode)
+static struct apfs_query *apfs_inode_lookup(const struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -193,22 +198,16 @@ static int apfs_inode_lookup(struct inode *inode)
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 	query->key = &key;
 	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
 
 	ret = apfs_btree_query(sb, &query);
-	if (ret)
-		goto done;
+	if (!ret)
+		return query;
 
-	ret = apfs_inode_from_query(query, inode);
-	if (ret)
-		apfs_alert(sb, "bad inode record for inode 0x%llx",
-			   apfs_ino(inode));
-
-done:
 	apfs_free_query(sb, query);
-	return ret;
+	return ERR_PTR(ret);
 }
 
 #if BITS_PER_LONG == 64
@@ -270,6 +269,7 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode;
+	struct apfs_query *query;
 	int err;
 
 	inode = apfs_iget_locked(sb, cnid);
@@ -279,12 +279,16 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 		return inode;
 
 	down_read(&sbi->s_big_sem);
-	err = apfs_inode_lookup(inode);
-	up_read(&sbi->s_big_sem);
-	if (err) {
-		iget_failed(inode);
-		return ERR_PTR(err);
+	query = apfs_inode_lookup(inode);
+	if (IS_ERR(query)) {
+		err = PTR_ERR(query);
+		goto fail;
 	}
+	err = apfs_inode_from_query(query, inode);
+	apfs_free_query(sb, query);
+	if (err)
+		goto fail;
+	up_read(&sbi->s_big_sem);
 
 	/* Allow the user to override the ownership */
 	if (sbi->s_flags & APFS_UID_OVERRIDE)
@@ -295,6 +299,11 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	/* Inode flags are not important for now, leave them at 0 */
 	unlock_new_inode(inode);
 	return inode;
+
+fail:
+	up_read(&sbi->s_big_sem);
+	iget_failed(inode);
+	return ERR_PTR(err);
 }
 
 int apfs_getattr(const struct path *path, struct kstat *stat,

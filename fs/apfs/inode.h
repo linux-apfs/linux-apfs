@@ -140,7 +140,7 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
  *
  * Returns all 64 bits of @inode's id, even on 32-bit architectures.
  */
-static inline u64 apfs_ino(struct inode *inode)
+static inline u64 apfs_ino(const struct inode *inode)
 {
 #if BITS_PER_LONG == 64
 	return inode->i_ino;
