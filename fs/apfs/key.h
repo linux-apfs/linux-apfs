@@ -9,6 +9,7 @@
 #define _APFS_KEY_H
 
 #include <linux/types.h>
+#include <asm/byteorder.h>
 
 struct super_block;
 
@@ -239,6 +240,19 @@ static inline void apfs_init_xattr_key(u64 ino, const char *name,
 	key->type = APFS_TYPE_XATTR;
 	key->number = 0;
 	key->name = name;
+}
+
+/**
+ * apfs_key_set_hdr - Set the header for a raw catalog key
+ * @type:	record type
+ * @id:		record id
+ * @key:	the key to initialize
+ */
+static inline void apfs_key_set_hdr(u64 type, u64 id, void *key)
+{
+	struct apfs_key_header *hdr = key;
+
+	hdr->obj_id_and_type = cpu_to_le64(id | type << APFS_OBJ_TYPE_SHIFT);
 }
 
 extern int apfs_filename_cmp(struct super_block *sb,

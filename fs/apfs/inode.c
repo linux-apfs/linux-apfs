@@ -515,10 +515,7 @@ int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 	if (ret && ret != -ENODATA)
 		goto fail;
 
-	/* TODO: move this to a wrapper function in key.c */
-	raw_key.hdr.obj_id_and_type =
-		cpu_to_le64(apfs_ino(inode) |
-			    (u64)APFS_TYPE_INODE << APFS_OBJ_TYPE_SHIFT);
+	apfs_key_set_hdr(APFS_TYPE_INODE, apfs_ino(inode), &raw_key);
 
 	val_len = apfs_build_inode_val(inode, dentry, &raw_val);
 	if (val_len < 0) {

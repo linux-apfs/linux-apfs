@@ -222,11 +222,7 @@ static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
 	if (!key)
 		return -ENOMEM;
 
-	/* TODO: move this to a wrapper function in key.c */
-	key->hdr.obj_id_and_type =
-		cpu_to_le64(apfs_ino(parent) |
-			    (u64)APFS_TYPE_DIR_REC << APFS_OBJ_TYPE_SHIFT);
-
+	apfs_key_set_hdr(APFS_TYPE_DIR_REC, apfs_ino(parent), key);
 	key->name_len_and_hash = cpu_to_le32(namelen | hash);
 	strcpy(key->name, qname->name);
 
@@ -419,9 +415,7 @@ static int apfs_create_sibling_link_rec(struct dentry *dentry,
 	if (ret && ret != -ENODATA)
 		goto fail;
 
-	raw_key.hdr.obj_id_and_type =
-		cpu_to_le64(apfs_ino(inode) |
-			    (u64)APFS_TYPE_SIBLING_LINK << APFS_OBJ_TYPE_SHIFT);
+	apfs_key_set_hdr(APFS_TYPE_SIBLING_LINK, apfs_ino(inode), &raw_key);
 	raw_key.sibling_id = cpu_to_le64(sibling_id);
 	val_len = apfs_build_sibling_val(dentry, &raw_val);
 	if (val_len < 0)
@@ -466,9 +460,7 @@ static int apfs_create_sibling_map_rec(struct dentry *dentry,
 	if (ret && ret != -ENODATA)
 		goto fail;
 
-	raw_key.hdr.obj_id_and_type =
-		cpu_to_le64(sibling_id |
-			    (u64)APFS_TYPE_SIBLING_MAP << APFS_OBJ_TYPE_SHIFT);
+	apfs_key_set_hdr(APFS_TYPE_SIBLING_MAP, sibling_id, &raw_key);
 	raw_val.file_id = cpu_to_le64(apfs_ino(inode));
 
 	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
