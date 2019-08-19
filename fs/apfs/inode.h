@@ -149,6 +149,7 @@ static inline u64 apfs_ino(const struct inode *inode)
 #endif
 }
 
+extern struct apfs_query *apfs_inode_lookup(const struct inode *inode);
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
 extern int apfs_getattr(const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int query_flags);

@@ -186,7 +186,7 @@ corrupted:
  * Runs a catalog query for the @inode->i_ino inode record; returns a pointer
  * to the query structure on success, or an error pointer in case of failure.
  */
-static struct apfs_query *apfs_inode_lookup(const struct inode *inode)
+struct apfs_query *apfs_inode_lookup(const struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);

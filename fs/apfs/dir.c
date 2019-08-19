@@ -337,20 +337,14 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	if (ret)
 		goto fail;
 
-	/* Now update the parent inode.  XXX: this should all be shared code */
+	/* Now update the parent inode */
 	apfs_free_query(sb, query);
-
-	apfs_init_inode_key(apfs_ino(parent), &key);
-	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query)
-		return -ENOMEM;
-	query->key = &key;
-	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
-
-	ret = apfs_btree_query(sb, &query);
-	if (ret)
+	query = apfs_inode_lookup(parent);
+	if (IS_ERR(query)) {
+		ret = PTR_ERR(query);
+		query = NULL;
 		goto fail;
-
+	}
 	/* XXX: only single-node trees are supported, so no need for cow here */
 	parent_raw = (void *)query->node->object.bh->b_data + query->off;
 	parent->i_mtime = parent->i_ctime = time;
@@ -580,10 +574,8 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	      struct dentry *dentry)
 {
 	struct super_block *sb = dir->i_sb;
-	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct inode *inode = d_inode(old_dentry);
 	struct apfs_inode_val *inode_raw;
-	struct apfs_key key;
 	struct apfs_query *query = NULL;
 	struct timespec64 time = current_time(inode);
 	u64 sibling_id = 0;
@@ -593,20 +585,12 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	if (err)
 		return err;
 
-	/* Update the inode's link count.  XXX: this should be shared code */
-	apfs_init_inode_key(inode->i_ino, &key);
-	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		err = -ENOMEM;
+	/* First update the inode's link count */
+	query = apfs_inode_lookup(inode);
+	if (IS_ERR(query)) {
+		err = PTR_ERR(query);
 		goto out_abort;
 	}
-	query->key = &key;
-	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
-
-	err = apfs_btree_query(sb, &query);
-	if (err)
-		goto out_abort;
-
 	/* XXX: only single-node trees are supported, so no need for cow here */
 	inode_raw = (void *)query->node->object.bh->b_data + query->off;
 	inode->i_ctime = time;
@@ -637,7 +621,6 @@ out_iput:
 	inode_dec_link_count(inode);
 	iput(inode);
 out_abort:
-	apfs_free_query(sb, query);
 	apfs_transaction_abort(sb);
 	return err;
 }
