@@ -110,6 +110,8 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 		 * HFS/HFS+ modules just leave it at 1, and so do we, for now.
 		 */
 		set_nlink(inode, le32_to_cpu(inode_val->nlink));
+	} else {
+		ai->i_nchildren = le32_to_cpu(inode_val->nchildren);
 	}
 
 	/* APFS stores the time as unsigned nanoseconds since the epoch */
@@ -356,6 +358,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 #endif
 	inode_init_owner(inode, dir, mode); /* TODO: handle override */
 	set_nlink(inode, 1);
+	ai->i_nchildren = 0;
 
 	ai->i_crtime = current_time(inode);
 	inode->i_atime = inode->i_mtime = inode->i_ctime = ai->i_crtime;

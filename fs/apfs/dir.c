@@ -346,6 +346,7 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	parent->i_mtime = parent->i_ctime = time;
 	parent_raw->mod_time = parent_raw->change_time =
 			cpu_to_le64(time.tv_sec * NSEC_PER_SEC + time.tv_nsec);
+	++APFS_I(parent)->i_nchildren;
 	le32_add_cpu(&parent_raw->nchildren, 1);
 
 fail:

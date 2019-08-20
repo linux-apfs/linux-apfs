@@ -121,6 +121,7 @@ struct apfs_inode_info {
 	struct apfs_file_extent	i_cached_extent; /* Latest extent record */
 	spinlock_t		i_extent_lock;	 /* Protects i_cached_extent */
 	struct timespec64	i_crtime;	 /* Time of creation */
+	u32			i_nchildren;	 /* Child count for directory */
 
 #if BITS_PER_LONG == 32
 	/* This is the actual inode number; vfs_inode.i_ino could overflow */
