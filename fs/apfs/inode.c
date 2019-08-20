@@ -185,7 +185,7 @@ corrupted:
  * Runs a catalog query for the @inode->i_ino inode record; returns a pointer
  * to the query structure on success, or an error pointer in case of failure.
  */
-struct apfs_query *apfs_inode_lookup(const struct inode *inode)
+static struct apfs_query *apfs_inode_lookup(const struct inode *inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -321,6 +321,48 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 
 	generic_fillattr(inode, stat);
 	stat->ino = apfs_ino(inode);
+	return 0;
+}
+
+/**
+ * apfs_update_inode - Update an existing inode record
+ * @inode:	the modified in-memory inode
+ *
+ * Returns 0 on success, or a negative error code in case of failure.
+ */
+int apfs_update_inode(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_inode_info *ai = APFS_I(inode);
+	struct apfs_query *query;
+	struct apfs_btree_node_phys *node_raw;
+	struct apfs_inode_val *inode_raw;
+
+	query = apfs_inode_lookup(inode);
+	if (IS_ERR(query))
+		return PTR_ERR(query);
+
+	/* XXX: only single-node trees are supported, so no need for cow here */
+	node_raw = (void *)query->node->object.bh->b_data;
+	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
+	inode_raw = (void *)node_raw + query->off;
+
+	inode_raw->access_time = cpu_to_le64(
+		inode->i_atime.tv_sec * NSEC_PER_SEC + inode->i_atime.tv_nsec);
+	inode_raw->change_time = cpu_to_le64(
+		inode->i_ctime.tv_sec * NSEC_PER_SEC + inode->i_ctime.tv_nsec);
+	inode_raw->mod_time = cpu_to_le64(
+		inode->i_mtime.tv_sec * NSEC_PER_SEC + inode->i_mtime.tv_nsec);
+	inode_raw->create_time = cpu_to_le64(
+		ai->i_crtime.tv_sec * NSEC_PER_SEC + ai->i_crtime.tv_nsec);
+
+	if (S_ISDIR(inode->i_mode))
+		inode_raw->nchildren = cpu_to_le32(ai->i_nchildren);
+	else
+		inode_raw->nlink = cpu_to_le32(inode->i_nlink);
+
+	apfs_free_query(sb, query);
 	return 0;
 }
 

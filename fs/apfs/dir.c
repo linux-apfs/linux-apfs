@@ -302,8 +302,6 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	struct apfs_drec_hashed_key *raw_key = NULL;
 	struct apfs_drec_val *raw_val = NULL;
 	int key_len, val_len;
-	struct apfs_inode_val *parent_raw;
-	struct timespec64 time = current_time(inode);
 	int ret;
 
 	apfs_init_drec_hashed_key(sb, apfs_ino(parent), qname->name, &key);
@@ -334,20 +332,11 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 		goto fail;
 
 	/* Now update the parent inode */
-	apfs_free_query(sb, query);
-	query = apfs_inode_lookup(parent);
-	if (IS_ERR(query)) {
-		ret = PTR_ERR(query);
-		query = NULL;
-		goto fail;
-	}
-	/* XXX: only single-node trees are supported, so no need for cow here */
-	parent_raw = (void *)query->node->object.bh->b_data + query->off;
-	parent->i_mtime = parent->i_ctime = time;
-	parent_raw->mod_time = parent_raw->change_time =
-			cpu_to_le64(time.tv_sec * NSEC_PER_SEC + time.tv_nsec);
+	parent->i_mtime = parent->i_ctime = current_time(inode);
 	++APFS_I(parent)->i_nchildren;
-	le32_add_cpu(&parent_raw->nchildren, 1);
+	ret = apfs_update_inode(parent);
+	if (ret)
+		--APFS_I(parent)->i_nchildren;
 
 fail:
 	kfree(raw_val);
@@ -568,9 +557,6 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode = d_inode(old_dentry);
-	struct apfs_inode_val *inode_raw;
-	struct apfs_query *query = NULL;
-	struct timespec64 time = current_time(inode);
 	u64 sibling_id = 0;
 	int err;
 
@@ -579,41 +565,31 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 		return err;
 
 	/* First update the inode's link count */
-	query = apfs_inode_lookup(inode);
-	if (IS_ERR(query)) {
-		err = PTR_ERR(query);
-		goto out_abort;
-	}
-	/* XXX: only single-node trees are supported, so no need for cow here */
-	inode_raw = (void *)query->node->object.bh->b_data + query->off;
-	inode->i_ctime = time;
-	inode_raw->change_time = cpu_to_le64(time.tv_sec * NSEC_PER_SEC +
-					     time.tv_nsec);
-	inode_inc_link_count(inode);
-	le32_add_cpu(&inode_raw->nchildren, 1);
 	ihold(inode);
-	apfs_free_query(sb, query);
-	query = NULL;
+	inc_nlink(inode);
+	inode->i_ctime = current_time(inode);
+	err = apfs_update_inode(inode);
+	if (err)
+		goto fail;
 
 	/* TODO: create sibling records for primary link, if they don't exist */
 	err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
 	if (err)
-		goto out_iput;
+		goto fail;
 	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
 	if (err)
-		goto out_iput;
+		goto fail;
 
 	err = apfs_transaction_commit(sb);
 	if (err)
-		goto out_iput;
+		goto fail;
 
 	d_instantiate(dentry, inode);
 	return 0;
 
-out_iput:
-	inode_dec_link_count(inode);
+fail:
+	drop_nlink(inode);
 	iput(inode);
-out_abort:
 	apfs_transaction_abort(sb);
 	return err;
 }
