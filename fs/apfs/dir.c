@@ -245,7 +245,6 @@ static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
 	struct apfs_drec_val *val;
 	struct apfs_xf_blob *xblob;
 	struct apfs_x_field *xfield;
-	struct timespec64 time = current_time(inode);
 	int val_len;
 	__le64 *raw_sibling_id;
 
@@ -261,8 +260,7 @@ static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
 	*val_p = val;
 
 	val->file_id = cpu_to_le64(apfs_ino(inode));
-	val->date_added = cpu_to_le64(time.tv_sec * NSEC_PER_SEC +
-				      time.tv_nsec);
+	val->date_added = apfs_timestamp(current_time(inode));
 	val->flags = cpu_to_le16((inode->i_mode >> 12) & 15); /* File type */
 
 	if (!sibling_id)

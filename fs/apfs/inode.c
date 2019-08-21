@@ -8,7 +8,6 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include <linux/mpage.h>
-#include <asm/div64.h>
 #include "apfs.h"
 #include "btree.h"
 #include "dir.h"
@@ -90,7 +89,6 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	struct apfs_x_field *xfield;
 	char *raw = query->node->object.bh->b_data;
 	int rest, i;
-	u64 secs;
 	u32 rdev = 0;
 
 	if (query->len < sizeof(*inode_val))
@@ -114,19 +112,10 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 		ai->i_nchildren = le32_to_cpu(inode_val->nchildren);
 	}
 
-	/* APFS stores the time as unsigned nanoseconds since the epoch */
-	secs = le64_to_cpu(inode_val->access_time);
-	inode->i_atime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	inode->i_atime.tv_sec = secs;
-	secs = le64_to_cpu(inode_val->change_time);
-	inode->i_ctime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	inode->i_ctime.tv_sec = secs;
-	secs = le64_to_cpu(inode_val->mod_time);
-	inode->i_mtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	inode->i_mtime.tv_sec = secs;
-	secs = le64_to_cpu(inode_val->create_time);
-	ai->i_crtime.tv_nsec = do_div(secs, NSEC_PER_SEC);
-	ai->i_crtime.tv_sec = secs;
+	inode->i_atime = apfs_timespec(inode_val->access_time);
+	inode->i_ctime = apfs_timespec(inode_val->change_time);
+	inode->i_mtime = apfs_timespec(inode_val->mod_time);
+	ai->i_crtime = apfs_timespec(inode_val->create_time);
 
 	xblob = (struct apfs_xf_blob *) inode_val->xfields;
 	xfield = (struct apfs_x_field *) xblob->xf_data;
@@ -348,14 +337,10 @@ int apfs_update_inode(struct inode *inode)
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 	inode_raw = (void *)node_raw + query->off;
 
-	inode_raw->access_time = cpu_to_le64(
-		inode->i_atime.tv_sec * NSEC_PER_SEC + inode->i_atime.tv_nsec);
-	inode_raw->change_time = cpu_to_le64(
-		inode->i_ctime.tv_sec * NSEC_PER_SEC + inode->i_ctime.tv_nsec);
-	inode_raw->mod_time = cpu_to_le64(
-		inode->i_mtime.tv_sec * NSEC_PER_SEC + inode->i_mtime.tv_nsec);
-	inode_raw->create_time = cpu_to_le64(
-		ai->i_crtime.tv_sec * NSEC_PER_SEC + ai->i_crtime.tv_nsec);
+	inode_raw->access_time = apfs_timestamp(inode->i_atime);
+	inode_raw->change_time = apfs_timestamp(inode->i_ctime);
+	inode_raw->mod_time = apfs_timestamp(inode->i_mtime);
+	inode_raw->create_time = apfs_timestamp(ai->i_crtime);
 
 	if (S_ISDIR(inode->i_mode))
 		inode_raw->nchildren = cpu_to_le32(ai->i_nchildren);
@@ -404,8 +389,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 
 	ai->i_crtime = current_time(inode);
 	inode->i_atime = inode->i_mtime = inode->i_ctime = ai->i_crtime;
-	vsb_raw->apfs_last_mod_time = cpu_to_le64(
-		     ai->i_crtime.tv_sec * NSEC_PER_SEC + ai->i_crtime.tv_nsec);
+	vsb_raw->apfs_last_mod_time = apfs_timestamp(ai->i_crtime);
 
 	/* Symlinks are not yet supported */
 	ASSERT(!S_ISLNK(mode));
@@ -449,8 +433,6 @@ static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
 	struct qstr *qname = &dentry->d_name;
 	int namelen, padded_namelen;
 	int val_len;
-	struct timespec64 time;
-	u64 timestamp;
 	__le32 *rdev;
 
 	val_len = sizeof(*val) + sizeof(*xblob);
@@ -478,11 +460,8 @@ static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
 	val->parent_id = cpu_to_le64(parent->i_ino);
 	val->private_id = cpu_to_le64(inode->i_ino);
 
-	/* APFS stores the time as unsigned nanoseconds since the epoch */
-	time = inode->i_mtime;
-	timestamp = time.tv_sec * NSEC_PER_SEC + time.tv_nsec;
-	val->create_time = val->mod_time = val->change_time =
-			   val->access_time = cpu_to_le64(timestamp);
+	val->mod_time = apfs_timestamp(inode->i_mtime);
+	val->create_time = val->change_time = val->access_time = val->mod_time;
 
 	if (S_ISDIR(inode->i_mode))
 		val->nchildren = 0;
