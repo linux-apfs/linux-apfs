@@ -522,6 +522,27 @@ static int __init init_inodecache(void)
 	return 0;
 }
 
+static int apfs_write_inode(struct inode *inode, struct writeback_control *wbc)
+{
+	struct super_block *sb = inode->i_sb;
+	int err;
+
+	err = apfs_transaction_start(sb);
+	if (err)
+		return err;
+	err = apfs_update_inode(inode);
+	if (err)
+		goto fail;
+	err = apfs_transaction_commit(sb);
+	if (err)
+		goto fail;
+	return 0;
+
+fail:
+	apfs_transaction_abort(sb);
+	return err;
+}
+
 static void destroy_inodecache(void)
 {
 	/*
@@ -671,6 +692,7 @@ static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 static const struct super_operations apfs_sops = {
 	.alloc_inode	= apfs_alloc_inode,
 	.destroy_inode	= apfs_destroy_inode,
+	.write_inode	= apfs_write_inode,
 	.put_super	= apfs_put_super,
 	.statfs		= apfs_statfs,
 	.show_options	= apfs_show_options,
