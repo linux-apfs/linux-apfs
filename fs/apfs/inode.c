@@ -337,6 +337,10 @@ int apfs_update_inode(struct inode *inode)
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 	inode_raw = (void *)node_raw + query->off;
 
+	inode_raw->owner = cpu_to_le32(i_uid_read(inode));
+	inode_raw->group = cpu_to_le32(i_gid_read(inode));
+	inode_raw->mode = cpu_to_le16(inode->i_mode);
+
 	inode_raw->access_time = apfs_timestamp(inode->i_atime);
 	inode_raw->change_time = apfs_timestamp(inode->i_ctime);
 	inode_raw->mod_time = apfs_timestamp(inode->i_mtime);
@@ -347,6 +351,7 @@ int apfs_update_inode(struct inode *inode)
 	else
 		inode_raw->nlink = cpu_to_le32(inode->i_nlink);
 
+	/* TODO: set size and block count */
 	apfs_free_query(sb, query);
 	return 0;
 }
