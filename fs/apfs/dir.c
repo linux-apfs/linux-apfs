@@ -323,18 +323,8 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 		ret = val_len;
 		goto fail;
 	}
-
 	/* TODO: deal with hash collisions */
 	ret = apfs_btree_insert(query, raw_key, key_len, raw_val, val_len);
-	if (ret)
-		goto fail;
-
-	/* Now update the parent inode */
-	parent->i_mtime = parent->i_ctime = current_time(inode);
-	++APFS_I(parent)->i_nchildren;
-	ret = apfs_update_inode(parent);
-	if (ret)
-		--APFS_I(parent)->i_nchildren;
 
 fail:
 	kfree(raw_val);
@@ -492,12 +482,46 @@ static int apfs_create_sibling_recs(struct dentry *dentry,
 	return 0;
 }
 
+/**
+ * apfs_create_dentry - Create all records for a new dentry
+ * @dentry:	the in-memory dentry
+ * @inode:	vfs inode for the dentry
+ *
+ * Creates the dentry record itself, as well as the sibling records if needed;
+ * also updates the child count for the parent inode.  Returns 0 on success or
+ * a negative error code in case of failure.
+ */
+static int apfs_create_dentry(struct dentry *dentry, struct inode *inode)
+{
+	struct inode *parent = d_inode(dentry->d_parent);
+	u64 sibling_id = 0;
+	int err;
+
+	if (!S_ISDIR(inode->i_mode)) {
+		/* This isn't really mandatory for a single link... */
+		err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
+		if (err)
+			return err;
+	}
+
+	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
+	if (err)
+		return err;
+
+	/* Now update the parent inode */
+	parent->i_mtime = parent->i_ctime = current_time(inode);
+	++APFS_I(parent)->i_nchildren;
+	err = apfs_update_inode(parent);
+	if (err)
+		--APFS_I(parent)->i_nchildren;
+	return err;
+}
+
 int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	       dev_t rdev)
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode;
-	u64 sibling_id = 0;
 	int err;
 
 	err = apfs_transaction_start(sb);
@@ -514,13 +538,7 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	if (err)
 		goto out_discard_inode;
 
-	if (!S_ISDIR(mode)) {
-		/* This isn't really mandatory for a single link... */
-		err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
-		if (err)
-			goto out_discard_inode;
-	}
-	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
+	err = apfs_create_dentry(dentry, inode);
 	if (err)
 		goto out_discard_inode;
 
@@ -555,7 +573,6 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode = d_inode(old_dentry);
-	u64 sibling_id = 0;
 	int err;
 
 	err = apfs_transaction_start(sb);
@@ -571,10 +588,7 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 		goto fail;
 
 	/* TODO: create sibling records for primary link, if they don't exist */
-	err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
-	if (err)
-		goto fail;
-	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
+	err = apfs_create_dentry(dentry, inode);
 	if (err)
 		goto fail;
 
