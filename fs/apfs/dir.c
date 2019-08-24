@@ -64,33 +64,31 @@ static int apfs_drec_from_query(struct apfs_query *query,
 }
 
 /**
- * apfs_inode_by_name - Find the cnid for a given filename
+ * apfs_dentry_lookup - Lookup a dentry record in the catalog b-tree
  * @dir:	parent directory
  * @child:	filename
- * @ino:	on return, the inode number found
+ * @drec:	on return, the directory record found
  *
- * Returns 0 and the inode number (which is the cnid of the file
- * record); otherwise, return the appropriate error code.
+ * Runs a catalog query for @name in the @dir directory.  On success, sets
+ * @drec and returns a pointer to the query structure.  On failure, returns
+ * an appropriate error pointer.
  */
-int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
+static struct apfs_query *apfs_dentry_lookup(struct inode *dir,
+					     const struct qstr *child,
+					     struct apfs_drec *drec)
 {
 	struct super_block *sb = dir->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key key;
 	struct apfs_query *query;
-	struct apfs_drec drec;
 	u64 cnid = dir->i_ino;
 	int err;
-
-	down_read(&sbi->s_big_sem);
 
 	apfs_init_drec_hashed_key(sb, cnid, child->name, &key);
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
-	if (!query) {
-		err = -ENOMEM;
-		goto out;
-	}
+	if (!query)
+		return ERR_PTR(-ENOMEM);
 	query->key = &key;
 
 	/*
@@ -103,15 +101,45 @@ int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
 	do {
 		err = apfs_btree_query(sb, &query);
 		if (err)
-			goto out;
-		err = apfs_drec_from_query(query, &drec);
+			goto fail;
+		err = apfs_drec_from_query(query, drec);
 		if (err)
-			goto out;
-	} while (unlikely(apfs_filename_cmp(sb, child->name, drec.name)));
+			goto fail;
+	} while (unlikely(apfs_filename_cmp(sb, child->name, drec->name)));
 
-	*ino = drec.ino;
-out:
+	return query;
+
+fail:
 	apfs_free_query(sb, query);
+	return ERR_PTR(err);
+}
+
+/**
+ * apfs_inode_by_name - Find the cnid for a given filename
+ * @dir:	parent directory
+ * @child:	filename
+ * @ino:	on return, the inode number found
+ *
+ * Returns 0 and the inode number (which is the cnid of the file
+ * record); otherwise, return the appropriate error code.
+ */
+int apfs_inode_by_name(struct inode *dir, const struct qstr *child, u64 *ino)
+{
+	struct super_block *sb = dir->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_query *query;
+	struct apfs_drec drec;
+	int err = 0;
+
+	down_read(&sbi->s_big_sem);
+	query = apfs_dentry_lookup(dir, child, &drec);
+	if (IS_ERR(query)) {
+		err = PTR_ERR(query);
+		goto out;
+	}
+	*ino = drec.ino;
+	apfs_free_query(sb, query);
+out:
 	up_read(&sbi->s_big_sem);
 	return err;
 }
