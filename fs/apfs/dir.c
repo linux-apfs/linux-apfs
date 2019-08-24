@@ -29,7 +29,8 @@
  * The caller must not free @query while @drec is in use, because @drec->name
  * points to data on disk.
  */
-int apfs_drec_from_query(struct apfs_query *query, struct apfs_drec *drec)
+static int apfs_drec_from_query(struct apfs_query *query,
+				struct apfs_drec *drec)
 {
 	char *raw = query->node->object.bh->b_data;
 	struct apfs_drec_hashed_key *de_key;

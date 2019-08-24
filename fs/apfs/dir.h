@@ -53,8 +53,6 @@ struct apfs_drec {
 	unsigned int type;
 };
 
-extern int apfs_drec_from_query(struct apfs_query *query,
-				struct apfs_drec *drec);
 extern int apfs_inode_by_name(struct inode *dir, const struct qstr *child,
 			      u64 *ino);
 extern int apfs_mknod(struct inode *dir, struct dentry *dentry,
