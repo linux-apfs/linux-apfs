@@ -410,3 +410,60 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	mark_buffer_dirty(node->object.bh);
 	return 0;
 }
+
+/**
+ * apfs_btree_remove - Remove a record from a b-tree
+ * @query:	exact query that found the record
+ *
+ * Returns 0 on success, or a negative error code in case of failure.
+ */
+int apfs_btree_remove(struct apfs_query *query)
+{
+	struct apfs_node *node = query->node;
+	struct super_block *sb = node->object.sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_btree_node_phys *node_raw;
+	struct apfs_nloc *free_head;
+	struct apfs_btree_info *info;
+	int later_entries = node->records - query->index - 1;
+
+	/* This function is just a first draft that works with single nodes */
+	ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
+
+	node_raw = (void *)query->node->object.bh->b_data;
+	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
+
+	/* Remove the entry from the table of contents */
+	if (apfs_node_has_fixed_kv_size(node)) {
+		struct apfs_kvoff *toc_entry;
+
+		toc_entry = (struct apfs_kvoff *)node_raw->btn_data +
+								query->index;
+		memmove(toc_entry, toc_entry + 1,
+			later_entries * sizeof(*toc_entry));
+	} else {
+		struct apfs_kvloc *toc_entry;
+
+		toc_entry = (struct apfs_kvloc *)node_raw->btn_data +
+								query->index;
+		memmove(toc_entry, toc_entry + 1,
+			later_entries * sizeof(*toc_entry));
+	}
+
+	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
+	le64_add_cpu(&info->bt_key_count, -1);
+	node_raw->btn_nkeys = cpu_to_le32(--node->records);
+
+	/*
+	 * TODO: move the edges of the key and value areas, if necessary; add
+	 * the freed space to the linked list.
+	 */
+	free_head = &node_raw->btn_key_free_list;
+	le16_add_cpu(&free_head->len, query->key_len);
+	free_head = &node_raw->btn_val_free_list;
+	le16_add_cpu(&free_head->len, query->len);
+
+	apfs_obj_set_csum(sb, &node_raw->btn_o);
+	mark_buffer_dirty(node->object.bh);
+	return 0;
+}

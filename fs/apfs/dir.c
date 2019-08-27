@@ -526,8 +526,8 @@ static int apfs_create_dentry(struct dentry *dentry, struct inode *inode)
 	u64 sibling_id = 0;
 	int err;
 
-	if (!S_ISDIR(inode->i_mode)) {
-		/* This isn't really mandatory for a single link... */
+	if (inode->i_nlink != 1) {
+		/* This is optional for a single link, so don't waste space */
 		err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
 		if (err)
 			return err;
@@ -597,6 +597,42 @@ int apfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	return apfs_mknod(dir, dentry, mode, 0 /* rdev */);
 }
 
+/**
+ * apfs_prepare_dentry_for_link - Assign a sibling id and records to a dentry
+ * @dentry: the in-memory dentry (should be for a primary link)
+ *
+ * Returns 0 on success, or a negative error code in case of failure.
+ */
+static int apfs_prepare_dentry_for_link(struct dentry *dentry)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct inode *parent = d_inode(dentry->d_parent);
+	struct apfs_query *query;
+	struct apfs_drec drec;
+	u64 sibling_id;
+	int ret;
+
+	query = apfs_dentry_lookup(parent, &dentry->d_name, &drec);
+	if (IS_ERR(query))
+		return PTR_ERR(query);
+	if (query->len > sizeof(struct apfs_drec_val)) {
+		/* This dentry already has a sibling id xfield */
+		apfs_free_query(sb, query);
+		return 0;
+	}
+
+	/* Don't modify the dentry record, just delete it to make a new one */
+	ret = apfs_btree_remove(query);
+	apfs_free_query(sb, query);
+	if (ret)
+		return ret;
+
+	ret = apfs_create_sibling_recs(dentry, d_inode(dentry), &sibling_id);
+	if (ret)
+		return ret;
+	return apfs_create_dentry_rec(dentry, d_inode(dentry), sibling_id);
+}
+
 int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	      struct dentry *dentry)
 {
@@ -616,7 +652,13 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	if (err)
 		goto fail;
 
-	/* TODO: create sibling records for primary link, if they don't exist */
+	if (inode->i_nlink == 2) {
+		/* A single link may lack sibling records, so create them now */
+		err = apfs_prepare_dentry_for_link(old_dentry);
+		if (err)
+			goto fail;
+	}
+
 	err = apfs_create_dentry(dentry, inode);
 	if (err)
 		goto fail;

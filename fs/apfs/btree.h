@@ -54,5 +54,6 @@ extern int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 				  u64 id, u64 *block, bool write);
 extern int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 			     void *val, int val_len);
+extern int apfs_btree_remove(struct apfs_query *query);
 
 #endif	/* _APFS_BTREE_H */
