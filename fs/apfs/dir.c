@@ -53,6 +53,22 @@ static int apfs_drec_from_query(struct apfs_query *query,
 	if (de_key->name[namelen - 1] != 0)
 		return -EFSCORRUPTED;
 
+	/* The dentry may have at most one xfield: the sibling id */
+	if (query->len == sizeof(*de)) {
+		drec->sibling_id = 0;
+	} else {
+		int x_meta_len;
+		__le64 *sib_id;
+
+		x_meta_len = sizeof(struct apfs_xf_blob) +
+			     sizeof(struct apfs_x_field);
+		if (query->len != sizeof(*de) + x_meta_len + sizeof(*sib_id))
+			return -EFSCORRUPTED;
+
+		sib_id = (void *)de->xfields + x_meta_len;
+		drec->sibling_id = le64_to_cpup(sib_id);
+	}
+
 	drec->name = de_key->name;
 	drec->name_len = namelen - 1; /* Don't count the NULL termination */
 	drec->ino = le64_to_cpu(de->file_id);
@@ -615,7 +631,7 @@ static int apfs_prepare_dentry_for_link(struct dentry *dentry)
 	query = apfs_dentry_lookup(parent, &dentry->d_name, &drec);
 	if (IS_ERR(query))
 		return PTR_ERR(query);
-	if (query->len > sizeof(struct apfs_drec_val)) {
+	if (drec.sibling_id) {
 		/* This dentry already has a sibling id xfield */
 		apfs_free_query(sb, query);
 		return 0;

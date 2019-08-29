@@ -49,6 +49,7 @@ struct apfs_drec_val {
 struct apfs_drec {
 	u8 *name;
 	u64 ino;
+	u64 sibling_id; /* The sibling id; 0 if none */
 	int name_len;
 	unsigned int type;
 };
