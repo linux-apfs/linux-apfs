@@ -247,19 +247,18 @@ const struct file_operations apfs_dir_operations = {
 
 /**
  * apfs_build_dentry_key - Allocate and initialize the key for a dentry record
- * @dentry:	in-memory dentry to record
+ * @qname:	filename
  * @hash:	filename hash
+ * @parent_id:	inode number for the parent of the dentry
  * @key_p:	on return, a pointer to the new on-disk key structure
  *
  * Returns the length of the key, or a negative error code in case of failure.
  */
-static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
+static int apfs_build_dentry_key(struct qstr *qname, u64 hash, u64 parent_id,
 				 struct apfs_drec_hashed_key **key_p)
 {
 	struct apfs_drec_hashed_key *key;
-	struct qstr *qname = &dentry->d_name;
 	u16 namelen = qname->len + 1; /* We count the null-termination */
-	struct inode *parent = d_inode(dentry->d_parent);
 	int key_len;
 
 	key_len = sizeof(*key) + namelen;
@@ -267,7 +266,7 @@ static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
 	if (!key)
 		return -ENOMEM;
 
-	apfs_key_set_hdr(APFS_TYPE_DIR_REC, apfs_ino(parent), key);
+	apfs_key_set_hdr(APFS_TYPE_DIR_REC, parent_id, key);
 	key->name_len_and_hash = cpu_to_le32(namelen | hash);
 	strcpy(key->name, qname->name);
 
@@ -277,15 +276,14 @@ static int apfs_build_dentry_key(struct dentry *dentry, u64 hash,
 
 /**
  * apfs_build_dentry_val - Allocate and initialize the value for a dentry record
- * @dentry:	in-memory dentry to record
  * @inode:	vfs inode for the dentry
  * @sibling_id:	sibling id for this hardlink (0 for none)
  * @val_p:	on return, a pointer to the new on-disk value structure
  *
  * Returns the length of the value, or a negative error code in case of failure.
  */
-static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
-				 u64 sibling_id, struct apfs_drec_val **val_p)
+static int apfs_build_dentry_val(struct inode *inode, u64 sibling_id,
+				 struct apfs_drec_val **val_p)
 {
 	struct apfs_drec_val *val;
 	struct apfs_xf_blob *xblob;
@@ -327,19 +325,18 @@ static int apfs_build_dentry_val(struct dentry *dentry, struct inode *inode,
 
 /**
  * apfs_create_dentry_rec - Create a dentry record in the catalog b-tree
- * @dentry:	in-memory dentry to record
  * @inode:	vfs inode for the dentry
+ * @qname:	filename
+ * @parent_id:	inode number for the parent of the dentry
  * @sibling_id:	sibling id for this hardlink (0 for none)
  *
  * Returns 0 on success or a negative error code in case of failure.
  */
-static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
-				  u64 sibling_id)
+static int apfs_create_dentry_rec(struct inode *inode, struct qstr *qname,
+				  u64 parent_id, u64 sibling_id)
 {
-	struct super_block *sb = dentry->d_sb;
+	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct qstr *qname = &dentry->d_name;
-	struct inode *parent = d_inode(dentry->d_parent);
 	struct apfs_key key;
 	struct apfs_query *query;
 	struct apfs_drec_hashed_key *raw_key = NULL;
@@ -347,7 +344,7 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	int key_len, val_len;
 	int ret;
 
-	apfs_init_drec_hashed_key(sb, apfs_ino(parent), qname->name, &key);
+	apfs_init_drec_hashed_key(sb, parent_id, qname->name, &key);
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query)
 		return -ENOMEM;
@@ -358,12 +355,12 @@ static int apfs_create_dentry_rec(struct dentry *dentry, struct inode *inode,
 	if (ret && ret != -ENODATA)
 		goto fail;
 
-	key_len = apfs_build_dentry_key(dentry, key.number, &raw_key);
+	key_len = apfs_build_dentry_key(qname, key.number, parent_id, &raw_key);
 	if (key_len < 0) {
 		ret = key_len;
 		goto fail;
 	}
-	val_len = apfs_build_dentry_val(dentry, inode, sibling_id, &raw_val);
+	val_len = apfs_build_dentry_val(inode, sibling_id, &raw_val);
 	if (val_len < 0) {
 		ret = val_len;
 		goto fail;
@@ -549,7 +546,8 @@ static int apfs_create_dentry(struct dentry *dentry, struct inode *inode)
 			return err;
 	}
 
-	err = apfs_create_dentry_rec(dentry, inode, sibling_id);
+	err = apfs_create_dentry_rec(inode, &dentry->d_name,
+				     apfs_ino(parent), sibling_id);
 	if (err)
 		return err;
 
@@ -646,7 +644,8 @@ static int apfs_prepare_dentry_for_link(struct dentry *dentry)
 	ret = apfs_create_sibling_recs(dentry, d_inode(dentry), &sibling_id);
 	if (ret)
 		return ret;
-	return apfs_create_dentry_rec(dentry, d_inode(dentry), sibling_id);
+	return apfs_create_dentry_rec(d_inode(dentry), &dentry->d_name,
+				      apfs_ino(parent), sibling_id);
 }
 
 int apfs_link(struct dentry *old_dentry, struct inode *dir,
