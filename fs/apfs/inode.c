@@ -96,6 +96,7 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 
 	inode_val = (struct apfs_inode_val *)(raw + query->off);
 
+	ai->i_parent_id = le64_to_cpu(inode_val->parent_id);
 	ai->i_extent_id = le64_to_cpu(inode_val->private_id);
 	inode->i_mode = le16_to_cpu(inode_val->mode);
 	i_uid_write(inode, (uid_t)le32_to_cpu(inode_val->owner));
@@ -337,6 +338,7 @@ int apfs_update_inode(struct inode *inode)
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 	inode_raw = (void *)node_raw + query->off;
 
+	inode_raw->parent_id = cpu_to_le64(ai->i_parent_id);
 	inode_raw->owner = cpu_to_le32(i_uid_read(inode));
 	inode_raw->group = cpu_to_le32(i_gid_read(inode));
 	inode_raw->mode = cpu_to_le16(inode->i_mode);
@@ -389,6 +391,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 	ai->ino = cnid;
 #endif
 	inode_init_owner(inode, dir, mode); /* TODO: handle override */
+	ai->i_parent_id = apfs_ino(dir);
 	set_nlink(inode, 1);
 	ai->i_nchildren = 0;
 
@@ -430,7 +433,6 @@ static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
 				struct apfs_inode_val **val_p)
 {
 	struct apfs_inode_val *val;
-	struct inode *parent = d_inode(dentry->d_parent);
 	struct apfs_xf_blob *xblob;
 	struct apfs_x_field *xcurrent;
 	char *xdata;
@@ -462,7 +464,7 @@ static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
 	if (!val)
 		return -ENOMEM;
 
-	val->parent_id = cpu_to_le64(parent->i_ino);
+	val->parent_id = cpu_to_le64(APFS_I(inode)->i_parent_id);
 	val->private_id = cpu_to_le64(inode->i_ino);
 
 	val->mod_time = apfs_timestamp(inode->i_mtime);

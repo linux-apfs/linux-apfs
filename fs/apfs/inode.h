@@ -117,6 +117,7 @@ struct apfs_dstream {
  * APFS inode data in memory
  */
 struct apfs_inode_info {
+	u64			i_parent_id;	 /* ID of primary parent */
 	u64			i_extent_id;	 /* ID of the extent records */
 	struct apfs_file_extent	i_cached_extent; /* Latest extent record */
 	spinlock_t		i_extent_lock;	 /* Protects i_cached_extent */
