@@ -315,6 +315,97 @@ int apfs_getattr(const struct path *path, struct kstat *stat,
 }
 
 /**
+ * apfs_build_inode_val - Allocate and initialize the value for an inode record
+ * @inode:	vfs inode to record
+ * @qname:	filename for primary link
+ * @val_p:	on return, a pointer to the new on-disk value structure
+ *
+ * Returns the length of the value, or a negative error code in case of failure.
+ */
+static int apfs_build_inode_val(struct inode *inode, struct qstr *qname,
+				struct apfs_inode_val **val_p)
+{
+	struct apfs_inode_val *val;
+	struct apfs_xf_blob *xblob;
+	struct apfs_x_field *xcurrent;
+	char *xdata;
+	int xfield_num, xfield_used_data;
+	int namelen, padded_namelen;
+	int val_len;
+	__le32 *rdev;
+
+	val_len = sizeof(*val) + sizeof(*xblob);
+
+	/* The name is stored in an xfield, padded with zeroes */
+	namelen = qname->len + 1; /* We count the null-termination */
+	padded_namelen = round_up(namelen, 8);
+	val_len += sizeof(struct apfs_x_field) + padded_namelen;
+	xfield_used_data = padded_namelen;
+	xfield_num = 1;
+
+	/* Device files have another xfield for the id */
+	if (inode->i_rdev) {
+		/* TODO: is this xfield actually padded? */
+		val_len += sizeof(struct apfs_x_field) +
+			   round_up(sizeof(*rdev), 8);
+		xfield_used_data += round_up(sizeof(*rdev), 8);
+		++xfield_num;
+	}
+
+	val = kzalloc(val_len, GFP_KERNEL);
+	if (!val)
+		return -ENOMEM;
+
+	val->parent_id = cpu_to_le64(APFS_I(inode)->i_parent_id);
+	val->private_id = cpu_to_le64(inode->i_ino);
+
+	val->mod_time = apfs_timestamp(inode->i_mtime);
+	val->create_time = val->change_time = val->access_time = val->mod_time;
+
+	if (S_ISDIR(inode->i_mode))
+		val->nchildren = 0;
+	else
+		val->nlink = cpu_to_le32(1);
+
+	val->owner = cpu_to_le32(i_uid_read(inode));
+	val->group = cpu_to_le32(i_gid_read(inode));
+	val->mode = cpu_to_le16(inode->i_mode);
+
+	xblob = (struct apfs_xf_blob *)val->xfields;
+	xblob->xf_num_exts = cpu_to_le16(xfield_num);
+	/* The official reference seems to be wrong here */
+	xblob->xf_used_data = cpu_to_le16(xfield_used_data);
+
+	/* Set the metadata for the name xfield */
+	xcurrent = (struct apfs_x_field *)xblob->xf_data;
+	xcurrent->x_type = APFS_INO_EXT_TYPE_NAME;
+	xcurrent->x_flags = APFS_XF_DO_NOT_COPY;
+	xcurrent->x_size = cpu_to_le16(namelen);
+
+	if (inode->i_rdev) {
+		/* Set the metadata for the device id xfield */
+		++xcurrent;
+		xcurrent->x_type = APFS_INO_EXT_TYPE_RDEV;
+		xcurrent->x_flags = 0; /* TODO: proper flags here? */
+		xcurrent->x_size = cpu_to_le16(sizeof(*rdev));
+	}
+
+	/* Now comes the xfield data, in the same order */
+	xdata = (char *)(xcurrent + 1);
+	strcpy(xdata, qname->name);
+	xdata += padded_namelen;
+	if (inode->i_rdev) {
+		rdev = (__le32 *)xdata;
+		*rdev = cpu_to_le32(inode->i_rdev);
+		xdata += round_up(sizeof(*rdev), 8);
+	}
+	ASSERT(xdata - (char *)val == val_len);
+
+	*val_p = val;
+	return val_len;
+}
+
+/**
  * apfs_update_inode - Update an existing inode record
  * @inode:	the modified in-memory inode
  *
@@ -422,98 +513,6 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 }
 
 /**
- * apfs_build_inode_val - Allocate and initialize the value for an inode record
- * @inode:	vfs inode to record
- * @dentry:	dentry for primary link
- * @val_p:	on return, a pointer to the new on-disk value structure
- *
- * Returns the length of the value, or a negative error code in case of failure.
- */
-static int apfs_build_inode_val(struct inode *inode, struct dentry *dentry,
-				struct apfs_inode_val **val_p)
-{
-	struct apfs_inode_val *val;
-	struct apfs_xf_blob *xblob;
-	struct apfs_x_field *xcurrent;
-	char *xdata;
-	int xfield_num, xfield_used_data;
-	struct qstr *qname = &dentry->d_name;
-	int namelen, padded_namelen;
-	int val_len;
-	__le32 *rdev;
-
-	val_len = sizeof(*val) + sizeof(*xblob);
-
-	/* The name is stored in an xfield, padded with zeroes */
-	namelen = qname->len + 1; /* We count the null-termination */
-	padded_namelen = round_up(namelen, 8);
-	val_len += sizeof(struct apfs_x_field) + padded_namelen;
-	xfield_used_data = padded_namelen;
-	xfield_num = 1;
-
-	/* Device files have another xfield for the id */
-	if (inode->i_rdev) {
-		/* TODO: is this xfield actually padded? */
-		val_len += sizeof(struct apfs_x_field) +
-			   round_up(sizeof(*rdev), 8);
-		xfield_used_data += round_up(sizeof(*rdev), 8);
-		++xfield_num;
-	}
-
-	val = kzalloc(val_len, GFP_KERNEL);
-	if (!val)
-		return -ENOMEM;
-
-	val->parent_id = cpu_to_le64(APFS_I(inode)->i_parent_id);
-	val->private_id = cpu_to_le64(inode->i_ino);
-
-	val->mod_time = apfs_timestamp(inode->i_mtime);
-	val->create_time = val->change_time = val->access_time = val->mod_time;
-
-	if (S_ISDIR(inode->i_mode))
-		val->nchildren = 0;
-	else
-		val->nlink = cpu_to_le32(1);
-
-	val->owner = cpu_to_le32(i_uid_read(inode));
-	val->group = cpu_to_le32(i_gid_read(inode));
-	val->mode = cpu_to_le16(inode->i_mode);
-
-	xblob = (struct apfs_xf_blob *)val->xfields;
-	xblob->xf_num_exts = cpu_to_le16(xfield_num);
-	/* The official reference seems to be wrong here */
-	xblob->xf_used_data = cpu_to_le16(xfield_used_data);
-
-	/* Set the metadata for the name xfield */
-	xcurrent = (struct apfs_x_field *)xblob->xf_data;
-	xcurrent->x_type = APFS_INO_EXT_TYPE_NAME;
-	xcurrent->x_flags = APFS_XF_DO_NOT_COPY;
-	xcurrent->x_size = cpu_to_le16(namelen);
-
-	if (inode->i_rdev) {
-		/* Set the metadata for the device id xfield */
-		++xcurrent;
-		xcurrent->x_type = APFS_INO_EXT_TYPE_RDEV;
-		xcurrent->x_flags = 0; /* TODO: proper flags here? */
-		xcurrent->x_size = cpu_to_le16(sizeof(*rdev));
-	}
-
-	/* Now comes the xfield data, in the same order */
-	xdata = (char *)(xcurrent + 1);
-	strcpy(xdata, qname->name);
-	xdata += padded_namelen;
-	if (inode->i_rdev) {
-		rdev = (__le32 *)xdata;
-		*rdev = cpu_to_le32(inode->i_rdev);
-		xdata += round_up(sizeof(*rdev), 8);
-	}
-	ASSERT(xdata - (char *)val == val_len);
-
-	*val_p = val;
-	return val_len;
-}
-
-/**
  * apfs_create_inode_rec - Create an inode record in the catalog b-tree
  * @sb:		filesystem superblock
  * @inode:	vfs inode to record
@@ -545,7 +544,7 @@ int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 
 	apfs_key_set_hdr(APFS_TYPE_INODE, apfs_ino(inode), &raw_key);
 
-	val_len = apfs_build_inode_val(inode, dentry, &raw_val);
+	val_len = apfs_build_inode_val(inode, &dentry->d_name, &raw_val);
 	if (val_len < 0) {
 		ret = val_len;
 		goto fail;
