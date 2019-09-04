@@ -530,7 +530,7 @@ static int apfs_write_inode(struct inode *inode, struct writeback_control *wbc)
 	err = apfs_transaction_start(sb);
 	if (err)
 		return err;
-	err = apfs_update_inode(inode);
+	err = apfs_update_inode(inode, NULL /* new_name */);
 	if (err)
 		goto fail;
 	err = apfs_transaction_commit(sb);

@@ -152,7 +152,7 @@ static inline u64 apfs_ino(const struct inode *inode)
 }
 
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
-extern int apfs_update_inode(struct inode *inode);
+extern int apfs_update_inode(struct inode *inode, char *new_name);
 extern int apfs_getattr(const struct path *path, struct kstat *stat,
 			u32 request_mask, unsigned int query_flags);
 extern struct inode *apfs_new_inode(struct inode *dir, umode_t mode,

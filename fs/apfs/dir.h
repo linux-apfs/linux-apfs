@@ -63,6 +63,7 @@ extern int apfs_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		       bool excl);
 extern int apfs_link(struct dentry *old_dentry, struct inode *dir,
 		     struct dentry *dentry);
+extern int apfs_unlink(struct inode *dir, struct dentry *dentry);
 
 extern const struct file_operations apfs_dir_operations;
 

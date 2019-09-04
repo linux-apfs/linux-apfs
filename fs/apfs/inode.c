@@ -405,13 +405,63 @@ static int apfs_build_inode_val(struct inode *inode, struct qstr *qname,
 	return val_len;
 }
 
-/**
- * apfs_update_inode - Update an existing inode record
- * @inode:	the modified in-memory inode
+/*
+ * apfs_inode_rename - Update the primary name reported in an inode record
+ * @inode:	the in-memory inode
+ * @new_name:	name of the new primary link (NULL if unchanged)
+ * @query:	the query that found the inode record
  *
  * Returns 0 on success, or a negative error code in case of failure.
  */
-int apfs_update_inode(struct inode *inode)
+static int apfs_inode_rename(struct inode *inode, char *new_name,
+			     struct apfs_query *query)
+{
+	char *raw = query->node->object.bh->b_data;
+	struct apfs_inode_key raw_key;
+	struct apfs_inode_val *old_raw_inode, *new_raw_inode = NULL;
+	struct qstr qname;
+	int val_len;
+	int err = 0;
+
+	if (!new_name)
+		return 0;
+
+	apfs_key_set_hdr(APFS_TYPE_INODE, apfs_ino(inode), &raw_key);
+
+	/*
+	 * XXX: All xfields not created by this module will be dropped.  I
+	 * really need a generic way to handle xfields...
+	 */
+	qname.name = new_name;
+	qname.len = strlen(new_name);
+	val_len = apfs_build_inode_val(inode, &qname, &new_raw_inode);
+	if (val_len < 0) {
+		err = val_len;
+		goto fail;
+	}
+	old_raw_inode = (struct apfs_inode_val *)(raw + query->off);
+	memcpy(new_raw_inode, old_raw_inode, sizeof(*old_raw_inode));
+
+	/* Just remove the old record and create a new one */
+	err = apfs_btree_remove(query);
+	if (err)
+		goto fail;
+	err = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
+				new_raw_inode, val_len);
+
+fail:
+	kfree(new_raw_inode);
+	return err;
+}
+
+/**
+ * apfs_update_inode - Update an existing inode record
+ * @inode:	the modified in-memory inode
+ * @new_name:	name of the new primary link (NULL if unchanged)
+ *
+ * Returns 0 on success, or a negative error code in case of failure.
+ */
+int apfs_update_inode(struct inode *inode, char *new_name)
 {
 	struct super_block *sb = inode->i_sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
@@ -419,10 +469,15 @@ int apfs_update_inode(struct inode *inode)
 	struct apfs_query *query;
 	struct apfs_btree_node_phys *node_raw;
 	struct apfs_inode_val *inode_raw;
+	int err;
 
 	query = apfs_inode_lookup(inode);
 	if (IS_ERR(query))
 		return PTR_ERR(query);
+
+	err = apfs_inode_rename(inode, new_name, query);
+	if (err)
+		goto fail;
 
 	/* XXX: only single-node trees are supported, so no need for cow here */
 	node_raw = (void *)query->node->object.bh->b_data;
@@ -439,14 +494,18 @@ int apfs_update_inode(struct inode *inode)
 	inode_raw->mod_time = apfs_timestamp(inode->i_mtime);
 	inode_raw->create_time = apfs_timestamp(ai->i_crtime);
 
-	if (S_ISDIR(inode->i_mode))
+	if (S_ISDIR(inode->i_mode)) {
 		inode_raw->nchildren = cpu_to_le32(ai->i_nchildren);
-	else
-		inode_raw->nlink = cpu_to_le32(inode->i_nlink);
+	} else {
+		/* Orphaned inodes are still linked under private-dir */
+		inode_raw->nlink = cpu_to_le32(inode->i_nlink ? : 1);
+	}
 
 	/* TODO: set size and block count */
+
+fail:
 	apfs_free_query(sb, query);
-	return 0;
+	return err;
 }
 
 /**

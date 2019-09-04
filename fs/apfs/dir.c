@@ -539,7 +539,7 @@ static int apfs_create_dentry(struct dentry *dentry, struct inode *inode)
 	u64 sibling_id = 0;
 	int err;
 
-	if (inode->i_nlink != 1) {
+	if (inode->i_nlink > 1) {
 		/* This is optional for a single link, so don't waste space */
 		err = apfs_create_sibling_recs(dentry, inode, &sibling_id);
 		if (err)
@@ -554,7 +554,7 @@ static int apfs_create_dentry(struct dentry *dentry, struct inode *inode)
 	/* Now update the parent inode */
 	parent->i_mtime = parent->i_ctime = current_time(inode);
 	++APFS_I(parent)->i_nchildren;
-	err = apfs_update_inode(parent);
+	err = apfs_update_inode(parent, NULL /* new_name */);
 	if (err)
 		--APFS_I(parent)->i_nchildren;
 	return err;
@@ -663,7 +663,7 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	ihold(inode);
 	inc_nlink(inode);
 	inode->i_ctime = current_time(inode);
-	err = apfs_update_inode(inode);
+	err = apfs_update_inode(inode, NULL /* new_name */);
 	if (err)
 		goto fail;
 
@@ -688,6 +688,343 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 fail:
 	drop_nlink(inode);
 	iput(inode);
+	apfs_transaction_abort(sb);
+	return err;
+}
+
+/**
+ * apfs_delete_sibling_link_rec - Delete the sibling link record for a dentry
+ * @dentry:	the in-memory dentry
+ * @sibling_id:	sibling id for this hardlink
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_delete_sibling_link_rec(struct dentry *dentry, u64 sibling_id)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct inode *inode = d_inode(dentry);
+	struct apfs_key key;
+	struct apfs_query *query = NULL;
+	int ret;
+
+	ASSERT(sibling_id);
+
+	apfs_init_sibling_link_key(apfs_ino(inode), sibling_id, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret == -ENODATA) {
+		/* A dentry with a sibling id must have sibling records */
+		ret = -EFSCORRUPTED;
+	}
+	if (ret)
+		goto fail;
+	ret = apfs_btree_remove(query);
+
+fail:
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
+ * apfs_delete_sibling_map_rec - Delete the sibling map record for a dentry
+ * @dentry:	the in-memory dentry
+ * @sibling_id:	sibling id for this hardlink
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_delete_sibling_map_rec(struct dentry *dentry, u64 sibling_id)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query = NULL;
+	int ret;
+
+	ASSERT(sibling_id);
+
+	apfs_init_sibling_map_key(sibling_id, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret == -ENODATA) {
+		/* A dentry with a sibling id must have sibling records */
+		ret = -EFSCORRUPTED;
+	}
+	if (ret)
+		goto fail;
+	ret = apfs_btree_remove(query);
+
+fail:
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
+ * apfs_delete_dentry - Delete all records for a dentry
+ * @dentry: the in-memory dentry
+ *
+ * Deletes the dentry record itself, as well as the sibling records if they
+ * exist; also updates the child count for the parent inode.  Returns 0 on
+ * success or a negative error code in case of failure.
+ */
+static int apfs_delete_dentry(struct dentry *dentry)
+{
+	struct super_block *sb = dentry->d_sb;
+	struct inode *parent = d_inode(dentry->d_parent);
+	struct apfs_query *query;
+	struct apfs_drec drec;
+	int err;
+
+	query = apfs_dentry_lookup(parent, &dentry->d_name, &drec);
+	if (IS_ERR(query))
+		return PTR_ERR(query);
+	err = apfs_btree_remove(query);
+	apfs_free_query(sb, query);
+	if (err)
+		return err;
+
+	if (drec.sibling_id) {
+		err = apfs_delete_sibling_link_rec(dentry, drec.sibling_id);
+		if (err)
+			return err;
+		err = apfs_delete_sibling_map_rec(dentry, drec.sibling_id);
+		if (err)
+			return err;
+	}
+
+	/* Now update the parent inode */
+	parent->i_mtime = parent->i_ctime = current_time(parent);
+	--APFS_I(parent)->i_nchildren;
+	err = apfs_update_inode(parent, NULL /* new_name */);
+	if (err)
+		++APFS_I(parent)->i_nchildren;
+	return err;
+}
+
+/**
+ * apfs_undo_delete_dentry - Clean up apfs_delete_dentry()
+ * @dentry: the in-memory dentry
+ */
+static inline void apfs_undo_delete_dentry(struct dentry *dentry)
+{
+	struct inode *parent = d_inode(dentry->d_parent);
+
+	/* Cleanup for the on-disk changes will happen on transaction abort */
+	++APFS_I(parent)->i_nchildren;
+}
+
+/**
+ * apfs_sibling_link_from_query - Read the sibling link record found by a query
+ * @query:	the query that found the record
+ * @name:	on return, the name of link
+ * @parent:	on return, the inode number for the link's parent
+ *
+ * Reads the sibling link information into @parent and @name, and performs some
+ * basic sanity checks as a protection against crafted filesystems.  The caller
+ * must free @name after use.  Returns 0 on success or a negative error code in
+ * case of failure.
+ */
+static int apfs_sibling_link_from_query(struct apfs_query *query,
+					char **name, u64 *parent)
+{
+	char *raw = query->node->object.bh->b_data;
+	struct apfs_sibling_val *siblink;
+	int namelen = query->len - sizeof(*siblink);
+
+	if (namelen < 1)
+		return -EFSCORRUPTED;
+	siblink = (struct apfs_sibling_val *)(raw + query->off);
+
+	if (namelen != le16_to_cpu(siblink->name_len))
+		return -EFSCORRUPTED;
+	/* Filename must be NULL-terminated */
+	if (siblink->name[namelen - 1] != 0)
+		return -EFSCORRUPTED;
+
+	*name = kmalloc(namelen, GFP_KERNEL);
+	if (!*name)
+		return -ENOMEM;
+	strcpy(*name, siblink->name);
+	*parent = le64_to_cpu(siblink->parent_id);
+	return 0;
+}
+
+/**
+ * apfs_find_primary_link - Find the primary link for an inode
+ * @inode:	the vfs inode
+ * @name:	on return, the name of the primary link
+ * @parent:	on return, the inode number for the primary parent
+ *
+ * On success, returns 0 and sets @parent and @name; the second must be freed
+ * by the caller after use.  Returns a negative error code in case of failure.
+ */
+static int apfs_find_primary_link(struct inode *inode, char **name, u64 *parent)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query;
+	int err;
+
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+
+	apfs_init_sibling_link_key(apfs_ino(inode), 0 /* sibling_id */, &key);
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_ANY_NUMBER |
+			APFS_QUERY_EXACT;
+
+	/* The primary link is the one with the lowest sibling id */
+	*name = NULL;
+	while (1) {
+		err = apfs_btree_query(sb, &query);
+		if (err == -ENODATA) /* No more link records */
+			break;
+		kfree(*name);
+		if (err)
+			goto fail;
+
+		err = apfs_sibling_link_from_query(query, name, parent);
+		if (err)
+			goto fail;
+	}
+
+	if (*name)
+		return 0;
+	err = -EFSCORRUPTED; /* No sibling link records exist */
+
+fail:
+	apfs_free_query(sb, query);
+	return err;
+}
+
+/**
+ * apfs_create_orphan_link - Create a link for an orphan inode under private-dir
+ * @inode:	the vfs inode
+ * @name:	on return, the name of the new link
+ * @parent:	on return, the inode number for the new parent (private-dir)
+ *
+ * The official reference does not speak of orphan inodes; we are allowed to
+ * use private-dir, so this function makes a new dentry there.  TODO: it might
+ * be better to use a subdirectory.
+ *
+ * On success, returns 0 and sets @parent and @name; the second must be freed
+ * by the caller after use.  Returns a negative error code in case of failure.
+ */
+static int apfs_create_orphan_link(struct inode *inode, char **name,
+				   u64 *parent)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query = NULL;
+	struct apfs_inode_val *inode_val;
+	char *node_raw;
+	struct qstr qname;
+	int max_namelen;
+	int err;
+
+	/* The name is the inode number in hex, with 'linux' prefix */
+	max_namelen = 5 + 16 + 1;
+	qname.name = kmalloc(max_namelen, GFP_KERNEL);
+	if (!qname.name)
+		return -ENOMEM;
+	qname.len = snprintf((char *)qname.name, max_namelen,
+			     "linux%llx", apfs_ino(inode));
+
+	err = apfs_create_dentry_rec(inode, &qname, APFS_PRIV_DIR_INO_NUM,
+				     0 /* sibling_id */);
+	if (err)
+		goto fail;
+
+	/*
+	 * XXX: update the child count in the parent inode; it might be better
+	 * to always keep a pointer to the vfs inode for private-dir...
+	 */
+	apfs_init_inode_key(APFS_PRIV_DIR_INO_NUM, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query) {
+		err = -ENOMEM;
+		goto fail;
+	}
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+	err = apfs_btree_query(sb, &query);
+	if (err)
+		goto fail;
+
+	node_raw = query->node->object.bh->b_data;
+	inode_val = (struct apfs_inode_val *)(node_raw + query->off);
+	le32_add_cpu(&inode_val->nchildren, 1);
+	apfs_free_query(sb, query);
+
+	*name = (char *)qname.name;
+	*parent = APFS_PRIV_DIR_INO_NUM;
+	return 0;
+
+fail:
+	apfs_free_query(sb, query);
+	kfree(qname.name);
+	return err;
+}
+
+int apfs_unlink(struct inode *dir, struct dentry *dentry)
+{
+	struct super_block *sb = dir->i_sb;
+	struct inode *inode = d_inode(dentry);
+	struct apfs_inode_info *ai = APFS_I(inode);
+	char *primary_name = NULL;
+	int err;
+
+	err = apfs_transaction_start(sb);
+	if (err)
+		return err;
+
+	err = apfs_delete_dentry(dentry);
+	if (err)
+		goto out_abort;
+
+	drop_nlink(inode);
+	if (!inode->i_nlink) {
+		/* Don't let the inode become orphaned */
+		err = apfs_create_orphan_link(inode, &primary_name,
+					      &ai->i_parent_id);
+	} else {
+		/* We may have deleted the primary link, so get the new one */
+		err = apfs_find_primary_link(inode, &primary_name,
+					     &ai->i_parent_id);
+	}
+	if (err)
+		goto out_undo_delete;
+
+	inode->i_ctime = dir->i_ctime;
+	err = apfs_update_inode(inode, primary_name);
+	if (err)
+		goto out_undo_delete;
+	kfree(primary_name);
+	primary_name = NULL;
+
+	err = apfs_transaction_commit(sb);
+	if (err)
+		goto out_undo_delete;
+	return 0;
+
+out_undo_delete:
+	kfree(primary_name);
+	inc_nlink(inode);
+	apfs_undo_delete_dentry(dentry);
+out_abort:
 	apfs_transaction_abort(sb);
 	return err;
 }

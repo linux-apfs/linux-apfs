@@ -300,8 +300,9 @@ struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
  * @val:	on-disk record value (NULL for ghost records)
  * @val_len:	length of @val (0 for ghost records)
  *
- * The new record is placed right before the one found by @query.  Returns 0 on
- * success, or a negative error code in case of failure.
+ * The new record is placed right after the one found by @query.  On success,
+ * returns 0 and sets @query to the new record; returns a negative error code
+ * in case of failure.
  */
 int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 		      void *val, int val_len)
@@ -354,6 +355,8 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	}
 
 	query->index++; /* The query returned the record right before @key */
+	query->len = val_len;
+	query->key_len = key_len;
 
 	/* Insert the new entry in the table of contents */
 	if (apfs_node_has_fixed_kv_size(node)) {
@@ -385,14 +388,16 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	}
 
 	/* Write the record key to the end of the key area */
-	memcpy((void *)node_raw + node->free, key, key_len);
+	query->key_off = node->free;
+	memcpy((void *)node_raw + query->key_off, key, key_len);
 	node->free += key_len;
 	le16_add_cpu(&node_raw->btn_free_space.off, key_len);
 	le16_add_cpu(&node_raw->btn_free_space.len, -key_len);
 
 	if (val) {
 		/* Write the record value to the beginning of the value area */
-		memcpy((void *)node_raw + node->data - val_len, val, val_len);
+		query->off = node->data - val_len;
+		memcpy((void *)node_raw + query->off, val, val_len);
 		node->data -= val_len;
 		le16_add_cpu(&node_raw->btn_free_space.len, -val_len);
 	}
@@ -415,7 +420,9 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
  * apfs_btree_remove - Remove a record from a b-tree
  * @query:	exact query that found the record
  *
- * Returns 0 on success, or a negative error code in case of failure.
+ * On success returns 0 and makes @query->index point to the record right
+ * before @query->key, so that the caller can insert a new record in the
+ * same location.  Returns a negative error code in case of failure.
  */
 int apfs_btree_remove(struct apfs_query *query)
 {
@@ -465,5 +472,7 @@ int apfs_btree_remove(struct apfs_query *query)
 
 	apfs_obj_set_csum(sb, &node_raw->btn_o);
 	mark_buffer_dirty(node->object.bh);
+
+	--query->index;
 	return 0;
 }
