@@ -910,6 +910,29 @@ fail:
 }
 
 /**
+ * apfs_orphan_name - Get the name for an orphan inode's invisible link
+ * @inode: the vfs inode
+ * @qname: on return, the name assigned to the link
+ *
+ * Returns 0 on success; the caller must remember to free @qname->name after
+ * use.  Returns a negative error code in case of failure.
+ */
+static int apfs_orphan_name(struct inode *inode, struct qstr *qname)
+{
+	int max_len;
+	char *name;
+
+	/* The name is the inode number in hex, with 'linux' prefix */
+	max_len = 5 + 16 + 1;
+	name = kmalloc(max_len, GFP_KERNEL);
+	if (!name)
+		return -ENOMEM;
+	qname->len = snprintf(name, max_len, "linux%llx", apfs_ino(inode));
+	qname->name = name;
+	return 0;
+}
+
+/**
  * apfs_create_orphan_link - Create a link for an orphan inode under private-dir
  * @inode:	the vfs inode
  * @name:	on return, the name of the new link
@@ -932,17 +955,11 @@ static int apfs_create_orphan_link(struct inode *inode, char **name,
 	struct apfs_inode_val *inode_val;
 	char *node_raw;
 	struct qstr qname;
-	int max_namelen;
 	int err;
 
-	/* The name is the inode number in hex, with 'linux' prefix */
-	max_namelen = 5 + 16 + 1;
-	qname.name = kmalloc(max_namelen, GFP_KERNEL);
-	if (!qname.name)
-		return -ENOMEM;
-	qname.len = snprintf((char *)qname.name, max_namelen,
-			     "linux%llx", apfs_ino(inode));
-
+	err = apfs_orphan_name(inode, &qname);
+	if (err)
+		return err;
 	err = apfs_create_dentry_rec(inode, &qname, APFS_PRIV_DIR_INO_NUM,
 				     0 /* sibling_id */);
 	if (err)
