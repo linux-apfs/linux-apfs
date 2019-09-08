@@ -693,6 +693,7 @@ static const struct super_operations apfs_sops = {
 	.alloc_inode	= apfs_alloc_inode,
 	.destroy_inode	= apfs_destroy_inode,
 	.write_inode	= apfs_write_inode,
+	.evict_inode	= apfs_evict_inode,
 	.put_super	= apfs_put_super,
 	.statfs		= apfs_statfs,
 	.show_options	= apfs_show_options,

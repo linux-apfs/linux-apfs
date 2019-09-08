@@ -996,6 +996,73 @@ fail:
 	return err;
 }
 
+/**
+ * apfs_delete_orphan_link - Delete the link for an orphan inode
+ * @inode: the vfs inode
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+int apfs_delete_orphan_link(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_key key;
+	struct apfs_query *query;
+	struct apfs_inode_val *inode_val;
+	char *node_raw;
+	struct qstr qname;
+	struct apfs_drec drec;
+	struct apfs_inode_info parent_info;
+	int err;
+
+	err = apfs_orphan_name(inode, &qname);
+	if (err)
+		return err;
+
+	/*
+	 * XXX: fake the basic parent fields needed by apfs_dentry_lookup(); in
+	 * the future we'll use a real private-dir inode.
+	 */
+	parent_info.vfs_inode.i_sb = sb;
+	parent_info.vfs_inode.i_ino = APFS_PRIV_DIR_INO_NUM;
+#if BITS_PER_LONG == 32
+	parent_info.i_ino = APFS_PRIV_DIR_INO_NUM;
+#endif
+
+	query = apfs_dentry_lookup(&parent_info.vfs_inode, &qname, &drec);
+	if (IS_ERR(query)) {
+		err = PTR_ERR(query);
+		query = NULL;
+		goto fail;
+	}
+	err = apfs_btree_remove(query);
+	if (err)
+		goto fail;
+	apfs_free_query(sb, query);
+	query = NULL;
+
+	/* XXX: update the child count in the parent inode */
+	apfs_init_inode_key(APFS_PRIV_DIR_INO_NUM, &key);
+	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
+	if (!query) {
+		err = -ENOMEM;
+		goto fail;
+	}
+	query->key = &key;
+	query->flags |= APFS_QUERY_CAT | APFS_QUERY_EXACT;
+	err = apfs_btree_query(sb, &query);
+	if (err)
+		goto fail;
+	node_raw = query->node->object.bh->b_data;
+	inode_val = (struct apfs_inode_val *)(node_raw + query->off);
+	le32_add_cpu(&inode_val->nchildren, -1);
+
+fail:
+	apfs_free_query(sb, query);
+	kfree(qname.name);
+	return err;
+}
+
 int apfs_unlink(struct inode *dir, struct dentry *dentry)
 {
 	struct super_block *sb = dir->i_sb;

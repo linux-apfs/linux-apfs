@@ -509,6 +509,71 @@ fail:
 }
 
 /**
+ * apfs_delete_inode - Delete an inode record and update the volume file count
+ * @inode: the vfs inode to delete
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_delete_inode(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+	struct apfs_query *query;
+	int ret;
+
+	query = apfs_inode_lookup(inode);
+	if (IS_ERR(query))
+		return PTR_ERR(query);
+	ret = apfs_btree_remove(query);
+	apfs_free_query(sb, query);
+
+	ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+	switch (inode->i_mode & S_IFMT) {
+	case S_IFREG:
+		le64_add_cpu(&vsb_raw->apfs_num_files, -1);
+		break;
+	case S_IFDIR:
+		le64_add_cpu(&vsb_raw->apfs_num_directories, -1);
+		break;
+	case S_IFLNK:
+		le64_add_cpu(&vsb_raw->apfs_num_symlinks, -1);
+		break;
+	default:
+		le64_add_cpu(&vsb_raw->apfs_num_other_fsobjects, -1);
+		break;
+	}
+	return ret;
+}
+
+void apfs_evict_inode(struct inode *inode)
+{
+	struct super_block *sb = inode->i_sb;
+
+	if (is_bad_inode(inode) || inode->i_nlink)
+		goto out_clear;
+
+	if (apfs_transaction_start(sb))
+		goto out_report;
+	if (apfs_delete_inode(inode))
+		goto out_abort;
+	if (apfs_delete_orphan_link(inode))
+		goto out_abort;
+	if (apfs_transaction_commit(sb))
+		goto out_abort;
+	goto out_clear;
+
+out_abort:
+	apfs_transaction_abort(sb);
+out_report:
+	apfs_warn(sb,
+		  "failed to delete orphan inode 0x%llx\n", apfs_ino(inode));
+out_clear:
+	truncate_inode_pages_final(&inode->i_data);
+	clear_inode(inode);
+}
+
+/**
  * apfs_new_inode - Create a new in-memory inode
  * @dir:	parent inode
  * @mode:	mode bits for the new inode
