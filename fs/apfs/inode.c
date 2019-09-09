@@ -172,7 +172,7 @@ corrupted:
  * apfs_inode_lookup - Lookup an inode record in the catalog b-tree
  * @inode:	vfs inode to lookup
  *
- * Runs a catalog query for the @inode->i_ino inode record; returns a pointer
+ * Runs a catalog query for the apfs_ino(@inode) inode record; returns a pointer
  * to the query structure on success, or an error pointer in case of failure.
  */
 static struct apfs_query *apfs_inode_lookup(const struct inode *inode)
@@ -199,10 +199,6 @@ static struct apfs_query *apfs_inode_lookup(const struct inode *inode)
 	return ERR_PTR(ret);
 }
 
-#if BITS_PER_LONG == 64
-#define apfs_iget_locked iget_locked
-#else /* 64-bit inode numbers may not fit in the vfs inode */
-
 /**
  * apfs_test_inode - Check if the inode matches a 64-bit inode number
  * @inode:	inode to test
@@ -210,10 +206,9 @@ static struct apfs_query *apfs_inode_lookup(const struct inode *inode)
  */
 static int apfs_test_inode(struct inode *inode, void *cnid)
 {
-	struct apfs_inode_info *ai = APFS_I(inode);
 	u64 *ino = cnid;
 
-	return ai->i_ino == *ino;
+	return apfs_ino(inode) == *ino;
 }
 
 /**
@@ -226,7 +221,7 @@ static int apfs_set_inode(struct inode *inode, void *cnid)
 	struct apfs_inode_info *ai = APFS_I(inode);
 	u64 *ino = cnid;
 
-	ai->i_ino = *ino;
+	ai->i_ino64 = *ino;
 	inode->i_ino = *ino; /* Just discard the higher bits here... */
 	return 0;
 }
@@ -236,14 +231,13 @@ static int apfs_set_inode(struct inode *inode, void *cnid)
  * @sb:		filesystem superblock
  * @cnid:	64-bit inode number
  *
- * Works the same as iget_locked(), but supports 64-bit inode numbers.
+ * Works the same as iget_locked(), but can handle 64-bit inode numbers on
+ * 32-bit architectures.
  */
 static struct inode *apfs_iget_locked(struct super_block *sb, u64 cnid)
 {
 	return iget5_locked(sb, cnid, apfs_test_inode, apfs_set_inode, &cnid);
 }
-
-#endif /* BITS_PER_LONG == 64 */
 
 /**
  * apfs_iget - Populate inode structures with metadata from disk
@@ -357,7 +351,7 @@ static int apfs_build_inode_val(struct inode *inode, struct qstr *qname,
 		return -ENOMEM;
 
 	val->parent_id = cpu_to_le64(APFS_I(inode)->i_parent_id);
-	val->private_id = cpu_to_le64(inode->i_ino);
+	val->private_id = cpu_to_le64(apfs_ino(inode));
 
 	val->mod_time = apfs_timestamp(inode->i_mtime);
 	val->create_time = val->change_time = val->access_time = val->mod_time;
@@ -574,6 +568,20 @@ out_clear:
 }
 
 /**
+ * apfs_insert_inode_locked - Wrapper for insert_inode_locked4()
+ * @inode: vfs inode to insert in cache
+ *
+ * Works the same as insert_inode_locked(), but can handle 64-bit inode numbers
+ * on 32-bit architectures.
+ */
+static int apfs_insert_inode_locked(struct inode *inode)
+{
+	u64 cnid = apfs_ino(inode);
+
+	return insert_inode_locked4(inode, cnid, apfs_test_inode, &cnid);
+}
+
+/**
  * apfs_new_inode - Create a new in-memory inode
  * @dir:	parent inode
  * @mode:	mode bits for the new inode
@@ -601,10 +609,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 
 	cnid = le64_to_cpu(vsb_raw->apfs_next_obj_id);
 	le64_add_cpu(&vsb_raw->apfs_next_obj_id, 1);
-	inode->i_ino = cnid;
-#if BITS_PER_LONG == 32
-	ai->ino = cnid;
-#endif
+	apfs_set_inode(inode, &cnid);
 	inode_init_owner(inode, dir, mode); /* TODO: handle override */
 	ai->i_parent_id = apfs_ino(dir);
 	set_nlink(inode, 1);
@@ -623,8 +628,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 	else
 		le64_add_cpu(&vsb_raw->apfs_num_other_fsobjects, 1);
 
-	/* TODO: use insert_inode_locked4() on 32-bit architectures */
-	if (insert_inode_locked(inode)) {
+	if (apfs_insert_inode_locked(inode)) {
 		/* The inode number should have been free, but wasn't */
 		make_bad_inode(inode);
 		iput(inode);

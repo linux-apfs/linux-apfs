@@ -117,6 +117,7 @@ struct apfs_dstream {
  * APFS inode data in memory
  */
 struct apfs_inode_info {
+	u64			i_ino64;	 /* 32-bit-safe inode number */
 	u64			i_parent_id;	 /* ID of primary parent */
 	u64			i_extent_id;	 /* ID of the extent records */
 	struct apfs_file_extent	i_cached_extent; /* Latest extent record */
@@ -124,14 +125,10 @@ struct apfs_inode_info {
 	struct timespec64	i_crtime;	 /* Time of creation */
 	u32			i_nchildren;	 /* Child count for directory */
 
-#if BITS_PER_LONG == 32
-	/* This is the actual inode number; vfs_inode.i_ino could overflow */
-	u64			i_ino;
-#endif
 	struct inode vfs_inode;
 };
 
-static inline struct apfs_inode_info *APFS_I(struct inode *inode)
+static inline struct apfs_inode_info *APFS_I(const struct inode *inode)
 {
 	return container_of(inode, struct apfs_inode_info, vfs_inode);
 }
@@ -144,11 +141,7 @@ static inline struct apfs_inode_info *APFS_I(struct inode *inode)
  */
 static inline u64 apfs_ino(const struct inode *inode)
 {
-#if BITS_PER_LONG == 64
-	return inode->i_ino;
-#else
-	return APFS_I(inode)->i_ino;
-#endif
+	return APFS_I(inode)->i_ino64;
 }
 
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);

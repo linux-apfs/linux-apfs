@@ -97,7 +97,7 @@ static int apfs_extent_read(struct inode *inode, sector_t iblock,
 	ret = apfs_extent_from_query(query, extent);
 	if (ret) {
 		apfs_alert(sb, "bad extent record for inode 0x%llx",
-			   (unsigned long long) inode->i_ino);
+			   apfs_ino(inode));
 		goto done;
 	}
 

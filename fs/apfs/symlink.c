@@ -58,7 +58,7 @@ static const char *apfs_get_link(struct dentry *dentry, struct inode *inode,
 	if (size == 0 || *(target + size - 1) != 0) {
 		/* Target path must be NULL-terminated */
 		apfs_alert(sb, "bad link target in inode 0x%llx",
-			   (unsigned long long) inode->i_ino);
+			   apfs_ino(inode));
 		err = -EFSCORRUPTED;
 		goto fail;
 	}

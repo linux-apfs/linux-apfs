@@ -97,7 +97,7 @@ static struct apfs_query *apfs_dentry_lookup(struct inode *dir,
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key key;
 	struct apfs_query *query;
-	u64 cnid = dir->i_ino;
+	u64 cnid = apfs_ino(dir);
 	int err;
 
 	apfs_init_drec_hashed_key(sb, cnid, child->name, &key);
@@ -167,7 +167,7 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key key;
 	struct apfs_query *query;
-	u64 cnid = inode->i_ino;
+	u64 cnid = apfs_ino(inode);
 	loff_t pos;
 	int err = 0;
 
@@ -1025,9 +1025,7 @@ int apfs_delete_orphan_link(struct inode *inode)
 	 */
 	parent_info.vfs_inode.i_sb = sb;
 	parent_info.vfs_inode.i_ino = APFS_PRIV_DIR_INO_NUM;
-#if BITS_PER_LONG == 32
-	parent_info.i_ino = APFS_PRIV_DIR_INO_NUM;
-#endif
+	parent_info.i_ino64 = APFS_PRIV_DIR_INO_NUM;
 
 	query = apfs_dentry_lookup(&parent_info.vfs_inode, &qname, &drec);
 	if (IS_ERR(query)) {

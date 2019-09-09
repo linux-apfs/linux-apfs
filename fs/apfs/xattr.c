@@ -137,7 +137,7 @@ static int apfs_xattr_extents_read(struct inode *parent,
 		err = apfs_extent_from_query(query, &ext);
 		if (err) {
 			apfs_alert(sb, "bad extent for xattr in inode 0x%llx",
-				   (unsigned long long) parent->i_ino);
+				   apfs_ino(parent));
 			ret = err;
 			goto done;
 		}
@@ -213,7 +213,7 @@ int __apfs_xattr_get(struct inode *inode, const char *name, void *buffer,
 	struct apfs_key key;
 	struct apfs_query *query;
 	struct apfs_xattr xattr;
-	u64 cnid = inode->i_ino;
+	u64 cnid = apfs_ino(inode);
 	int ret;
 
 	apfs_init_xattr_key(cnid, name, &key);
@@ -296,7 +296,7 @@ ssize_t apfs_listxattr(struct dentry *dentry, char *buffer, size_t size)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_key key;
 	struct apfs_query *query;
-	u64 cnid = inode->i_ino;
+	u64 cnid = apfs_ino(inode);
 	size_t free = size;
 	ssize_t ret;
 
