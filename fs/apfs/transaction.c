@@ -292,8 +292,7 @@ static int apfs_checkpoint_end(struct super_block *sb)
 
 	apfs_obj_set_csum(sb, obj);
 	mark_buffer_dirty(bh);
-	sync_dirty_buffer(bh); /* What if this fails? */
-	return 0;
+	return sync_dirty_buffer(bh);
 }
 
 /**
@@ -311,7 +310,6 @@ int apfs_transaction_start(struct super_block *sb)
 
 	down_write(&sbi->s_big_sem);
 
-	ASSERT(!(sb->s_flags & SB_RDONLY));
 	ASSERT(!trans->t_old_msb && !trans->t_old_vsb);
 
 	/* Backup the old superblock buffers in case the transaction fails */
@@ -327,6 +325,12 @@ int apfs_transaction_start(struct super_block *sb)
 
 	++sbi->s_xid;
 	INIT_LIST_HEAD(&trans->t_buffers);
+
+	if (sb->s_flags & SB_RDONLY) {
+		/* A previous commit has failed; this should be rare */
+		err = -EROFS;
+		goto fail;
+	}
 
 	err = apfs_checkpoint_start(sb, trans);
 	if (err)
@@ -396,17 +400,17 @@ int apfs_transaction_commit(struct super_block *sb)
 	/* We still hold references to these buffer heads */
 	err = sync_dirty_buffer(sbi->s_omap_root->object.bh);
 	if (err)
-		return err;
+		goto fail;
 	err = sync_dirty_buffer(sbi->s_cat_root->object.bh);
 	if (err)
-		return err;
+		goto fail;
 	err = sync_dirty_buffer(sbi->s_vobject.bh);
 	if (err)
-		return err;
+		goto fail;
 
 	err = apfs_checkpoint_end(sb);
 	if (err)
-		return err;
+		goto fail;
 
 	/* Success: forget the old container and volume superblocks */
 	brelse(trans->t_old_msb);
@@ -421,6 +425,16 @@ int apfs_transaction_commit(struct super_block *sb)
 
 	up_write(&sbi->s_big_sem);
 	return 0;
+
+fail:
+	/*
+	 * This won't happen on ENOSPC, so it should be rare.  Set the
+	 * filesystem read-only to simplify cleanup for the callers and
+	 * avoid deciding if the transaction was completed.
+	 */
+	apfs_info(sb, "transaction commit failed, forcing read-only");
+	sb->s_flags |= SB_RDONLY;
+	return err;
 }
 
 /**
@@ -467,7 +481,6 @@ void apfs_transaction_abort(struct super_block *sb)
 	struct apfs_transaction *trans = &sbi->s_transaction;
 	struct apfs_bh_info *bhi, *tmp;
 
-	ASSERT(!(sb->s_flags & SB_RDONLY));
 	ASSERT(trans->t_old_msb && trans->t_old_vsb);
 
 	--sbi->s_xid;
