@@ -593,7 +593,7 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	return 0;
 
 out_discard_inode:
-	inode_dec_link_count(inode);
+	/* Don't reset nlink: on-disk cleanup is unneeded and would deadlock */
 	discard_new_inode(inode);
 out_abort:
 	apfs_transaction_abort(sb);
