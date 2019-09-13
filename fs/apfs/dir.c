@@ -173,16 +173,9 @@ static int apfs_readdir(struct file *file, struct dir_context *ctx)
 
 	down_read(&sbi->s_big_sem);
 
-	if (ctx->pos == 0) {
-		if (!dir_emit_dot(file, ctx))
-			goto out;
-		ctx->pos++;
-	}
-	if (ctx->pos == 1) {
-		if (!dir_emit_dotdot(file, ctx))
-			goto out;
-		ctx->pos++;
-	}
+	/* Inode numbers might overflow here; follow btrfs in ignoring that */
+	if (!dir_emit_dots(file, ctx))
+		goto out;
 
 	query = apfs_alloc_query(sbi->s_cat_root, NULL /* parent */);
 	if (!query) {
