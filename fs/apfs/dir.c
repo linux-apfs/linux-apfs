@@ -1103,8 +1103,11 @@ int apfs_unlink(struct inode *dir, struct dentry *dentry)
 	return 0;
 
 out_undo_delete:
-	kfree(primary_name);
+	inode->i_state |= I_LINKABLE; /* Silence warning about nlink 0->1 */
 	inc_nlink(inode);
+	inode->i_state &= ~I_LINKABLE;
+
+	kfree(primary_name);
 	apfs_undo_delete_dentry(dentry);
 out_abort:
 	apfs_transaction_abort(sb);
