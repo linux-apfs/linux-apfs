@@ -144,6 +144,22 @@ static inline u64 apfs_ino(const struct inode *inode)
 	return APFS_I(inode)->i_ino64;
 }
 
+/**
+ * apfs_set_ino - Set a 64-bit id on an inode
+ * @inode: the vfs inode
+ * @id:	   id to set
+ *
+ * Sets both the vfs inode number and the actual 32-bit-safe id.
+ */
+static inline void apfs_set_ino(struct inode *inode, u64 id)
+{
+	inode->i_ino = id; /* Higher bits may be lost, but it doesn't matter */
+	APFS_I(inode)->i_ino64 = id;
+}
+
+/* Make the compiler complain if we ever access i_ino directly by mistake */
+#define i_ino	DONT_USE_I_INO
+
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
 extern int apfs_update_inode(struct inode *inode, char *new_name);
 extern void apfs_evict_inode(struct inode *inode);

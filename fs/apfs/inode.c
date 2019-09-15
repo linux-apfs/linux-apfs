@@ -218,11 +218,7 @@ static int apfs_test_inode(struct inode *inode, void *cnid)
  */
 static int apfs_set_inode(struct inode *inode, void *cnid)
 {
-	struct apfs_inode_info *ai = APFS_I(inode);
-	u64 *ino = cnid;
-
-	ai->i_ino64 = *ino;
-	inode->i_ino = *ino; /* Just discard the higher bits here... */
+	apfs_set_ino(inode, *(u64 *)cnid);
 	return 0;
 }
 
@@ -609,7 +605,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 
 	cnid = le64_to_cpu(vsb_raw->apfs_next_obj_id);
 	le64_add_cpu(&vsb_raw->apfs_next_obj_id, 1);
-	apfs_set_inode(inode, &cnid);
+	apfs_set_ino(inode, cnid);
 	inode_init_owner(inode, dir, mode); /* TODO: handle override */
 	ai->i_parent_id = apfs_ino(dir);
 	set_nlink(inode, 1);
