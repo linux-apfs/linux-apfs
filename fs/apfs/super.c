@@ -440,6 +440,9 @@ static void apfs_put_super(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 
+	iput(sbi->s_private_dir);
+	sbi->s_private_dir = NULL;
+
 	/* Update the volume's unmount time */
 	if (!(sb->s_flags & SB_RDONLY)) {
 		struct apfs_superblock *vsb_raw;
@@ -837,6 +840,13 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_maxbytes = MAX_LFS_FILESIZE;
 	sb->s_time_gran = 1; /* Nanosecond granularity */
 
+	sbi->s_private_dir = apfs_iget(sb, APFS_PRIV_DIR_INO_NUM);
+	if (IS_ERR(sbi->s_private_dir)) {
+		apfs_err(sb, "unable to get private-dir inode");
+		err = PTR_ERR(sbi->s_private_dir);
+		goto failed_private_dir;
+	}
+
 	root = apfs_iget(sb, APFS_ROOT_DIR_INO_NUM);
 	if (IS_ERR(root)) {
 		apfs_err(sb, "unable to get root inode");
@@ -852,6 +862,9 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	return 0;
 
 failed_mount:
+	iput(sbi->s_private_dir);
+failed_private_dir:
+	sbi->s_private_dir = NULL;
 	apfs_node_put(sbi->s_cat_root);
 failed_cat:
 	apfs_node_put(sbi->s_omap_root);

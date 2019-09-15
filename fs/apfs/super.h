@@ -314,6 +314,8 @@ struct apfs_sb_info {
 	unsigned long s_blocksize;
 	unsigned char s_blocksize_bits;
 
+	struct inode *s_private_dir;	/* Inode for the private directory */
+
 	struct apfs_spaceman s_spaceman;
 	struct apfs_transaction s_transaction;
 
