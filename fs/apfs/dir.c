@@ -892,10 +892,7 @@ static int apfs_find_primary_link(struct inode *inode, char **name, u64 *parent)
 		if (err)
 			goto fail;
 	}
-
-	if (*name)
-		return 0;
-	err = -EFSCORRUPTED; /* No sibling link records exist */
+	err = *name ? 0 : -EFSCORRUPTED; /* Sibling records must exist */
 
 fail:
 	apfs_free_query(sb, query);
