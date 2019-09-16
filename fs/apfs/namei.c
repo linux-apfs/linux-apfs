@@ -42,6 +42,7 @@ const struct inode_operations apfs_dir_inode_operations = {
 	.link		= apfs_link,
 	.unlink		= apfs_unlink,
 	.mkdir		= apfs_mkdir,
+	.rmdir		= apfs_rmdir,
 	.mknod		= apfs_mknod,
 	.getattr	= apfs_getattr,
 	.listxattr      = apfs_listxattr,

@@ -1065,3 +1065,12 @@ out_abort:
 	apfs_transaction_abort(sb);
 	return err;
 }
+
+int apfs_rmdir(struct inode *dir, struct dentry *dentry)
+{
+	struct inode *inode = d_inode(dentry);
+
+	if (APFS_I(inode)->i_nchildren)
+		return -ENOTEMPTY;
+	return apfs_unlink(dir, dentry);
+}
