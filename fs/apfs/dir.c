@@ -1013,21 +1013,38 @@ fail:
 	return err;
 }
 
-int apfs_unlink(struct inode *dir, struct dentry *dentry)
+/**
+ * __apfs_undo_unlink - Clean up __apfs_unlink()
+ * @dentry: dentry to unlink
+ */
+static void __apfs_undo_unlink(struct dentry *dentry)
 {
-	struct super_block *sb = dir->i_sb;
+	struct inode *inode = d_inode(dentry);
+
+	inode->i_state |= I_LINKABLE; /* Silence warning about nlink 0->1 */
+	inc_nlink(inode);
+	inode->i_state &= ~I_LINKABLE;
+
+	apfs_undo_delete_dentry(dentry);
+}
+
+/**
+ * __apfs_unlink - Unlink a dentry
+ * @dir:    parent directory
+ * @dentry: dentry to unlink
+ *
+ * Does the same as apfs_unlink(), but without starting a transaction.
+ */
+static int __apfs_unlink(struct inode *dir, struct dentry *dentry)
+{
 	struct inode *inode = d_inode(dentry);
 	struct apfs_inode_info *ai = APFS_I(inode);
 	char *primary_name = NULL;
 	int err;
 
-	err = apfs_transaction_start(sb);
-	if (err)
-		return err;
-
 	err = apfs_delete_dentry(dentry);
 	if (err)
-		goto out_abort;
+		return err;
 
 	drop_nlink(inode);
 	if (!inode->i_nlink) {
@@ -1040,27 +1057,39 @@ int apfs_unlink(struct inode *dir, struct dentry *dentry)
 					     &ai->i_parent_id);
 	}
 	if (err)
-		goto out_undo_delete;
+		goto fail;
 
 	inode->i_ctime = dir->i_ctime;
 	err = apfs_update_inode(inode, primary_name);
-	if (err)
-		goto out_undo_delete;
+
+fail:
 	kfree(primary_name);
 	primary_name = NULL;
+	if (err)
+		__apfs_undo_unlink(dentry);
+	return err;
+}
+
+int apfs_unlink(struct inode *dir, struct dentry *dentry)
+{
+	struct super_block *sb = dir->i_sb;
+	int err;
+
+	err = apfs_transaction_start(sb);
+	if (err)
+		return err;
+
+	err = __apfs_unlink(dir, dentry);
+	if (err)
+		goto out_abort;
 
 	err = apfs_transaction_commit(sb);
 	if (err)
-		goto out_undo_delete;
+		goto out_undo_unlink;
 	return 0;
 
-out_undo_delete:
-	inode->i_state |= I_LINKABLE; /* Silence warning about nlink 0->1 */
-	inc_nlink(inode);
-	inode->i_state &= ~I_LINKABLE;
-
-	kfree(primary_name);
-	apfs_undo_delete_dentry(dentry);
+out_undo_unlink:
+	__apfs_undo_unlink(dentry);
 out_abort:
 	apfs_transaction_abort(sb);
 	return err;
