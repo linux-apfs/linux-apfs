@@ -641,16 +641,31 @@ static int apfs_prepare_dentry_for_link(struct dentry *dentry)
 				      apfs_ino(parent), sibling_id);
 }
 
-int apfs_link(struct dentry *old_dentry, struct inode *dir,
-	      struct dentry *dentry)
+/**
+ * __apfs_undo_link - Clean up __apfs_link()
+ * @dentry: the in-memory dentry
+ * @inode:  target inode
+ */
+static void __apfs_undo_link(struct dentry *dentry, struct inode *inode)
 {
-	struct super_block *sb = dir->i_sb;
+	drop_nlink(inode);
+	iput(inode);
+}
+
+/**
+ * __apfs_link - Link a dentry
+ * @old_dentry: dentry for the old link
+ * @dir:	parent directory for new dentry
+ * @dentry:	new dentry to link
+ *
+ * Does the same as apfs_link(), but without starting a transaction or
+ * instantiating @dentry.
+ */
+static int __apfs_link(struct dentry *old_dentry, struct inode *dir,
+		       struct dentry *dentry)
+{
 	struct inode *inode = d_inode(old_dentry);
 	int err;
-
-	err = apfs_transaction_start(sb);
-	if (err)
-		return err;
 
 	/* First update the inode's link count */
 	ihold(inode);
@@ -670,17 +685,39 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	err = apfs_create_dentry(dentry, inode);
 	if (err)
 		goto fail;
-
-	err = apfs_transaction_commit(sb);
-	if (err)
-		goto fail;
-
-	d_instantiate(dentry, inode);
 	return 0;
 
 fail:
 	drop_nlink(inode);
 	iput(inode);
+	return err;
+}
+
+int apfs_link(struct dentry *old_dentry, struct inode *dir,
+	      struct dentry *dentry)
+{
+	struct super_block *sb = dir->i_sb;
+	struct inode *inode = d_inode(old_dentry);
+	int err;
+
+	err = apfs_transaction_start(sb);
+	if (err)
+		return err;
+
+	err = __apfs_link(old_dentry, dir, dentry);
+	if (err)
+		goto out_abort;
+
+	err = apfs_transaction_commit(sb);
+	if (err)
+		goto out_undo_link;
+
+	d_instantiate(dentry, inode);
+	return 0;
+
+out_undo_link:
+	__apfs_undo_link(dentry, inode);
+out_abort:
 	apfs_transaction_abort(sb);
 	return err;
 }
