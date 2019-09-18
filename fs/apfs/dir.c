@@ -553,6 +553,17 @@ static int apfs_create_dentry(struct dentry *dentry, struct inode *inode)
 	return err;
 }
 
+/**
+ * apfs_undo_create_dentry - Clean up apfs_create_dentry()
+ * @dentry: the in-memory dentry
+ */
+static void apfs_undo_create_dentry(struct dentry *dentry)
+{
+	struct inode *parent = d_inode(dentry->d_parent);
+
+	--APFS_I(parent)->i_nchildren;
+}
+
 int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	       dev_t rdev)
 {
@@ -580,11 +591,13 @@ int apfs_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 
 	err = apfs_transaction_commit(sb);
 	if (err)
-		goto out_discard_inode;
+		goto out_undo_create;
 
 	d_instantiate_new(dentry, inode);
 	return 0;
 
+out_undo_create:
+	apfs_undo_create_dentry(dentry);
 out_discard_inode:
 	/* Don't reset nlink: on-disk cleanup is unneeded and would deadlock */
 	discard_new_inode(inode);
@@ -648,6 +661,7 @@ static int apfs_prepare_dentry_for_link(struct dentry *dentry)
  */
 static void __apfs_undo_link(struct dentry *dentry, struct inode *inode)
 {
+	apfs_undo_create_dentry(dentry);
 	drop_nlink(inode);
 	iput(inode);
 }
