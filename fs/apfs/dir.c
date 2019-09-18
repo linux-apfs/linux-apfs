@@ -1154,3 +1154,50 @@ int apfs_rmdir(struct inode *dir, struct dentry *dentry)
 		return -ENOTEMPTY;
 	return apfs_unlink(dir, dentry);
 }
+
+int apfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+		struct inode *new_dir, struct dentry *new_dentry,
+		unsigned int flags)
+{
+	struct super_block *sb = old_dir->i_sb;
+	struct inode *old_inode = d_inode(old_dentry);
+	struct inode *new_inode = d_inode(new_dentry);
+	int err;
+
+	if (flags & ~RENAME_NOREPLACE) /* TODO: support RENAME_EXCHANGE */
+		return -EINVAL;
+
+	err = apfs_transaction_start(sb);
+	if (err)
+		return err;
+
+	if (new_inode) {
+		err = __apfs_unlink(new_dir, new_dentry);
+		if (err)
+			goto out_abort;
+	}
+
+	err = __apfs_link(old_dentry, new_dir, new_dentry);
+	if (err)
+		goto out_undo_unlink_new;
+
+	err = __apfs_unlink(old_dir, old_dentry);
+	if (err)
+		goto out_undo_link;
+
+	err = apfs_transaction_commit(sb);
+	if (err)
+		goto out_undo_unlink_old;
+	return 0;
+
+out_undo_unlink_old:
+	__apfs_undo_unlink(old_dentry);
+out_undo_link:
+	__apfs_undo_link(new_dentry, old_inode);
+out_undo_unlink_new:
+	if (new_inode)
+		__apfs_undo_unlink(new_dentry);
+out_abort:
+	apfs_transaction_abort(sb);
+	return err;
+}

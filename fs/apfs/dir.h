@@ -65,6 +65,9 @@ extern int apfs_link(struct dentry *old_dentry, struct inode *dir,
 		     struct dentry *dentry);
 extern int apfs_unlink(struct inode *dir, struct dentry *dentry);
 extern int apfs_rmdir(struct inode *dir, struct dentry *dentry);
+extern int apfs_rename(struct inode *old_dir, struct dentry *old_dentry,
+		       struct inode *new_dir, struct dentry *new_dentry,
+		       unsigned int flags);
 extern int apfs_delete_orphan_link(struct inode *inode);
 
 extern const struct file_operations apfs_dir_operations;
