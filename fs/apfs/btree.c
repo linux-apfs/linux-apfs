@@ -242,20 +242,12 @@ next_node:
 	if (node->object.oid != child_id)
 		apfs_debug(sb, "corrupt b-tree");
 
-	if ((*query)->flags & APFS_QUERY_MULTIPLE) {
-		/*
-		 * We are looking for multiple entries, so we must remember
-		 * the parent node and index to continue the search later.
-		 */
-		*query = apfs_alloc_query(node, *query);
-		apfs_node_put(node);
-	} else {
-		/* Reuse the same query structure to search the child */
-		apfs_node_put((*query)->node);
-		(*query)->node = node;
-		(*query)->index = node->records;
-		(*query)->depth++;
-	}
+	/*
+	 * Remember the parent node and index in case the search needs
+	 * to be continued later.  TODO: allocate queries from a cache?
+	 */
+	*query = apfs_alloc_query(node, *query);
+	apfs_node_put(node);
 	goto next_node;
 }
 
