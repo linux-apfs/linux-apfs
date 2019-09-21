@@ -63,24 +63,48 @@ void apfs_node_put(struct apfs_node *node)
 /**
  * apfs_read_node - Read a node header from disk
  * @sb:		filesystem superblock
- * @block:	number of the block where the node is stored
+ * @oid:	object id for the node
+ * @storage:	storage type for the node object
+ * @write:	request write access?
  *
  * Returns ERR_PTR in case of failure, otherwise return a pointer to the
  * resulting apfs_node structure with the initial reference taken.
  *
  * For now we assume the node has not been read before.
  */
-struct apfs_node *apfs_read_node(struct super_block *sb, u64 block)
+struct apfs_node *apfs_read_node(struct super_block *sb, u64 oid, u32 storage,
+				 bool write)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
-	struct buffer_head *bh;
+	struct buffer_head *bh = NULL;
 	struct apfs_btree_node_phys *raw;
 	struct apfs_node *node;
+	u64 bno;
+	int err;
 
-	bh = sb_bread(sb, block);
-	if (!bh) {
-		apfs_err(sb, "unable to read node");
-		return ERR_PTR(-EINVAL);
+	switch (storage) {
+	case APFS_OBJ_VIRTUAL:
+		/* All virtual nodes are inside a volume, at least for now */
+		err = apfs_omap_lookup_block(sb, sbi->s_omap_root, oid,
+					     &bno, write);
+		if (err)
+			return ERR_PTR(err);
+		bh = apfs_read_object_block(sb, bno, write);
+		if (IS_ERR(bh))
+			return (void *)bh;
+		break;
+	case APFS_OBJ_PHYSICAL:
+		bno = oid;
+		bh = apfs_read_object_block(sb, bno, write);
+		if (IS_ERR(bh))
+			return (void *)bh;
+		break;
+	case APFS_OBJ_EPHEMERAL:
+		/* Ephemeral objects are checkpoint data, so ignore 'write' */
+		bh = apfs_read_ephemeral_object(sb, oid);
+		if (IS_ERR(bh))
+			return (void *)bh;
+		break;
 	}
 	raw = (struct apfs_btree_node_phys *) bh->b_data;
 
@@ -98,20 +122,21 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 block)
 	node->data = node->free + le16_to_cpu(raw->btn_free_space.len);
 
 	node->object.sb = sb;
-	node->object.block_nr = block;
-	node->object.oid = le64_to_cpu(raw->btn_o.o_oid);
+	node->object.block_nr = bh->b_blocknr;
+	node->object.oid = oid;
 	node->object.bh = bh;
 
 	kref_init(&node->refcount);
 
 	if (sbi->s_flags & APFS_CHECK_NODES &&
 	    !apfs_obj_verify_csum(sb, &raw->btn_o)) {
-		apfs_alert(sb, "bad checksum for node in block 0x%llx", block);
+		/* TODO: don't check this twice for virtual/physical objects */
+		apfs_alert(sb, "bad checksum for node in block 0x%llx", bno);
 		apfs_node_put(node);
 		return ERR_PTR(-EFSBADCRC);
 	}
 	if (!apfs_node_is_valid(sb, node)) {
-		apfs_alert(sb, "bad node in block 0x%llx", block);
+		apfs_alert(sb, "bad node in block 0x%llx", bno);
 		apfs_node_put(node);
 		return ERR_PTR(-EFSCORRUPTED);
 	}

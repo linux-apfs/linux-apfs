@@ -176,11 +176,26 @@ void apfs_free_query(struct super_block *sb, struct apfs_query *query)
  */
 int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_node *node;
 	struct apfs_query *parent;
-	u64 child_id, child_blk;
+	u64 child_id;
+	u32 storage;
 	int err;
+
+	switch ((*query)->flags & APFS_QUERY_TREE_MASK) {
+	case APFS_QUERY_OMAP:
+		storage = APFS_OBJ_PHYSICAL;
+		break;
+	case APFS_QUERY_CAT:
+		storage = APFS_OBJ_VIRTUAL;
+		break;
+	case APFS_QUERY_FREE_QUEUE:
+		storage = APFS_OBJ_EPHEMERAL;
+		break;
+	default:
+		ASSERT(0);
+		return -EOPNOTSUPP;
+	}
 
 next_node:
 	if ((*query)->depth >= 12) {
@@ -217,25 +232,8 @@ next_node:
 		return err;
 	}
 
-	/*
-	 * The omap maps a node id into a block number. The nodes
-	 * of the omap itself do not need this translation.
-	 */
-	if ((*query)->flags & APFS_QUERY_OMAP) {
-		child_blk = child_id;
-	} else {
-		/*
-		 * we are always performing lookup from omap root. Might
-		 * need improvement in the future.
-		 */
-		err = apfs_omap_lookup_block(sb, sbi->s_omap_root, child_id,
-					     &child_blk, false /* write */);
-		if (err)
-			return err;
-	}
-
 	/* Now go a level deeper and search the child */
-	node = apfs_read_node(sb, child_blk);
+	node = apfs_read_node(sb, child_id, storage, false /* write */);
 	if (IS_ERR(node))
 		return PTR_ERR(node);
 
@@ -260,17 +258,9 @@ next_node:
  */
 struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
 {
-	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_node *result;
-	u64 block;
-	int err;
 
-	err = apfs_omap_lookup_block(sb, sbi->s_omap_root, id, &block,
-				     false /* write */);
-	if (err)
-		return ERR_PTR(err);
-
-	result = apfs_read_node(sb, block);
+	result = apfs_read_node(sb, id, APFS_OBJ_VIRTUAL, false /* write */);
 	if (IS_ERR(result))
 		return result;
 

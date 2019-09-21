@@ -257,19 +257,10 @@ int apfs_free_queue_insert(struct super_block *sb, u64 bno)
 	struct apfs_query *query = NULL;
 	struct apfs_spaceman_free_queue_key raw_key;
 	struct apfs_key key;
-	struct buffer_head *fq_root_bh;
-	u64 fq_root_bno;
 	int err;
 
-	/* XXX: read_ephemeral_object() and read_node() must be reconsidered */
-	fq_root_bh = apfs_read_ephemeral_object(sb,
-						le64_to_cpu(fq->sfq_tree_oid));
-	if (IS_ERR(fq_root_bh))
-		return PTR_ERR(fq_root_bh);
-	fq_root_bno = fq_root_bh->b_blocknr;
-	brelse(fq_root_bh);
-
-	fq_root = apfs_read_node(sb, fq_root_bno);
+	fq_root = apfs_read_node(sb, le64_to_cpu(fq->sfq_tree_oid),
+				 APFS_OBJ_EPHEMERAL, true /* write */);
 	if (IS_ERR(fq_root))
 		return PTR_ERR(fq_root);
 

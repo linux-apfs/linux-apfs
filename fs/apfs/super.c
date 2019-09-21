@@ -215,10 +215,10 @@ int apfs_map_volume_super(struct super_block *sb, bool write)
 	struct apfs_superblock *vsb_raw;
 	struct apfs_omap_phys *msb_omap_raw;
 	struct apfs_node *vnode;
-	struct buffer_head *bh, *bh_tmp;
+	struct buffer_head *bh;
 	struct apfs_transaction *trans = &sbi->s_transaction;
 	u64 vol_id;
-	u64 vb, vsb;
+	u64 vsb;
 	int err;
 
 	ASSERT(sbi->s_msb_raw);
@@ -250,29 +250,20 @@ int apfs_map_volume_super(struct super_block *sb, bool write)
 	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
 
 	/* Get the root node for the container's omap */
-	vb = le64_to_cpu(msb_omap_raw->om_tree_oid);
-	bh_tmp = apfs_read_object_block(sb, vb, write);
-	if (IS_ERR(bh_tmp)) {
+	vnode = apfs_read_node(sb, le64_to_cpu(msb_omap_raw->om_tree_oid),
+			       APFS_OBJ_PHYSICAL, write);
+	if (IS_ERR(vnode)) {
 		apfs_err(sb, "unable to read volume block");
-		err = PTR_ERR(bh_tmp);
+		err = PTR_ERR(vnode);
 		goto fail;
 	}
-	vb = bh_tmp->b_blocknr;
 	if (write) {
 		ASSERT(buffer_trans(bh));
-		msb_omap_raw->om_tree_oid = cpu_to_le64(vb);
+		msb_omap_raw->om_tree_oid = cpu_to_le64(vnode->object.block_nr);
 		mark_buffer_dirty(bh);
 	}
 	msb_omap_raw = NULL;
 	brelse(bh);
-	brelse(bh_tmp);
-
-	/* This is very redundant: read_node() must be reconsidered */
-	vnode = apfs_read_node(sb, vb);
-	if (IS_ERR(vnode)) {
-		apfs_err(sb, "unable to read volume block");
-		return PTR_ERR(vnode);
-	}
 
 	err = apfs_omap_lookup_block(sb, vnode, vol_id, &vsb, write);
 	apfs_node_put(vnode);
@@ -342,8 +333,8 @@ int apfs_read_omap(struct super_block *sb, bool write)
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
 	struct apfs_omap_phys *omap_raw;
 	struct apfs_node *omap_root;
-	struct buffer_head *bh, *bh_tmp;
-	u64 omap_blk, omap_root_blk;
+	struct buffer_head *bh;
+	u64 omap_blk;
 	int err;
 
 	ASSERT(sbi->s_vsb_raw);
@@ -363,30 +354,21 @@ int apfs_read_omap(struct super_block *sb, bool write)
 	omap_raw = (struct apfs_omap_phys *)bh->b_data;
 
 	/* Get the volume's object map */
-	omap_root_blk = le64_to_cpu(omap_raw->om_tree_oid);
-	bh_tmp = apfs_read_object_block(sb, omap_root_blk, write);
-	if (IS_ERR(bh_tmp)) {
+	omap_root = apfs_read_node(sb, le64_to_cpu(omap_raw->om_tree_oid),
+				   APFS_OBJ_PHYSICAL, write);
+	if (IS_ERR(omap_root)) {
 		apfs_err(sb, "unable to read the omap root node");
-		err = PTR_ERR(bh_tmp);
+		err = PTR_ERR(omap_root);
 		goto fail;
 	}
-	omap_root_blk = bh_tmp->b_blocknr;
 	if (write) {
 		ASSERT(sbi->s_xid == le64_to_cpu(omap_raw->om_o.o_xid));
 		ASSERT(buffer_trans(bh));
-		omap_raw->om_tree_oid = cpu_to_le64(omap_root_blk);
+		omap_raw->om_tree_oid = cpu_to_le64(omap_root->object.block_nr);
 		mark_buffer_dirty(bh);
 	}
 	omap_raw = NULL;
 	brelse(bh);
-	brelse(bh_tmp);
-
-	/* This is very redundant: read_node() must be reconsidered */
-	omap_root = apfs_read_node(sb, omap_root_blk);
-	if (IS_ERR(omap_root)) {
-		apfs_err(sb, "unable to read the omap root node");
-		return PTR_ERR(omap_root);
-	}
 
 	if (sbi->s_omap_root)
 		apfs_node_put(sbi->s_omap_root);
@@ -411,20 +393,11 @@ int apfs_read_catalog(struct super_block *sb, bool write)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
 	struct apfs_node *root_node;
-	u64 root_id, root_bno;
-	int err;
 
 	ASSERT(sbi->s_omap_root);
 
-	root_id = le64_to_cpu(vsb_raw->apfs_root_tree_oid);
-	err = apfs_omap_lookup_block(sb, sbi->s_omap_root, root_id,
-				     &root_bno, write);
-	if (err) {
-		apfs_err(sb, "unable to read catalog root node");
-		return err;
-	}
-
-	root_node = apfs_read_node(sb, root_bno);
+	root_node = apfs_read_node(sb, le64_to_cpu(vsb_raw->apfs_root_tree_oid),
+				   APFS_OBJ_VIRTUAL, write);
 	if (IS_ERR(root_node)) {
 		apfs_err(sb, "unable to read catalog root node");
 		return PTR_ERR(root_node);
@@ -589,7 +562,7 @@ static int apfs_count_used_blocks(struct super_block *sb, u64 *count)
 	msb_omap_raw = NULL;
 	brelse(bh);
 	bh = NULL;
-	vnode = apfs_read_node(sb, vb);
+	vnode = apfs_read_node(sb, vb, APFS_OBJ_PHYSICAL, false /* write */);
 	if (IS_ERR(vnode)) {
 		apfs_err(sb, "unable to read volume block");
 		return PTR_ERR(vnode);
