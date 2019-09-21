@@ -120,6 +120,31 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 block)
 }
 
 /**
+ * apfs_update_node - Update an existing node header
+ * @node: the modified in-memory node
+ */
+void apfs_update_node(struct apfs_node *node)
+{
+	struct super_block *sb = node->object.sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct buffer_head *bh = node->object.bh;
+	struct apfs_btree_node_phys *raw = (void *)bh->b_data;
+	int toc_off;
+
+	ASSERT(sbi->s_xid == le64_to_cpu(raw->btn_o.o_xid));
+
+	raw->btn_nkeys = cpu_to_le32(node->records);
+
+	toc_off = sizeof(*raw) + le16_to_cpu(raw->btn_table_space.off);
+	raw->btn_table_space.len = cpu_to_le16(node->key - toc_off);
+	raw->btn_free_space.off = cpu_to_le16(node->free - node->key);
+	raw->btn_free_space.len = cpu_to_le16(node->data - node->free);
+
+	apfs_obj_set_csum(sb, &raw->btn_o);
+	mark_buffer_dirty(bh);
+}
+
+/**
  * apfs_node_locate_key - Locate the key of a node record
  * @node:	node to be searched
  * @index:	number of the entry to locate

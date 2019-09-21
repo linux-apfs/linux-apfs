@@ -342,8 +342,6 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 
 		node->key = new_key_base;
 		node->free = new_free_base;
-		le16_add_cpu(&node_raw->btn_table_space.len, inc);
-		le16_add_cpu(&node_raw->btn_free_space.len, -inc);
 	}
 
 	query->index++; /* The query returned the record right before @key */
@@ -383,28 +381,24 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	query->key_off = node->free;
 	memcpy((void *)node_raw + query->key_off, key, key_len);
 	node->free += key_len;
-	le16_add_cpu(&node_raw->btn_free_space.off, key_len);
-	le16_add_cpu(&node_raw->btn_free_space.len, -key_len);
 
 	if (val) {
 		/* Write the record value to the beginning of the value area */
 		query->off = node->data - val_len;
 		memcpy((void *)node_raw + query->off, val, val_len);
 		node->data -= val_len;
-		le16_add_cpu(&node_raw->btn_free_space.len, -val_len);
 	}
 
 	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
 	le64_add_cpu(&info->bt_key_count, 1);
-	node_raw->btn_nkeys = cpu_to_le32(++node->records);
+	++node->records;
 
 	if (key_len > le32_to_cpu(info->bt_longest_key))
 		info->bt_longest_key = cpu_to_le32(key_len);
 	if (val_len > le32_to_cpu(info->bt_longest_val))
 		info->bt_longest_val = cpu_to_le32(val_len);
 
-	apfs_obj_set_csum(sb, &node_raw->btn_o);
-	mark_buffer_dirty(node->object.bh);
+	apfs_update_node(node);
 	return 0;
 }
 
@@ -451,7 +445,7 @@ int apfs_btree_remove(struct apfs_query *query)
 
 	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
 	le64_add_cpu(&info->bt_key_count, -1);
-	node_raw->btn_nkeys = cpu_to_le32(--node->records);
+	--node->records;
 
 	/*
 	 * TODO: move the edges of the key and value areas, if necessary; add
@@ -462,9 +456,7 @@ int apfs_btree_remove(struct apfs_query *query)
 	free_head = &node_raw->btn_val_free_list;
 	le16_add_cpu(&free_head->len, query->len);
 
-	apfs_obj_set_csum(sb, &node_raw->btn_o);
-	mark_buffer_dirty(node->object.bh);
-
+	apfs_update_node(node);
 	--query->index;
 	return 0;
 }
