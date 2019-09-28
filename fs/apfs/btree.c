@@ -406,7 +406,6 @@ int apfs_btree_remove(struct apfs_query *query)
 	struct super_block *sb = node->object.sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_btree_node_phys *node_raw;
-	struct apfs_nloc *free_head;
 	struct apfs_btree_info *info;
 	int later_entries = node->records - query->index - 1;
 
@@ -441,10 +440,8 @@ int apfs_btree_remove(struct apfs_query *query)
 	 * TODO: move the edges of the key and value areas, if necessary; add
 	 * the freed space to the linked list.
 	 */
-	free_head = &node_raw->btn_key_free_list;
-	le16_add_cpu(&free_head->len, query->key_len);
-	free_head = &node_raw->btn_val_free_list;
-	le16_add_cpu(&free_head->len, query->len);
+	node->key_free_list_len += query->key_len;
+	node->val_free_list_len += query->len;
 
 	apfs_update_node(node);
 	--query->index;

@@ -79,6 +79,7 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 oid, u32 storage,
 	struct buffer_head *bh = NULL;
 	struct apfs_btree_node_phys *raw;
 	struct apfs_node *node;
+	struct apfs_nloc *free_head;
 	u64 bno;
 	int err;
 
@@ -121,6 +122,11 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 oid, u32 storage,
 	node->free = node->key + le16_to_cpu(raw->btn_free_space.off);
 	node->data = node->free + le16_to_cpu(raw->btn_free_space.len);
 
+	free_head = &raw->btn_key_free_list;
+	node->key_free_list_len = le16_to_cpu(free_head->len);
+	free_head = &raw->btn_val_free_list;
+	node->val_free_list_len = le16_to_cpu(free_head->len);
+
 	node->object.sb = sb;
 	node->object.block_nr = bh->b_blocknr;
 	node->object.oid = oid;
@@ -154,6 +160,7 @@ void apfs_update_node(struct apfs_node *node)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct buffer_head *bh = node->object.bh;
 	struct apfs_btree_node_phys *raw = (void *)bh->b_data;
+	struct apfs_nloc *free_head;
 	int toc_off;
 
 	ASSERT(sbi->s_xid == le64_to_cpu(raw->btn_o.o_xid));
@@ -164,6 +171,11 @@ void apfs_update_node(struct apfs_node *node)
 	raw->btn_table_space.len = cpu_to_le16(node->key - toc_off);
 	raw->btn_free_space.off = cpu_to_le16(node->free - node->key);
 	raw->btn_free_space.len = cpu_to_le16(node->data - node->free);
+
+	free_head = &raw->btn_key_free_list;
+	free_head->len = cpu_to_le16(node->key_free_list_len);
+	free_head = &raw->btn_val_free_list;
+	free_head->len = cpu_to_le16(node->val_free_list_len);
 
 	apfs_obj_set_csum(sb, &raw->btn_o);
 	mark_buffer_dirty(bh);

@@ -122,6 +122,9 @@ struct apfs_node {
 	int free;		/* Offset of the free area in the block */
 	int data;		/* Offset of the data area in the block */
 
+	int key_free_list_len;	/* Length of the fragmented free key space */
+	int val_free_list_len;	/* Length of the fragmented free value space */
+
 	struct apfs_object object; /* Object holding the node */
 
 	struct kref refcount;
