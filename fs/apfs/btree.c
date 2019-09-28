@@ -108,6 +108,49 @@ fail:
 }
 
 /**
+ * apfs_create_omap_rec - Create a record in the volume's omap tree
+ * @sb:		filesystem superblock
+ * @oid:	object id
+ * @bno:	block number
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+int apfs_create_omap_rec(struct super_block *sb, u64 oid, u64 bno)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_query *query;
+	struct apfs_key key;
+	struct apfs_omap_key raw_key;
+	struct apfs_omap_val raw_val;
+	int ret;
+
+	query = apfs_alloc_query(sbi->s_omap_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+
+	apfs_init_omap_key(oid, sbi->s_xid, &key);
+	query->key = &key;
+	query->flags |= APFS_QUERY_OMAP;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret && ret != -ENODATA)
+		goto fail;
+
+	raw_key.ok_oid = cpu_to_le64(oid);
+	raw_key.ok_xid = cpu_to_le64(sbi->s_xid);
+	raw_val.ov_flags = 0;
+	raw_val.ov_size = cpu_to_le32(sb->s_blocksize);
+	raw_val.ov_paddr = cpu_to_le64(bno);
+
+	ret = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
+				&raw_val, sizeof(raw_val));
+
+fail:
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
  * apfs_alloc_query - Allocates a query structure
  * @node:	node to be searched
  * @parent:	query for the parent node
@@ -269,9 +312,115 @@ struct apfs_node *apfs_omap_read_node(struct super_block *sb, u64 id)
 	return result;
 }
 
-/* Constants used in managing the size of a node's table of contents */
-#define BTREE_TOC_ENTRY_INCREMENT	8
-#define BTREE_TOC_ENTRY_MAX_UNUSED	(2 * BTREE_TOC_ENTRY_INCREMENT)
+/**
+ * apfs_query_join_transaction - Add the found node to the current transaction
+ * @query: query that found the node
+ */
+int apfs_query_join_transaction(struct apfs_query *query)
+{
+	struct apfs_node *node = query->node;
+	struct super_block *sb = node->object.sb;
+	u64 oid = node->object.oid;
+	u32 storage;
+
+	if (buffer_trans(node->object.bh)) /* Already in the transaction */
+		return 0;
+
+	switch (query->flags & APFS_QUERY_TREE_MASK) {
+	case APFS_QUERY_OMAP:
+		storage = APFS_OBJ_PHYSICAL;
+		break;
+	case APFS_QUERY_CAT:
+		storage = APFS_OBJ_VIRTUAL;
+		break;
+	case APFS_QUERY_FREE_QUEUE:
+		/* Ephemeral nodes are checkpoint data */
+		return 0;
+	default:
+		ASSERT(0);
+	}
+
+	node = apfs_read_node(sb, oid, storage, true /* write */);
+	if (IS_ERR(node))
+		return PTR_ERR(node);
+	apfs_node_put(query->node);
+	query->node = node;
+	return 0;
+}
+
+/**
+ * apfs_btree_change_rec_count - Update the b-tree info before a record change
+ * @query:	query used to insert/remove/replace the leaf record
+ * @change:	change in the record count
+ * @key_len:	length of the new leaf record key (0 if removed or unchanged)
+ * @val_len:	length of the new leaf record value (0 if removed or unchanged)
+ *
+ * Don't call this function if @query->parent was reset to NULL, or if the same
+ * is true of any of its ancestor queries.
+ */
+static void apfs_btree_change_rec_count(struct apfs_query *query, int change,
+					int key_len, int val_len)
+{
+	struct super_block *sb;
+	struct apfs_sb_info *sbi;
+	struct apfs_node *root;
+	struct apfs_btree_node_phys *root_raw;
+	struct apfs_btree_info *info;
+
+	if (change == -1)
+		ASSERT(!key_len && !val_len);
+	ASSERT(apfs_node_is_leaf(query->node));
+
+	while (query->parent)
+		query = query->parent;
+	root = query->node;
+	ASSERT(apfs_node_is_root(root));
+
+	sb = root->object.sb;
+	sbi = APFS_SB(sb);
+	root_raw = (void *)root->object.bh->b_data;
+	info = (void *)root_raw + sb->s_blocksize - sizeof(*info);
+
+	ASSERT(sbi->s_xid == le64_to_cpu(root_raw->btn_o.o_xid));
+	if (key_len > le32_to_cpu(info->bt_longest_key))
+		info->bt_longest_key = cpu_to_le32(key_len);
+	if (val_len > le32_to_cpu(info->bt_longest_val))
+		info->bt_longest_val = cpu_to_le32(val_len);
+	le64_add_cpu(&info->bt_key_count, change);
+}
+
+/**
+ * apfs_btree_change_node_count - Change the node count for a b-tree
+ * @query:	query used to remove/create the node
+ * @change:	change in the node count
+ *
+ * Also changes the node count in the volume superblock.  Don't call this
+ * function if @query->parent was reset to NULL, or if the same is true of
+ * any of its ancestor queries.
+ */
+void apfs_btree_change_node_count(struct apfs_query *query, int change)
+{
+	struct super_block *sb;
+	struct apfs_sb_info *sbi;
+	struct apfs_node *root;
+	struct apfs_btree_node_phys *root_raw;
+	struct apfs_btree_info *info;
+
+	ASSERT(!apfs_node_is_leaf(query->node));
+
+	while (query->parent)
+		query = query->parent;
+	root = query->node;
+	ASSERT(apfs_node_is_root(root));
+
+	sb = root->object.sb;
+	sbi = APFS_SB(sb);
+	root_raw = (void *)root->object.bh->b_data;
+	info = (void *)root_raw + sb->s_blocksize - sizeof(*info);
+
+	ASSERT(sbi->s_xid == le64_to_cpu(root_raw->btn_o.o_xid));
+	le64_add_cpu(&info->bt_node_count, change);
+}
 
 /**
  * apfs_btree_insert - Insert a new record into a b-tree
@@ -292,21 +441,30 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	struct super_block *sb = node->object.sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_btree_node_phys *node_raw;
-	struct apfs_btree_info *info;
 	int toc_entry_size;
+	int err;
 
-	/*
-	 * This function is a very rough first draft; all we need is to add
-	 * a few records to an empty tree.
-	 */
-	ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
+	/* Do this first, or node splits may cause @query->parent to be gone */
+	if (apfs_node_is_leaf(node))
+		apfs_btree_change_rec_count(query, 1 /* change */,
+					    key_len, val_len);
 
-	node_raw = (void *)query->node->object.bh->b_data;
+	err = apfs_query_join_transaction(query);
+	if (err)
+		return err;
+
+again:
+	node = query->node;
+	node_raw = (void *)node->object.bh->b_data;
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 
 	/* TODO: support record fragmentation */
-	if (node->free + key_len + val_len > node->data)
-		return -ENOSPC;
+	if (node->free + key_len + val_len > node->data) {
+		err = apfs_node_split(query);
+		if (err)
+			return err;
+		goto again;
+	}
 
 	if (apfs_node_has_fixed_kv_size(node))
 		toc_entry_size = sizeof(struct apfs_kvoff);
@@ -320,12 +478,16 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 		int new_free_base = node->free;
 		int inc;
 
-		inc = BTREE_TOC_ENTRY_INCREMENT * toc_entry_size;
+		inc = APFS_BTREE_TOC_ENTRY_INCREMENT * toc_entry_size;
 
 		new_key_base += inc;
 		new_free_base += inc;
-		if (new_free_base + key_len + val_len > node->data)
-			return -ENOSPC;
+		if (new_free_base + key_len + val_len > node->data) {
+			err = apfs_node_split(query);
+			if (err)
+				return err;
+			goto again;
+		}
 		memmove((void *)node_raw + new_key_base,
 			(void *)node_raw + node->key, node->free - node->key);
 
@@ -336,35 +498,6 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 	query->index++; /* The query returned the record right before @key */
 	query->len = val_len;
 	query->key_len = key_len;
-
-	/* Insert the new entry in the table of contents */
-	if (apfs_node_has_fixed_kv_size(node)) {
-		struct apfs_kvoff *toc_entry;
-
-		toc_entry = (struct apfs_kvoff *)node_raw->btn_data +
-								query->index;
-		memmove(toc_entry + 1, toc_entry,
-			(node->records - query->index) * sizeof(*toc_entry));
-
-		if (!val) /* Ghost record */
-			toc_entry->v = cpu_to_le16(APFS_BTOFF_INVALID);
-		else
-			toc_entry->v = cpu_to_le16(val_len);
-		toc_entry->k = cpu_to_le16(node->free - node->key);
-	} else {
-		struct apfs_kvloc *toc_entry;
-
-		toc_entry = (struct apfs_kvloc *)node_raw->btn_data +
-								query->index;
-		memmove(toc_entry + 1, toc_entry,
-			(node->records - query->index) * sizeof(*toc_entry));
-
-		toc_entry->v.off = cpu_to_le16(sb->s_blocksize - node->data -
-					       sizeof(*info) + val_len);
-		toc_entry->v.len = cpu_to_le16(val_len);
-		toc_entry->k.off = cpu_to_le16(node->free - node->key);
-		toc_entry->k.len = cpu_to_le16(key_len);
-	}
 
 	/* Write the record key to the end of the key area */
 	query->key_off = node->free;
@@ -378,14 +511,8 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
 		node->data -= val_len;
 	}
 
-	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
-	le64_add_cpu(&info->bt_key_count, 1);
-	++node->records;
-
-	if (key_len > le32_to_cpu(info->bt_longest_key))
-		info->bt_longest_key = cpu_to_le32(key_len);
-	if (val_len > le32_to_cpu(info->bt_longest_val))
-		info->bt_longest_val = cpu_to_le32(val_len);
+	/* Add the new entry to the table of contents */
+	apfs_create_toc_entry(query);
 
 	apfs_update_node(node);
 	return 0;
@@ -395,9 +522,7 @@ int apfs_btree_insert(struct apfs_query *query, void *key, int key_len,
  * apfs_btree_remove - Remove a record from a b-tree
  * @query:	exact query that found the record
  *
- * On success returns 0 and makes @query->index point to the record right
- * before @query->key, so that the caller can insert a new record in the
- * same location.  Returns a negative error code in case of failure.
+ * Returns 0 on success, or a negative error code in case of failure.
  */
 int apfs_btree_remove(struct apfs_query *query)
 {
@@ -405,14 +530,43 @@ int apfs_btree_remove(struct apfs_query *query)
 	struct super_block *sb = node->object.sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_btree_node_phys *node_raw;
-	struct apfs_btree_info *info;
 	int later_entries = node->records - query->index - 1;
+	int err;
 
-	/* This function is just a first draft that works with single nodes */
-	ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
+	/* Do this first, or node splits may cause @query->parent to be gone */
+	if (apfs_node_is_leaf(node))
+		apfs_btree_change_rec_count(query, -1 /* change */,
+					    0 /* key_len */, 0 /* val_len */);
+	else
+		apfs_btree_change_node_count(query, -1 /* change */);
 
+	err = apfs_query_join_transaction(query);
+	if (err)
+		return err;
+
+	node = query->node;
 	node_raw = (void *)query->node->object.bh->b_data;
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
+
+	if (node->records == 1)
+		/* Just get rid of the node.  TODO: update the node heights? */
+		return apfs_delete_node(query);
+
+	/* The first key in a node must match the parent record's */
+	if (query->parent && query->index == 0) {
+		int first_key_len, first_key_off;
+		void *key;
+
+		first_key_len = apfs_node_locate_key(node, 1, &first_key_off);
+		if (!first_key_len)
+			return -EFSCORRUPTED;
+		key = (void *)node_raw + first_key_off;
+
+		err = apfs_btree_replace(query->parent, key, first_key_len,
+					 NULL /* val */, 0 /* val_len */);
+		if (err)
+			return err;
+	}
 
 	/* Remove the entry from the table of contents */
 	if (apfs_node_has_fixed_kv_size(node)) {
@@ -430,9 +584,6 @@ int apfs_btree_remove(struct apfs_query *query)
 		memmove(toc_entry, toc_entry + 1,
 			later_entries * sizeof(*toc_entry));
 	}
-
-	info = (void *)node_raw + sb->s_blocksize - sizeof(*info);
-	le64_add_cpu(&info->bt_key_count, -1);
 	--node->records;
 
 	/*
@@ -444,5 +595,107 @@ int apfs_btree_remove(struct apfs_query *query)
 
 	apfs_update_node(node);
 	--query->index;
+	return 0;
+}
+
+/**
+ * apfs_btree_replace - Replace a record in a b-tree
+ * @query:	exact query that found the record
+ * @key:	new on-disk record key (NULL if unchanged)
+ * @key_len:	length of @key
+ * @val:	new on-disk record value (NULL if unchanged)
+ * @val_len:	length of @val
+ *
+ * It's important that the order of the records is not changed by the new @key.
+ * This function is not needed to replace an old value with a new one of the
+ * same length: it can just be overwritten in place.
+ *
+ * Returns 0 on success, and @query is left pointing to the same record; returns
+ * a negative error code in case of failure.
+ */
+int apfs_btree_replace(struct apfs_query *query, void *key, int key_len,
+		       void *val, int val_len)
+{
+	struct apfs_node *node = query->node;
+	struct super_block *sb = node->object.sb;
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_btree_node_phys *node_raw;
+	int err;
+
+	ASSERT(key || val);
+
+	/* Do this first, or node splits may cause @query->parent to be gone */
+	if (apfs_node_is_leaf(node))
+		apfs_btree_change_rec_count(query, 0 /* change */,
+					    key_len, val_len);
+
+	err = apfs_query_join_transaction(query);
+	if (err)
+		return err;
+
+again:
+	node = query->node;
+	node_raw = (void *)node->object.bh->b_data;
+	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
+
+	/* The first key in a node must match the parent record's */
+	if (key && query->parent && query->index == 0) {
+		err = apfs_btree_replace(query->parent, key, key_len,
+					 NULL /* val */, 0 /* val_len */);
+		if (err)
+			return err;
+	}
+
+	/* TODO: support record fragmentation */
+	if (node->free + key_len + val_len > node->data) {
+		err = apfs_node_split(query);
+		if (err)
+			return err;
+		goto again;
+	}
+
+	if (key) {
+		if (key_len <= query->key_len) {
+			memcpy((void *)node_raw + query->key_off, key, key_len);
+			node->key_free_list_len += query->key_len - key_len;
+		} else {
+			query->key_off = node->free;
+			memcpy((void *)node_raw + node->free, key, key_len);
+			node->free += key_len;
+			node->key_free_list_len += query->key_len;
+		}
+		query->key_len = key_len;
+	}
+
+	if (val) {
+		if (val_len <= query->len) {
+			memcpy((void *)node_raw + query->off, val, val_len);
+			node->val_free_list_len += query->len - val_len;
+		} else {
+			node->data -= val_len;
+			query->off = node->data;
+			memcpy((void *)node_raw + node->data, val, val_len);
+			node->val_free_list_len += query->len;
+		}
+		query->len = val_len;
+	}
+
+	/* If the key or value were resized, update the table of contents */
+	if (!apfs_node_has_fixed_kv_size(node)) {
+		struct apfs_kvloc *kvloc;
+		int value_end;
+
+		value_end = sb->s_blocksize;
+		if (apfs_node_is_root(node))
+			value_end -= sizeof(struct apfs_btree_info);
+
+		kvloc = (struct apfs_kvloc *)node_raw->btn_data + query->index;
+		kvloc->v.off = cpu_to_le16(value_end - query->off);
+		kvloc->v.len = cpu_to_le16(query->len);
+		kvloc->k.off = cpu_to_le16(query->key_off - node->key);
+		kvloc->k.len = cpu_to_le16(query->key_len);
+	}
+
+	apfs_update_node(node);
 	return 0;
 }

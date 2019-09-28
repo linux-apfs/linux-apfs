@@ -407,7 +407,6 @@ static int apfs_inode_rename(struct inode *inode, char *new_name,
 			     struct apfs_query *query)
 {
 	char *raw = query->node->object.bh->b_data;
-	struct apfs_inode_key raw_key;
 	struct apfs_inode_val *old_raw_inode, *new_raw_inode = NULL;
 	struct qstr qname;
 	int val_len;
@@ -415,8 +414,6 @@ static int apfs_inode_rename(struct inode *inode, char *new_name,
 
 	if (!new_name)
 		return 0;
-
-	apfs_key_set_hdr(APFS_TYPE_INODE, apfs_ino(inode), &raw_key);
 
 	/*
 	 * XXX: All xfields not created by this module will be dropped.  I
@@ -433,11 +430,8 @@ static int apfs_inode_rename(struct inode *inode, char *new_name,
 	memcpy(new_raw_inode, old_raw_inode, sizeof(*old_raw_inode));
 
 	/* Just remove the old record and create a new one */
-	err = apfs_btree_remove(query);
-	if (err)
-		goto fail;
-	err = apfs_btree_insert(query, &raw_key, sizeof(raw_key),
-				new_raw_inode, val_len);
+	err = apfs_btree_replace(query, NULL /* key */, 0 /* key_len */,
+				 new_raw_inode, val_len);
 
 fail:
 	kfree(new_raw_inode);
@@ -457,6 +451,7 @@ int apfs_update_inode(struct inode *inode, char *new_name)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_inode_info *ai = APFS_I(inode);
 	struct apfs_query *query;
+	struct buffer_head *bh;
 	struct apfs_btree_node_phys *node_raw;
 	struct apfs_inode_val *inode_raw;
 	int err;
@@ -469,8 +464,12 @@ int apfs_update_inode(struct inode *inode, char *new_name)
 	if (err)
 		goto fail;
 
-	/* XXX: only single-node trees are supported, so no need for cow here */
-	node_raw = (void *)query->node->object.bh->b_data;
+	/* TODO: just use apfs_btree_replace()? */
+	err = apfs_query_join_transaction(query);
+	if (err)
+		goto fail;
+	bh = query->node->object.bh;
+	node_raw = (void *)bh->b_data;
 	ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 	inode_raw = (void *)node_raw + query->off;
 

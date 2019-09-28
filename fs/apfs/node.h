@@ -88,6 +88,10 @@ struct apfs_btree_node_phys {
 /*38*/	__le64 btn_data[];
 } __packed;
 
+/* Constants used in managing the size of a node's table of contents */
+#define APFS_BTREE_TOC_ENTRY_INCREMENT	8
+#define APFS_BTREE_TOC_ENTRY_MAX_UNUSED	(2 * BTREE_TOC_ENTRY_INCREMENT)
+
 /*
  * Structure used to store information about a B-tree that won't change
  * over time
@@ -161,8 +165,12 @@ static inline bool apfs_node_has_fixed_kv_size(struct apfs_node *node)
 extern struct apfs_node *apfs_read_node(struct super_block *sb, u64 oid,
 					u32 storage, bool write);
 extern void apfs_update_node(struct apfs_node *node);
+extern int apfs_delete_node(struct apfs_query *query);
 extern int apfs_node_query(struct super_block *sb, struct apfs_query *query);
 extern int apfs_bno_from_query(struct apfs_query *query, u64 *bno);
+extern void apfs_create_toc_entry(struct apfs_query *query);
+extern int apfs_node_split(struct apfs_query *query);
+extern int apfs_node_locate_key(struct apfs_node *node, int index, int *off);
 
 extern void apfs_node_get(struct apfs_node *node);
 extern void apfs_node_put(struct apfs_node *node);
