@@ -208,7 +208,6 @@ struct buffer_head *apfs_read_object_block(struct super_block *sb, u64 bno,
 		goto fail;
 
 	set_buffer_csum(bh);
-	mark_buffer_dirty(bh);
 	return bh;
 
 fail:

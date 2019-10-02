@@ -290,7 +290,6 @@ int apfs_free_queue_insert(struct super_block *sb, u64 bno)
 		fq->sfq_oldest_xid = cpu_to_le64(sbi->s_xid);
 	le64_add_cpu(&fq->sfq_count, 1);
 	apfs_obj_set_csum(sb, &sm_raw->sm_o);
-	mark_buffer_dirty(sm->sm_bh);
 
 fail:
 	apfs_free_query(sb, query);
@@ -504,7 +503,6 @@ int apfs_spaceman_allocate_block(struct super_block *sb, u64 *bno)
 			/* The free block count has changed */
 			apfs_write_spaceman(sm);
 			apfs_obj_set_csum(sb, &sm_raw->sm_o);
-			mark_buffer_dirty(sm->sm_bh);
 		}
 		brelse(cib_bh);
 		if (err == -ENOSPC) /* This cib is full */

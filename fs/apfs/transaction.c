@@ -66,7 +66,6 @@ static int apfs_cpoint_init_area(struct super_block *sb, u64 base, u32 blks,
 		    APFS_OBJECT_TYPE_NX_SUPERBLOCK)
 			set_buffer_csum(new_bh);
 
-		mark_buffer_dirty(new_bh);
 		new_obj = NULL;
 		brelse(new_bh);
 	}
@@ -126,8 +125,6 @@ static int apfs_cpoint_init_desc(struct super_block *sb)
 	raw_sb->nx_xp_desc_index = cpu_to_le32(desc_next);
 	desc_next = (new_sb_index + 1) % desc_blks;
 	raw_sb->nx_xp_desc_next = cpu_to_le32(desc_next);
-
-	mark_buffer_dirty(new_sb_bh);
 	return 0;
 }
 
@@ -143,7 +140,6 @@ static int apfs_cpoint_init_data(struct super_block *sb)
 {
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
-	struct buffer_head *sb_bh = sbi->s_mobject.bh;
 	u64 data_base = le64_to_cpu(raw_sb->nx_xp_data_base);
 	u32 data_next = le32_to_cpu(raw_sb->nx_xp_data_next);
 	u32 data_blks = le32_to_cpu(raw_sb->nx_xp_data_blocks);
@@ -163,9 +159,6 @@ static int apfs_cpoint_init_data(struct super_block *sb)
 	raw_sb->nx_xp_data_index = cpu_to_le32(data_next);
 	data_next = (data_next + data_len) % data_blks;
 	raw_sb->nx_xp_data_next = cpu_to_le32(data_next);
-
-	/* It's dirty already, but this looks better */
-	mark_buffer_dirty(sb_bh);
 	return 0;
 }
 
@@ -225,6 +218,7 @@ static int apfs_update_mapping_blocks(struct super_block *sb)
 		bh = sb_bread(sb, desc_base + desc_curr);
 		if (!bh)
 			return -EINVAL;
+		ASSERT(buffer_trans(bh));
 		cpm = (struct apfs_checkpoint_map_phys *)bh->b_data;
 		ASSERT(sbi->s_xid == le64_to_cpu(cpm->cpm_o.o_xid));
 
@@ -236,8 +230,7 @@ static int apfs_update_mapping_blocks(struct super_block *sb)
 
 		for (j = 0; j < map_count; ++j)
 			apfs_update_mapping(sb, &cpm->cpm_map[j]);
-		apfs_obj_set_csum(sb, &cpm->cpm_o);
-		mark_buffer_dirty(bh);
+		set_buffer_csum(bh);
 		brelse(bh);
 	}
 	return 0;
@@ -384,10 +377,10 @@ int apfs_transaction_commit(struct super_block *sb)
 		struct buffer_head *bh = bhi->bh;
 
 		ASSERT(buffer_trans(bh));
-		ASSERT(buffer_dirty(bh));
 
 		if (buffer_csum(bh))
 			apfs_obj_set_csum(sb, (void *)bh->b_data);
+		mark_buffer_dirty(bh);
 		bh->b_private = NULL;
 		clear_buffer_trans(bh);
 		clear_buffer_csum(bh);

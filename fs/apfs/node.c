@@ -178,7 +178,6 @@ void apfs_update_node(struct apfs_node *node)
 	free_head->len = cpu_to_le16(node->val_free_list_len);
 
 	apfs_obj_set_csum(sb, &raw->btn_o);
-	mark_buffer_dirty(bh);
 }
 
 /**

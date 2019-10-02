@@ -245,7 +245,6 @@ int apfs_map_volume_super(struct super_block *sb, bool write)
 	if (write) {
 		ASSERT(buffer_trans(bh));
 		msb_raw->nx_omap_oid = cpu_to_le64(bh->b_blocknr);
-		mark_buffer_dirty(sbi->s_mobject.bh);
 	}
 	msb_omap_raw = (struct apfs_omap_phys *)bh->b_data;
 
@@ -260,7 +259,6 @@ int apfs_map_volume_super(struct super_block *sb, bool write)
 	if (write) {
 		ASSERT(buffer_trans(bh));
 		msb_omap_raw->om_tree_oid = cpu_to_le64(vnode->object.block_nr);
-		mark_buffer_dirty(bh);
 	}
 	msb_omap_raw = NULL;
 	brelse(bh);
@@ -349,7 +347,6 @@ int apfs_read_omap(struct super_block *sb, bool write)
 	if (write) {
 		ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
 		vsb_raw->apfs_omap_oid = cpu_to_le64(bh->b_blocknr);
-		mark_buffer_dirty(sbi->s_vobject.bh);
 	}
 	omap_raw = (struct apfs_omap_phys *)bh->b_data;
 
@@ -365,7 +362,6 @@ int apfs_read_omap(struct super_block *sb, bool write)
 		ASSERT(sbi->s_xid == le64_to_cpu(omap_raw->om_o.o_xid));
 		ASSERT(buffer_trans(bh));
 		omap_raw->om_tree_oid = cpu_to_le64(omap_root->object.block_nr);
-		mark_buffer_dirty(bh);
 	}
 	omap_raw = NULL;
 	brelse(bh);
@@ -430,7 +426,6 @@ static void apfs_put_super(struct super_block *sb)
 		ASSERT(buffer_trans(vsb_bh));
 
 		vsb_raw->apfs_unmount_time = cpu_to_le64(ktime_get_real_ns());
-		mark_buffer_dirty(vsb_bh);
 		set_buffer_csum(vsb_bh);
 
 		if (apfs_transaction_commit(sb)) {

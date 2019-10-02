@@ -100,7 +100,6 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 		brelse(new_bh);
 
 		set_buffer_csum(node_bh);
-		mark_buffer_dirty(node_bh);
 	}
 
 fail:
