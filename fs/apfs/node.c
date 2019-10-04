@@ -638,19 +638,26 @@ int apfs_node_query(struct super_block *sb, struct apfs_query *query)
  * @query:	the query that found the record
  * @bno:	Return parameter.  The block number found.
  *
- * Reads the block number in the omap record into @bno and performs a basic
- * sanity check as a protection against crafted filesystems.  Returns 0 on
- * success or -EFSCORRUPTED otherwise.
+ * Returns -EOPNOTSUPP if the object doesn't fit in one block, and -EFSCORRUPTED
+ * if the filesystem appears to be malicious.  Otherwise, reads the block number
+ * in the omap record into @bno and returns 0.
  */
 int apfs_bno_from_query(struct apfs_query *query, u64 *bno)
 {
+	struct super_block *sb = query->node->object.sb;
 	struct apfs_omap_val *omap_val;
 	char *raw = query->node->object.bh->b_data;
 
 	if (query->len != sizeof(*omap_val))
 		return -EFSCORRUPTED;
-
 	omap_val = (struct apfs_omap_val *)(raw + query->off);
+
+	/* TODO: support objects with multiple blocks */
+	if (le32_to_cpu(omap_val->ov_size) != sb->s_blocksize) {
+		apfs_err(sb, "object size doesn't match block size");
+		return -EOPNOTSUPP;
+	}
+
 	*bno = le64_to_cpu(omap_val->ov_paddr);
 	return 0;
 }
