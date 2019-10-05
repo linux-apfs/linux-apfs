@@ -663,7 +663,6 @@ static void __apfs_undo_link(struct dentry *dentry, struct inode *inode)
 {
 	apfs_undo_create_dentry(dentry);
 	drop_nlink(inode);
-	iput(inode);
 }
 
 /**
@@ -672,8 +671,8 @@ static void __apfs_undo_link(struct dentry *dentry, struct inode *inode)
  * @dir:	parent directory for new dentry
  * @dentry:	new dentry to link
  *
- * Does the same as apfs_link(), but without starting a transaction or
- * instantiating @dentry.
+ * Does the same as apfs_link(), but without starting a transaction, taking a
+ * new reference to @old_dentry->d_inode, or instantiating @dentry.
  */
 static int __apfs_link(struct dentry *old_dentry, struct inode *dir,
 		       struct dentry *dentry)
@@ -682,7 +681,6 @@ static int __apfs_link(struct dentry *old_dentry, struct inode *dir,
 	int err;
 
 	/* First update the inode's link count */
-	ihold(inode);
 	inc_nlink(inode);
 	inode->i_ctime = current_time(inode);
 	err = apfs_update_inode(inode, NULL /* new_name */);
@@ -703,7 +701,6 @@ static int __apfs_link(struct dentry *old_dentry, struct inode *dir,
 
 fail:
 	drop_nlink(inode);
-	iput(inode);
 	return err;
 }
 
@@ -721,6 +718,7 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	err = __apfs_link(old_dentry, dir, dentry);
 	if (err)
 		goto out_abort;
+	ihold(inode);
 
 	err = apfs_transaction_commit(sb);
 	if (err)
@@ -730,6 +728,7 @@ int apfs_link(struct dentry *old_dentry, struct inode *dir,
 	return 0;
 
 out_undo_link:
+	iput(inode);
 	__apfs_undo_link(dentry, inode);
 out_abort:
 	apfs_transaction_abort(sb);
