@@ -221,23 +221,8 @@ int apfs_btree_query(struct super_block *sb, struct apfs_query **query)
 	struct apfs_node *node;
 	struct apfs_query *parent;
 	u64 child_id;
-	u32 storage;
+	u32 storage = apfs_query_storage(*query);
 	int err;
-
-	switch ((*query)->flags & APFS_QUERY_TREE_MASK) {
-	case APFS_QUERY_OMAP:
-		storage = APFS_OBJ_PHYSICAL;
-		break;
-	case APFS_QUERY_CAT:
-		storage = APFS_OBJ_VIRTUAL;
-		break;
-	case APFS_QUERY_FREE_QUEUE:
-		storage = APFS_OBJ_EPHEMERAL;
-		break;
-	default:
-		ASSERT(0);
-		return -EOPNOTSUPP;
-	}
 
 next_node:
 	if ((*query)->depth >= 12) {
@@ -321,24 +306,12 @@ int apfs_query_join_transaction(struct apfs_query *query)
 	struct apfs_node *node = query->node;
 	struct super_block *sb = node->object.sb;
 	u64 oid = node->object.oid;
-	u32 storage;
+	u32 storage = apfs_query_storage(query);
 
 	if (buffer_trans(node->object.bh)) /* Already in the transaction */
 		return 0;
-
-	switch (query->flags & APFS_QUERY_TREE_MASK) {
-	case APFS_QUERY_OMAP:
-		storage = APFS_OBJ_PHYSICAL;
-		break;
-	case APFS_QUERY_CAT:
-		storage = APFS_OBJ_VIRTUAL;
-		break;
-	case APFS_QUERY_FREE_QUEUE:
-		/* Ephemeral nodes are checkpoint data */
-		return 0;
-	default:
-		ASSERT(0);
-	}
+	/* Ephemeral objects are always checkpoint data */
+	ASSERT(storage != APFS_OBJ_EPHEMERAL);
 
 	node = apfs_read_node(sb, oid, storage, true /* write */);
 	if (IS_ERR(node))

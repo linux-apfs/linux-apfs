@@ -680,7 +680,7 @@ static int apfs_btree_inc_height(struct apfs_query *query)
 	struct apfs_btree_node_phys *new_raw;
 	struct apfs_btree_info *info;
 	__le64 *raw_oid;
-	u32 storage;
+	u32 storage = apfs_query_storage(query);
 	int toc_entry_size;
 
 	root_raw = (void *)root->object.bh->b_data;
@@ -693,21 +693,6 @@ static int apfs_btree_inc_height(struct apfs_query *query)
 		toc_entry_size = sizeof(struct apfs_kvoff);
 	else
 		toc_entry_size = sizeof(struct apfs_kvloc);
-
-	switch (query->flags & APFS_QUERY_TREE_MASK) {
-	case APFS_QUERY_OMAP:
-		storage = APFS_OBJ_PHYSICAL;
-		break;
-	case APFS_QUERY_CAT:
-		storage = APFS_OBJ_VIRTUAL;
-		break;
-	case APFS_QUERY_FREE_QUEUE:
-		storage = APFS_OBJ_EPHEMERAL;
-		break;
-	default:
-		ASSERT(0);
-		return -EOPNOTSUPP;
-	}
 
 	/* Create a new child node */
 	new_node = apfs_create_node(sb, storage);
@@ -903,7 +888,7 @@ int apfs_node_split(struct apfs_query *query)
 	char *buffer = NULL;
 	struct apfs_node buf_node;
 	struct buffer_head buf_bh;
-	u32 storage;
+	u32 storage = apfs_query_storage(query);
 	int record_count;
 	int err;
 
@@ -919,21 +904,6 @@ int apfs_node_split(struct apfs_query *query)
 
 	old_raw = (void *)old_node->object.bh->b_data;
 	ASSERT(sbi->s_xid == le64_to_cpu(old_raw->btn_o.o_xid));
-
-	switch (query->flags & APFS_QUERY_TREE_MASK) {
-	case APFS_QUERY_OMAP:
-		storage = APFS_OBJ_PHYSICAL;
-		break;
-	case APFS_QUERY_CAT:
-		storage = APFS_OBJ_VIRTUAL;
-		break;
-	case APFS_QUERY_FREE_QUEUE:
-		storage = APFS_OBJ_EPHEMERAL;
-		break;
-	default:
-		ASSERT(0);
-		return -EOPNOTSUPP;
-	}
 
 	/*
 	 * XXX: to defragment the original node, we put all records in a

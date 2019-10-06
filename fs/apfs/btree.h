@@ -9,6 +9,8 @@
 #define _APFS_BTREE_H
 
 #include <linux/types.h>
+#include "message.h"
+#include "object.h"
 
 struct super_block;
 
@@ -44,6 +46,21 @@ struct apfs_query {
 
 	int depth;			/* Put a limit on recursion */
 };
+
+/**
+ * apfs_query_storage - Get the storage type for a query's btree
+ * @query: the query structure
+ */
+static inline u32 apfs_query_storage(struct apfs_query *query)
+{
+	if (query->flags & APFS_QUERY_OMAP)
+		return APFS_OBJ_PHYSICAL;
+	if (query->flags & APFS_QUERY_CAT)
+		return APFS_OBJ_VIRTUAL;
+	if (query->flags & APFS_QUERY_FREE_QUEUE)
+		return APFS_OBJ_EPHEMERAL;
+	ASSERT(false);
+}
 
 extern struct apfs_query *apfs_alloc_query(struct apfs_node *node,
 					   struct apfs_query *parent);
