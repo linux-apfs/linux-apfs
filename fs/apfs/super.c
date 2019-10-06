@@ -765,6 +765,76 @@ out:
 	return 0;
 }
 
+/**
+ * apfs_check_features - Check for unsupported features in the filesystem
+ * @sb: superblock structure
+ *
+ * Returns -EINVAL if unsupported incompatible features are found, otherwise
+ * returns 0.
+ */
+static int apfs_check_features(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *msb_raw = sbi->s_msb_raw;
+	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+	u64 features;
+
+	ASSERT(sbi->s_msb_raw);
+	ASSERT(sbi->s_vsb_raw);
+
+	features = le64_to_cpu(msb_raw->nx_incompatible_features);
+	if (features & ~APFS_NX_SUPPORTED_INCOMPAT_MASK) {
+		apfs_warn(sb,
+			  "unknown incompatible container features (0x%llx)",
+			  features);
+		return -EINVAL;
+	}
+	if (features & APFS_NX_INCOMPAT_FUSION) {
+		apfs_warn(sb, "fusion drives are not supported");
+		return -EINVAL;
+	}
+
+	features = le64_to_cpu(vsb_raw->apfs_incompatible_features);
+	if (features & ~APFS_SUPPORTED_INCOMPAT_MASK) {
+		apfs_warn(sb, "unknown incompatible volume features (0x%llx)",
+			  features);
+		return -EINVAL;
+	}
+	if (features & APFS_INCOMPAT_DATALESS_SNAPS) {
+		apfs_warn(sb, "snapshots with no data are not supported");
+		return -EINVAL;
+	}
+	if (features & APFS_INCOMPAT_ENC_ROLLED) {
+		apfs_warn(sb, "encrypted volumes are not supported");
+		return -EINVAL;
+	}
+
+	features = le64_to_cpu(msb_raw->nx_readonly_compatible_features);
+	if (features & ~APFS_NX_SUPPORTED_ROCOMPAT_MASK) {
+		apfs_warn(sb,
+		     "unknown read-only compatible container features (0x%llx)",
+		     features);
+		if (!sb_rdonly(sb)) {
+			apfs_warn(sb, "container can't be mounted read-write");
+			return -EINVAL;
+		}
+	}
+
+	features = le64_to_cpu(vsb_raw->apfs_readonly_compatible_features);
+	if (features & ~APFS_SUPPORTED_ROCOMPAT_MASK) {
+		apfs_warn(sb,
+			"unknown read-only compatible volume features (0x%llx)",
+			features);
+		if (!sb_rdonly(sb)) {
+			apfs_warn(sb, "volume can't be mounted read-write");
+			return -EINVAL;
+		}
+	}
+
+	/* TODO: add checks for encryption, snapshots? */
+	return 0;
+}
+
 static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct apfs_sb_info *sbi;
@@ -792,6 +862,10 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	err = apfs_map_volume_super(sb, false /* write */);
 	if (err)
 		goto failed_volume_super;
+
+	err = apfs_check_features(sb);
+	if (err)
+		goto failed_omap;
 
 	/* The omap needs to be set before the call to apfs_read_catalog() */
 	err = apfs_read_omap(sb, false /* write */);
