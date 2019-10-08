@@ -190,6 +190,36 @@ fail:
 }
 
 /**
+ * apfs_update_software_info - Write the module info to a modified volume
+ * @sb: superblock structure
+ *
+ * Does nothing if the module information is already present at index zero of
+ * the apfs_modified_by array.  Otherwise, writes it there after shifting the
+ * rest of the entries to the right.
+ */
+static void apfs_update_software_info(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_superblock *raw = sbi->s_vsb_raw;
+	struct apfs_modified_by *mod_by;
+
+	ASSERT(sbi->s_vsb_raw);
+	ASSERT(sbi->s_xid == le64_to_cpu(raw->apfs_o.o_xid));
+	ASSERT(strlen(APFS_MODULE_ID_STRING) < APFS_MODIFIED_NAMELEN);
+	mod_by = raw->apfs_modified_by;
+
+	/* This check could be optimized away, but does it matter? */
+	if (!strcmp(mod_by->id, APFS_MODULE_ID_STRING))
+		return;
+	memmove(mod_by + 1, mod_by, (APFS_MAX_HIST - 1) * sizeof(*mod_by));
+
+	memset(mod_by->id, 0, sizeof(mod_by->id));
+	strcpy(mod_by->id, APFS_MODULE_ID_STRING);
+	mod_by->timestamp = cpu_to_le64(ktime_get_real_ns());
+	mod_by->last_xid = cpu_to_le64(sbi->s_xid);
+}
+
+/**
  * apfs_unmap_main_super - Clean up apfs_map_main_super()
  * @sb:	filesystem superblock
  */
@@ -299,6 +329,9 @@ int apfs_map_volume_super(struct super_block *sb, bool write)
 	sbi->s_vobject.oid = le64_to_cpu(vsb_raw->apfs_o.o_oid);
 	brelse(sbi->s_vobject.bh);
 	sbi->s_vobject.bh = bh;
+
+	if (write)
+		apfs_update_software_info(sb);
 	return 0;
 
 fail:

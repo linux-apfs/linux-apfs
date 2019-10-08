@@ -12,6 +12,8 @@
 #include <asm/byteorder.h>
 #include <asm/div64.h>
 
+#define APFS_MODULE_ID_STRING	"linux-apfs by EA Fernández"
+
 #define EFSBADCRC	EBADMSG		/* Bad CRC detected */
 #define EFSCORRUPTED	EUCLEAN		/* Filesystem is corrupted */
 
