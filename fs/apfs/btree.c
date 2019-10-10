@@ -151,6 +151,38 @@ fail:
 }
 
 /**
+ * apfs_delete_omap_rec - Delete an existing record from the volume's omap tree
+ * @sb:		filesystem superblock
+ * @oid:	object id for the record
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+int apfs_delete_omap_rec(struct super_block *sb, u64 oid)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_query *query;
+	struct apfs_key key;
+	int ret;
+
+	query = apfs_alloc_query(sbi->s_omap_root, NULL /* parent */);
+	if (!query)
+		return -ENOMEM;
+
+	apfs_init_omap_key(oid, sbi->s_xid, &key);
+	query->key = &key;
+	query->flags |= APFS_QUERY_OMAP;
+
+	ret = apfs_btree_query(sb, &query);
+	if (ret == -ENODATA)
+		ret = -EFSCORRUPTED;
+	if (!ret)
+		ret = apfs_btree_remove(query);
+
+	apfs_free_query(sb, query);
+	return ret;
+}
+
+/**
  * apfs_alloc_query - Allocates a query structure
  * @node:	node to be searched
  * @parent:	query for the parent node

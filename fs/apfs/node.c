@@ -252,18 +252,34 @@ fail:
  * apfs_delete_node - Deletes a nonroot node from disk
  * @query: query pointing to the node
  *
- * Returns 0 on success, or a negative error code in case of failure.
+ * Does nothing to the in-memory node structure.  Returns 0 on success, or a
+ * negative error code in case of failure.
  */
 int apfs_delete_node(struct apfs_query *query)
 {
 	struct super_block *sb = query->node->object.sb;
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_superblock *vsb_raw = sbi->s_vsb_raw;
+	struct apfs_node *node = query->node;
+	u64 oid = node->object.oid;
+	u64 bno = node->object.block_nr;
+	int err;
 
-	/* For now, free queues are the only container b-tree we modify */
-	if ((query->flags & APFS_QUERY_TREE_MASK) != APFS_QUERY_FREE_QUEUE) {
-		ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+	ASSERT(sbi->s_xid == le64_to_cpu(vsb_raw->apfs_o.o_xid));
+
+	switch (query->flags & APFS_QUERY_TREE_MASK) {
+	case APFS_QUERY_CAT:
+		err = apfs_free_queue_insert(sb, bno);
+		if (err)
+			return err;
+		err = apfs_delete_omap_rec(sb, oid);
+		if (err)
+			return err;
 		le64_add_cpu(&vsb_raw->apfs_fs_alloc_count, -1);
+		break;
+	default:
+		/* TODO: physical and ephemeral nodes */
+		return -EOPNOTSUPP;
 	}
 	return apfs_btree_remove(query->parent);
 }
