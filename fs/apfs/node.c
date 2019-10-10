@@ -186,8 +186,19 @@ static struct apfs_node *apfs_create_node(struct super_block *sb, u32 storage)
 
 		subtype = APFS_OBJECT_TYPE_FSTREE;
 		break;
+	case APFS_OBJ_EPHEMERAL:
+		apfs_cpoint_data_allocate(sb, &bno);
+		oid = le64_to_cpu(msb_raw->nx_next_oid);
+		le64_add_cpu(&msb_raw->nx_next_oid, 1);
+
+		err = apfs_create_cpoint_map(sb, oid, bno);
+		if (err)
+			return ERR_PTR(err);
+
+		subtype = APFS_OBJECT_TYPE_SPACEMAN_FREE_QUEUE;
+		break;
 	default:
-		/* TODO: physical and ephemeral nodes */
+		/* TODO: physical nodes */
 		return ERR_PTR(-EOPNOTSUPP);
 	}
 

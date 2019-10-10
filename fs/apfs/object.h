@@ -91,6 +91,7 @@ extern int apfs_obj_verify_csum(struct super_block *sb,
 				struct apfs_obj_phys *obj);
 extern void apfs_obj_set_csum(struct super_block *sb,
 			      struct apfs_obj_phys *obj);
+extern int apfs_create_cpoint_map(struct super_block *sb, u64 oid, u64 bno);
 extern struct buffer_head *apfs_read_ephemeral_object(struct super_block *sb,
 						      u64 oid);
 extern struct buffer_head *apfs_read_object_block(struct super_block *sb,

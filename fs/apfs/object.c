@@ -93,6 +93,64 @@ static int apfs_cpm_lookup_oid(struct super_block *sb,
 }
 
 /**
+ * apfs_create_cpoint_map - Create a checkpoint mapping
+ * @sb:		filesystem superblock
+ * @oid:	ephemeral object id
+ * @bno:	block number
+ *
+ * Only mappings for free queue nodes are supported for now.  Returns 0 on
+ * success or a negative error code in case of failure.
+ */
+int apfs_create_cpoint_map(struct super_block *sb, u64 oid, u64 bno)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	u64 desc_base = le64_to_cpu(raw_sb->nx_xp_desc_base);
+	u32 desc_index = le32_to_cpu(raw_sb->nx_xp_desc_index);
+	u32 desc_blks = le32_to_cpu(raw_sb->nx_xp_desc_blocks);
+	u32 desc_len = le32_to_cpu(raw_sb->nx_xp_desc_len);
+	struct buffer_head *bh;
+	struct apfs_checkpoint_map_phys *cpm;
+	struct apfs_checkpoint_mapping *map;
+	u64 cpm_bno;
+	u32 cpm_count;
+	int err = 0;
+
+	if (!desc_blks || desc_len < 2)
+		return -EFSCORRUPTED;
+
+	/* Last block in area is superblock; we want the last mapping block */
+	cpm_bno = desc_base + (desc_index + desc_len - 2) % desc_blks;
+	bh = sb_bread(sb, cpm_bno);
+	if (!bh)
+		return -EIO;
+	cpm = (struct apfs_checkpoint_map_phys *)bh->b_data;
+	ASSERT(sbi->s_xid == le64_to_cpu(cpm->cpm_o.o_xid));
+
+	cpm_count = le32_to_cpu(cpm->cpm_count);
+	if (cpm_count >= apfs_max_maps_per_block(sb)) { /* TODO */
+		apfs_warn(sb, "creation of cpm blocks not yet supported");
+		err = -ENOSPC;
+		goto fail;
+	}
+	map = &cpm->cpm_map[cpm_count];
+	le32_add_cpu(&cpm->cpm_count, 1);
+
+	map->cpm_type = cpu_to_le32(APFS_OBJ_EPHEMERAL |
+				    APFS_OBJECT_TYPE_BTREE_NODE);
+	map->cpm_subtype = cpu_to_le32(APFS_OBJECT_TYPE_SPACEMAN_FREE_QUEUE);
+	map->cpm_size = cpu_to_le32(sb->s_blocksize);
+	map->cpm_pad = 0;
+	map->cpm_fs_oid = 0;
+	map->cpm_oid = cpu_to_le64(oid);
+	map->cpm_paddr = cpu_to_le64(bno);
+
+fail:
+	brelse(bh);
+	return err;
+}
+
+/**
  * apfs_read_ephemeral_object - Find and map an ephemeral object
  * @sb:		superblock structure
  * @oid:	ephemeral object id

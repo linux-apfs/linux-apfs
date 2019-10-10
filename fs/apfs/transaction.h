@@ -39,6 +39,7 @@ struct apfs_bh_info {
 	struct list_head	list;	/* List of buffers in the transaction */
 };
 
+extern void apfs_cpoint_data_allocate(struct super_block *sb, u64 *bno);
 extern int apfs_transaction_start(struct super_block *sb);
 extern int apfs_transaction_commit(struct super_block *sb);
 extern int apfs_transaction_join(struct super_block *sb,

@@ -237,6 +237,29 @@ static int apfs_update_mapping_blocks(struct super_block *sb)
 }
 
 /**
+ * apfs_cpoint_data_allocate - Allocate a new block in the checkpoint data area
+ * @sb:		superblock structure
+ * @bno:	on return, the allocated block number
+ */
+void apfs_cpoint_data_allocate(struct super_block *sb, u64 *bno)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_nx_superblock *raw_sb = sbi->s_msb_raw;
+	u64 data_base = le64_to_cpu(raw_sb->nx_xp_data_base);
+	u32 data_next = le32_to_cpu(raw_sb->nx_xp_data_next);
+	u32 data_blks = le32_to_cpu(raw_sb->nx_xp_data_blocks);
+	u32 data_len = le32_to_cpu(raw_sb->nx_xp_data_len);
+
+	*bno = data_base + data_next;
+	data_next = (data_next + 1) % data_blks;
+	data_len++;
+
+	ASSERT(sbi->s_xid == le64_to_cpu(raw_sb->nx_o.o_xid));
+	raw_sb->nx_xp_data_next = cpu_to_le32(data_next);
+	raw_sb->nx_xp_data_len = cpu_to_le32(data_len);
+}
+
+/**
  * apfs_checkpoint_start - Start the checkpoint for a new transaction
  * @sb:		superblock structure
  * @trans:	the transaction
