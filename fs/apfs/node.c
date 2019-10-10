@@ -817,8 +817,6 @@ static int apfs_copy_record_range(struct apfs_node *dest_node,
 		int len, off;
 
 		len = apfs_node_locate_key(src_node, i, &off);
-		if (!len)
-			goto fail;
 		if (dest_node->free + len > sb->s_blocksize)
 			goto fail;
 		memcpy((char *)dest_raw + dest_node->free,
@@ -828,8 +826,6 @@ static int apfs_copy_record_range(struct apfs_node *dest_node,
 		dest_node->free += len;
 
 		len = apfs_node_locate_data(src_node, i, &off);
-		if (!len)
-			goto fail;
 		dest_node->data -= len;
 		if (dest_node->data < 0)
 			goto fail;
@@ -967,8 +963,6 @@ int apfs_node_split(struct apfs_query *query)
 					   &query->off);
 	query->key_len = apfs_node_locate_key(query->node, query->index,
 					      &query->key_off);
-	if (!query->len || !query->key_len)
-		err = -EFSCORRUPTED;
 
 out_put_node:
 	apfs_node_put(new_node);
