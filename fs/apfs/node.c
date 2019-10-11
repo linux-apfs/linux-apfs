@@ -95,10 +95,10 @@ struct apfs_node *apfs_read_node(struct super_block *sb, u64 oid, u32 storage,
 			return (void *)bh;
 		break;
 	case APFS_OBJ_PHYSICAL:
-		bno = oid;
-		bh = apfs_read_object_block(sb, bno, write);
+		bh = apfs_read_object_block(sb, oid, write);
 		if (IS_ERR(bh))
 			return (void *)bh;
+		oid = bh->b_blocknr;
 		break;
 	case APFS_OBJ_EPHEMERAL:
 		/* Ephemeral objects are checkpoint data, so ignore 'write' */
@@ -186,6 +186,16 @@ static struct apfs_node *apfs_create_node(struct super_block *sb, u32 storage)
 
 		subtype = APFS_OBJECT_TYPE_FSTREE;
 		break;
+	case APFS_OBJ_PHYSICAL:
+		err = apfs_spaceman_allocate_block(sb, &bno);
+		if (err)
+			return ERR_PTR(err);
+		/* We don't write to the container's omap */
+		le64_add_cpu(&vsb_raw->apfs_fs_alloc_count, 1);
+
+		oid = bno;
+		subtype = APFS_OBJECT_TYPE_OMAP;
+		break;
 	case APFS_OBJ_EPHEMERAL:
 		apfs_cpoint_data_allocate(sb, &bno);
 		oid = le64_to_cpu(msb_raw->nx_next_oid);
@@ -198,8 +208,7 @@ static struct apfs_node *apfs_create_node(struct super_block *sb, u32 storage)
 		subtype = APFS_OBJECT_TYPE_SPACEMAN_FREE_QUEUE;
 		break;
 	default:
-		/* TODO: physical nodes */
-		return ERR_PTR(-EOPNOTSUPP);
+		ASSERT(false);
 	}
 
 	bh = sb_bread(sb, bno);
@@ -277,8 +286,15 @@ int apfs_delete_node(struct apfs_query *query)
 			return err;
 		le64_add_cpu(&vsb_raw->apfs_fs_alloc_count, -1);
 		break;
+	case APFS_QUERY_OMAP:
+		err = apfs_free_queue_insert(sb, bno);
+		if (err)
+			return err;
+		/* We don't write to the container's omap */
+		le64_add_cpu(&vsb_raw->apfs_fs_alloc_count, -1);
+		break;
 	default:
-		/* TODO: physical and ephemeral nodes */
+		/* TODO: ephemeral nodes */
 		return -EOPNOTSUPP;
 	}
 	return apfs_btree_remove(query->parent);

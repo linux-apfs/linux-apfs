@@ -73,18 +73,9 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 	}
 
 	if (write) {
-		struct apfs_node *node = query->node;
-		struct buffer_head *node_bh = node->object.bh;
-		struct apfs_btree_node_phys *node_raw;
-		struct apfs_omap_key *key;
-		struct apfs_omap_val *val;
+		struct apfs_omap_key key;
+		struct apfs_omap_val val;
 		struct buffer_head *new_bh;
-
-		/* TODO: update parent nodes */
-		ASSERT(apfs_node_is_root(node) && apfs_node_is_leaf(node));
-
-		node_raw = (void *)node_bh->b_data;
-		ASSERT(sbi->s_xid == le64_to_cpu(node_raw->btn_o.o_xid));
 
 		new_bh = apfs_read_object_block(sb, *block, write);
 		if (IS_ERR(new_bh)) {
@@ -92,14 +83,16 @@ int apfs_omap_lookup_block(struct super_block *sb, struct apfs_node *tbl,
 			goto fail;
 		}
 
-		key = (void *)node_raw + query->key_off;
-		key->ok_xid = cpu_to_le64(sbi->s_xid); /* TODO: snapshots? */
-		val = (void *)node_raw + query->off;
-		val->ov_paddr = cpu_to_le64(new_bh->b_blocknr);
+		key.ok_oid = cpu_to_le64(id);
+		key.ok_xid = cpu_to_le64(sbi->s_xid); /* TODO: snapshots? */
+		val.ov_flags = 0; /* TODO: preserve the flags */
+		val.ov_size = cpu_to_le32(sb->s_blocksize);
+		val.ov_paddr = cpu_to_le64(new_bh->b_blocknr);
+		ret = apfs_btree_replace(query, &key, sizeof(key),
+					 &val, sizeof(val));
+
 		*block = new_bh->b_blocknr;
 		brelse(new_bh);
-
-		set_buffer_csum(node_bh);
 	}
 
 fail:
@@ -350,6 +343,15 @@ int apfs_query_join_transaction(struct apfs_query *query)
 		return PTR_ERR(node);
 	apfs_node_put(query->node);
 	query->node = node;
+
+	if (storage == APFS_OBJ_PHYSICAL && query->parent) {
+		__le64 bno = cpu_to_le64(node->object.block_nr);
+
+		/* The parent node needs to report the new location */
+		return apfs_btree_replace(query->parent,
+					  NULL /* key */, 0 /* key_len */,
+					  &bno, sizeof(bno));
+	}
 	return 0;
 }
 
@@ -652,7 +654,8 @@ again:
 	}
 
 	/* TODO: support record fragmentation */
-	if (node->free + key_len + val_len > node->data) {
+	if ((key_len > query->key_len || val_len > query->len) &&
+	    node->free + key_len + val_len > node->data) {
 		err = apfs_node_split(query);
 		if (err)
 			return err;
