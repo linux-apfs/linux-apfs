@@ -270,9 +270,9 @@ struct inode *apfs_iget(struct super_block *sb, u64 cnid)
 	up_read(&sbi->s_big_sem);
 
 	/* Allow the user to override the ownership */
-	if (sbi->s_flags & APFS_UID_OVERRIDE)
+	if (uid_valid(sbi->s_uid))
 		inode->i_uid = sbi->s_uid;
-	if (sbi->s_flags & APFS_GID_OVERRIDE)
+	if (gid_valid(sbi->s_gid))
 		inode->i_gid = sbi->s_gid;
 
 	/* Inode flags are not important for now, leave them at 0 */

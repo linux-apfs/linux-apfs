@@ -285,9 +285,7 @@ struct apfs_superblock {
 } __packed;
 
 /* Mount option flags */
-#define APFS_UID_OVERRIDE	1
-#define APFS_GID_OVERRIDE	2
-#define APFS_CHECK_NODES	4
+#define APFS_CHECK_NODES	1
 
 /*
  * Superblock data in memory, both from the main superblock and the volume

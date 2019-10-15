@@ -681,10 +681,10 @@ static int apfs_show_options(struct seq_file *seq, struct dentry *root)
 
 	if (sbi->s_vol_nr != 0)
 		seq_printf(seq, ",vol=%u", sbi->s_vol_nr);
-	if (sbi->s_flags & APFS_UID_OVERRIDE)
+	if (uid_valid(sbi->s_uid))
 		seq_printf(seq, ",uid=%u", from_kuid(&init_user_ns,
 						     sbi->s_uid));
-	if (sbi->s_flags & APFS_GID_OVERRIDE)
+	if (gid_valid(sbi->s_gid))
 		seq_printf(seq, ",gid=%u", from_kgid(&init_user_ns,
 						     sbi->s_gid));
 	if (sbi->s_flags & APFS_CHECK_NODES)
@@ -767,7 +767,6 @@ static int parse_options(struct super_block *sb, char *options)
 				apfs_err(sb, "invalid uid");
 				return -EINVAL;
 			}
-			sbi->s_flags |= APFS_UID_OVERRIDE;
 			break;
 		case Opt_gid:
 			err = match_int(&args[0], &option);
@@ -778,7 +777,6 @@ static int parse_options(struct super_block *sb, char *options)
 				apfs_err(sb, "invalid gid");
 				return -EINVAL;
 			}
-			sbi->s_flags |= APFS_GID_OVERRIDE;
 			break;
 		case Opt_vol:
 			err = match_int(&args[0], &sbi->s_vol_nr);
@@ -888,6 +886,8 @@ static int apfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi->s_blocksize = sb->s_blocksize;
 	sbi->s_blocksize_bits = sb->s_blocksize_bits;
 
+	sbi->s_uid = INVALID_UID;
+	sbi->s_gid = INVALID_GID;
 	err = parse_options(sb, data);
 	if (err)
 		goto failed_volume_super;
