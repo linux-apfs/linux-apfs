@@ -124,6 +124,8 @@ struct apfs_inode_info {
 	spinlock_t		i_extent_lock;	 /* Protects i_cached_extent */
 	struct timespec64	i_crtime;	 /* Time of creation */
 	u32			i_nchildren;	 /* Child count for directory */
+	uid_t			i_saved_uid;	 /* User ID on disk */
+	gid_t			i_saved_gid;	 /* Group ID on disk */
 
 	struct inode vfs_inode;
 };

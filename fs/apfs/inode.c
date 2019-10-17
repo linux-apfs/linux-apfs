@@ -99,8 +99,11 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	ai->i_parent_id = le64_to_cpu(inode_val->parent_id);
 	ai->i_extent_id = le64_to_cpu(inode_val->private_id);
 	inode->i_mode = le16_to_cpu(inode_val->mode);
-	i_uid_write(inode, (uid_t)le32_to_cpu(inode_val->owner));
-	i_gid_write(inode, (gid_t)le32_to_cpu(inode_val->group));
+
+	ai->i_saved_uid = le32_to_cpu(inode_val->owner);
+	i_uid_write(inode, ai->i_saved_uid);
+	ai->i_saved_gid = le32_to_cpu(inode_val->group);
+	i_gid_write(inode, ai->i_saved_gid);
 
 	if (!S_ISDIR(inode->i_mode)) {
 		/*
@@ -474,9 +477,15 @@ int apfs_update_inode(struct inode *inode, char *new_name)
 	inode_raw = (void *)node_raw + query->off;
 
 	inode_raw->parent_id = cpu_to_le64(ai->i_parent_id);
+	inode_raw->mode = cpu_to_le16(inode->i_mode);
 	inode_raw->owner = cpu_to_le32(i_uid_read(inode));
 	inode_raw->group = cpu_to_le32(i_gid_read(inode));
-	inode_raw->mode = cpu_to_le16(inode->i_mode);
+
+	/* Don't persist the uid/gid provided by the user on mount */
+	if (uid_valid(sbi->s_uid))
+		inode_raw->owner = cpu_to_le32(ai->i_saved_uid);
+	if (gid_valid(sbi->s_gid))
+		inode_raw->group = cpu_to_le32(ai->i_saved_gid);
 
 	inode_raw->access_time = apfs_timestamp(inode->i_atime);
 	inode_raw->change_time = apfs_timestamp(inode->i_ctime);
@@ -605,7 +614,9 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 	cnid = le64_to_cpu(vsb_raw->apfs_next_obj_id);
 	le64_add_cpu(&vsb_raw->apfs_next_obj_id, 1);
 	apfs_set_ino(inode, cnid);
-	inode_init_owner(inode, dir, mode); /* TODO: handle override */
+	inode_init_owner(inode, dir, mode);
+	ai->i_saved_uid = i_uid_read(inode);
+	ai->i_saved_gid = i_gid_read(inode);
 	ai->i_parent_id = apfs_ino(dir);
 	set_nlink(inode, 1);
 	ai->i_nchildren = 0;
