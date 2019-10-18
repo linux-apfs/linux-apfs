@@ -49,52 +49,6 @@ struct apfs_inode_val {
 /*5C*/	u8 xfields[];
 } __packed;
 
-/* Extended field types */
-#define APFS_DREC_EXT_TYPE_SIBLING_ID 1
-
-#define APFS_INO_EXT_TYPE_SNAP_XID 1
-#define APFS_INO_EXT_TYPE_DELTA_TREE_OID 2
-#define APFS_INO_EXT_TYPE_DOCUMENT_ID 3
-#define APFS_INO_EXT_TYPE_NAME 4
-#define APFS_INO_EXT_TYPE_PREV_FSIZE 5
-#define APFS_INO_EXT_TYPE_RESERVED_6 6
-#define APFS_INO_EXT_TYPE_FINDER_INFO 7
-#define APFS_INO_EXT_TYPE_DSTREAM 8
-#define APFS_INO_EXT_TYPE_RESERVED_9 9
-#define APFS_INO_EXT_TYPE_DIR_STATS_KEY 10
-#define APFS_INO_EXT_TYPE_FS_UUID 11
-#define APFS_INO_EXT_TYPE_RESERVED_12 12
-#define APFS_INO_EXT_TYPE_SPARSE_BYTES 13
-#define APFS_INO_EXT_TYPE_RDEV 14
-
-/* Extended field flags */
-#define APFS_XF_DATA_DEPENDENT		0x01
-#define APFS_XF_DO_NOT_COPY		0x02
-#define APFS_XF_RESERVED_4		0x04
-#define APFS_XF_CHILDREN_INHERIT	0x08
-#define APFS_XF_USER_FIELD		0x10
-#define APFS_XF_SYSTEM_FIELD		0x20
-#define APFS_XF_RESERVED_40		0x40
-#define APFS_XF_RESERVED_80		0x80
-
-/*
- * Structure used to store the number and size of extended fields of an inode
- */
-struct apfs_xf_blob {
-	__le16 xf_num_exts;
-	__le16 xf_used_data;
-	u8 xf_data[];
-} __packed;
-
-/*
- * Structure used to store an inode's extended field
- */
-struct apfs_x_field {
-	u8 x_type;
-	u8 x_flags;
-	__le16 x_size;
-} __packed;
-
 /*
  * Structure of a data stream record
  */

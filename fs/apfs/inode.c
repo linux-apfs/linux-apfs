@@ -18,6 +18,7 @@
 #include "node.h"
 #include "super.h"
 #include "xattr.h"
+#include "xfield.h"
 
 static int apfs_readpage(struct file *file, struct page *page)
 {
@@ -84,11 +85,9 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 {
 	struct apfs_inode_info *ai = APFS_I(inode);
 	struct apfs_inode_val *inode_val;
-	struct apfs_dstream *dstream = NULL;
-	struct apfs_xf_blob *xblob;
-	struct apfs_x_field *xfield;
 	char *raw = query->node->object.bh->b_data;
-	int rest, i;
+	char *xval = NULL;
+	int xlen;
 	u32 rdev = 0;
 
 	if (query->len < sizeof(*inode_val))
@@ -121,45 +120,26 @@ static int apfs_inode_from_query(struct apfs_query *query, struct inode *inode)
 	inode->i_mtime = apfs_timespec(inode_val->mod_time);
 	ai->i_crtime = apfs_timespec(inode_val->create_time);
 
-	xblob = (struct apfs_xf_blob *) inode_val->xfields;
-	xfield = (struct apfs_x_field *) xblob->xf_data;
-	rest = query->len - (sizeof(*inode_val) + sizeof(*xblob));
-	rest -= le16_to_cpu(xblob->xf_num_exts) * sizeof(xfield[0]);
-	if (rest < 0)
-		goto corrupted;
-	for (i = 0; i < le16_to_cpu(xblob->xf_num_exts); ++i) {
-		int attrlen;
+	inode->i_size = inode->i_blocks = 0; /* TODO: compressed inodes */
+	xlen = apfs_find_xfield(inode_val->xfields,
+				query->len - sizeof(*inode_val),
+				APFS_INO_EXT_TYPE_DSTREAM, &xval);
+	if (xlen >= sizeof(struct apfs_dstream)) {
+		struct apfs_dstream *dstream = (struct apfs_dstream *)xval;
 
-		/* Attribute length is padded to a multiple of 8 */
-		attrlen = round_up(le16_to_cpu(xfield[i].x_size), 8);
-		if (attrlen > rest)
-			break;
-
-		/* These are the only xfields we care about, for now */
-		if (xfield[i].x_type == APFS_INO_EXT_TYPE_DSTREAM) {
-			dstream = (struct apfs_dstream *)
-					((char *)inode_val + query->len - rest);
-			break;
-		}
-		if (xfield[i].x_type == APFS_INO_EXT_TYPE_RDEV) {
-			__le32 *rdev_p = (void *)inode_val + query->len - rest;
-
-			rdev = le32_to_cpu(*rdev_p);
-		}
-
-		rest -= attrlen;
-	}
-
-	if (dstream) {
 		inode->i_size = le64_to_cpu(dstream->size);
 		inode->i_blocks = le64_to_cpu(dstream->alloced_size) >> 9;
-	} else {
-		/*
-		 * This inode is "empty", but it may actually hold compressed
-		 * data in the named attribute com.apple.decmpfs, and sometimes
-		 * in com.apple.ResourceFork
-		 */
-		inode->i_size = inode->i_blocks = 0;
+	}
+	xval = NULL;
+
+	rdev = 0;
+	xlen = apfs_find_xfield(inode_val->xfields,
+				query->len - sizeof(*inode_val),
+				APFS_INO_EXT_TYPE_RDEV, &xval);
+	if (xlen >= sizeof(__le32)) {
+		__le32 *rdev_p = (__le32 *)xval;
+
+		rdev = le32_to_cpup(rdev_p);
 	}
 
 	apfs_inode_set_ops(inode, rdev);

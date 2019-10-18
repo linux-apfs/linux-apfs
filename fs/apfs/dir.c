@@ -16,6 +16,7 @@
 #include "node.h"
 #include "super.h"
 #include "transaction.h"
+#include "xfield.h"
 
 /**
  * apfs_drec_from_query - Read the directory record found by a successful query
@@ -36,6 +37,8 @@ static int apfs_drec_from_query(struct apfs_query *query,
 	struct apfs_drec_hashed_key *de_key;
 	struct apfs_drec_val *de;
 	int namelen = query->key_len - sizeof(*de_key);
+	char *xval = NULL;
+	int xlen;
 
 	if (namelen < 1)
 		return -EFSCORRUPTED;
@@ -54,18 +57,12 @@ static int apfs_drec_from_query(struct apfs_query *query,
 		return -EFSCORRUPTED;
 
 	/* The dentry may have at most one xfield: the sibling id */
-	if (query->len == sizeof(*de)) {
-		drec->sibling_id = 0;
-	} else {
-		int x_meta_len;
-		__le64 *sib_id;
+	drec->sibling_id = 0;
+	xlen = apfs_find_xfield(de->xfields, query->len - sizeof(*de),
+				APFS_DREC_EXT_TYPE_SIBLING_ID, &xval);
+	if (xlen >= sizeof(__le64)) {
+		__le64 *sib_id = (__le64 *)xval;
 
-		x_meta_len = sizeof(struct apfs_xf_blob) +
-			     sizeof(struct apfs_x_field);
-		if (query->len != sizeof(*de) + x_meta_len + sizeof(*sib_id))
-			return -EFSCORRUPTED;
-
-		sib_id = (void *)de->xfields + x_meta_len;
 		drec->sibling_id = le64_to_cpup(sib_id);
 	}
 
