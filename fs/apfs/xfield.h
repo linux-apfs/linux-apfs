@@ -40,7 +40,9 @@
 #define APFS_XF_RESERVED_80		0x80
 
 /*
- * Structure used to store the number and size of an xfield collection
+ * Structure used to store the number and size of an xfield collection.  The
+ * official reference seems to be wrong about @xf_used_data: it's the size of
+ * the xfield values alone, without the metadata.
  */
 struct apfs_xf_blob {
 	__le16 xf_num_exts;
@@ -58,5 +60,9 @@ struct apfs_x_field {
 } __packed;
 
 extern int apfs_find_xfield(u8 *xfields, int len, u8 xtype, char **xval);
+extern int apfs_init_xfields(u8 *buffer, int buflen);
+extern int apfs_insert_xfield(u8 *buffer, int buflen,
+			      const struct apfs_x_field *xkey,
+			      const void *xval);
 
 #endif	/* _APFS_XFIELD_H */

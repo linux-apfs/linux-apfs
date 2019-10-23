@@ -275,17 +275,16 @@ static int apfs_build_dentry_val(struct inode *inode, u64 sibling_id,
 				 struct apfs_drec_val **val_p)
 {
 	struct apfs_drec_val *val;
-	struct apfs_xf_blob *xblob;
-	struct apfs_x_field *xfield;
-	int val_len;
-	__le64 *raw_sibling_id;
+	struct apfs_x_field xkey;
+	int total_xlen = 0, val_len;
+	__le64 raw_sibling_id = cpu_to_le64(sibling_id);
 
 	/* The dentry record may have one xfield: the sibling id */
-	val_len = sizeof(*val);
 	if (sibling_id)
-		val_len += sizeof(*xblob) +
-			   sizeof(*xfield) + sizeof(*raw_sibling_id);
+		total_xlen += sizeof(struct apfs_xf_blob) +
+			      sizeof(xkey) + sizeof(raw_sibling_id);
 
+	val_len = sizeof(*val) + total_xlen;
 	val = kmalloc(val_len, GFP_KERNEL);
 	if (!val)
 		return -ENOMEM;
@@ -298,17 +297,12 @@ static int apfs_build_dentry_val(struct inode *inode, u64 sibling_id,
 	if (!sibling_id)
 		return val_len;
 
-	xblob = (struct apfs_xf_blob *)val->xfields;
-	xblob->xf_num_exts = cpu_to_le16(1);
-	xblob->xf_used_data = cpu_to_le16(sizeof(*raw_sibling_id));
-
-	xfield = (struct apfs_x_field *)xblob->xf_data;
-	xfield->x_type = APFS_DREC_EXT_TYPE_SIBLING_ID;
-	xfield->x_flags = 0; /* TODO: proper flags here? */
-	xfield->x_size = cpu_to_le16(sizeof(*raw_sibling_id));
-
-	raw_sibling_id = (__le64 *)(xfield + 1);
-	*raw_sibling_id = cpu_to_le64(sibling_id);
+	/* The buffer was just allocated: none of these functions should fail */
+	apfs_init_xfields(val->xfields, val_len - sizeof(*val));
+	xkey.x_type = APFS_DREC_EXT_TYPE_SIBLING_ID;
+	xkey.x_flags = 0; /* TODO: proper flags here? */
+	xkey.x_size = cpu_to_le16(sizeof(raw_sibling_id));
+	apfs_insert_xfield(val->xfields, total_xlen, &xkey, &raw_sibling_id);
 	return val_len;
 }
 

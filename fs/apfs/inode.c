@@ -299,32 +299,17 @@ static int apfs_build_inode_val(struct inode *inode, struct qstr *qname,
 				struct apfs_inode_val **val_p)
 {
 	struct apfs_inode_val *val;
-	struct apfs_xf_blob *xblob;
-	struct apfs_x_field *xcurrent;
-	char *xdata;
-	int xfield_num, xfield_used_data;
-	int namelen, padded_namelen;
-	int val_len;
-	__le32 *rdev;
+	struct apfs_x_field xkey;
+	int total_xlen, val_len;
+	__le32 rdev = cpu_to_le32(inode->i_rdev);
 
-	val_len = sizeof(*val) + sizeof(*xblob);
+	/* The only required xfield is the name, and the id if it's a device */
+	total_xlen = sizeof(struct apfs_xf_blob);
+	total_xlen += sizeof(xkey) + round_up(qname->len + 1, 8);
+	if (inode->i_rdev)
+		total_xlen += sizeof(xkey) + round_up(sizeof(rdev), 8);
 
-	/* The name is stored in an xfield, padded with zeroes */
-	namelen = qname->len + 1; /* We count the null-termination */
-	padded_namelen = round_up(namelen, 8);
-	val_len += sizeof(struct apfs_x_field) + padded_namelen;
-	xfield_used_data = padded_namelen;
-	xfield_num = 1;
-
-	/* Device files have another xfield for the id */
-	if (inode->i_rdev) {
-		/* TODO: is this xfield actually padded? */
-		val_len += sizeof(struct apfs_x_field) +
-			   round_up(sizeof(*rdev), 8);
-		xfield_used_data += round_up(sizeof(*rdev), 8);
-		++xfield_num;
-	}
-
+	val_len = sizeof(*val) + total_xlen;
 	val = kzalloc(val_len, GFP_KERNEL);
 	if (!val)
 		return -ENOMEM;
@@ -344,35 +329,18 @@ static int apfs_build_inode_val(struct inode *inode, struct qstr *qname,
 	val->group = cpu_to_le32(i_gid_read(inode));
 	val->mode = cpu_to_le16(inode->i_mode);
 
-	xblob = (struct apfs_xf_blob *)val->xfields;
-	xblob->xf_num_exts = cpu_to_le16(xfield_num);
-	/* The official reference seems to be wrong here */
-	xblob->xf_used_data = cpu_to_le16(xfield_used_data);
-
-	/* Set the metadata for the name xfield */
-	xcurrent = (struct apfs_x_field *)xblob->xf_data;
-	xcurrent->x_type = APFS_INO_EXT_TYPE_NAME;
-	xcurrent->x_flags = APFS_XF_DO_NOT_COPY;
-	xcurrent->x_size = cpu_to_le16(namelen);
-
+	/* The buffer was just allocated: none of these functions should fail */
+	apfs_init_xfields(val->xfields, total_xlen);
+	xkey.x_type = APFS_INO_EXT_TYPE_NAME;
+	xkey.x_flags = APFS_XF_DO_NOT_COPY;
+	xkey.x_size = cpu_to_le16(qname->len + 1);
+	apfs_insert_xfield(val->xfields, total_xlen, &xkey, qname->name);
 	if (inode->i_rdev) {
-		/* Set the metadata for the device id xfield */
-		++xcurrent;
-		xcurrent->x_type = APFS_INO_EXT_TYPE_RDEV;
-		xcurrent->x_flags = 0; /* TODO: proper flags here? */
-		xcurrent->x_size = cpu_to_le16(sizeof(*rdev));
+		xkey.x_type = APFS_INO_EXT_TYPE_RDEV;
+		xkey.x_flags = 0; /* TODO: proper flags here? */
+		xkey.x_size = cpu_to_le16(sizeof(rdev));
+		apfs_insert_xfield(val->xfields, total_xlen, &xkey, &rdev);
 	}
-
-	/* Now comes the xfield data, in the same order */
-	xdata = (char *)(xcurrent + 1);
-	strcpy(xdata, qname->name);
-	xdata += padded_namelen;
-	if (inode->i_rdev) {
-		rdev = (__le32 *)xdata;
-		*rdev = cpu_to_le32(inode->i_rdev);
-		xdata += round_up(sizeof(*rdev), 8);
-	}
-	ASSERT(xdata - (char *)val == val_len);
 
 	*val_p = val;
 	return val_len;
@@ -390,34 +358,43 @@ static int apfs_inode_rename(struct inode *inode, char *new_name,
 			     struct apfs_query *query)
 {
 	char *raw = query->node->object.bh->b_data;
-	struct apfs_inode_val *old_raw_inode, *new_raw_inode = NULL;
-	struct qstr qname;
-	int val_len;
-	int err = 0;
+	struct apfs_inode_val *new_val = NULL;
+	int buflen, namelen;
+	struct apfs_x_field xkey;
+	int xlen;
+	int err;
 
 	if (!new_name)
 		return 0;
 
-	/*
-	 * XXX: All xfields not created by this module will be dropped.  I
-	 * really need a generic way to handle xfields...
-	 */
-	qname.name = new_name;
-	qname.len = strlen(new_name);
-	val_len = apfs_build_inode_val(inode, &qname, &new_raw_inode);
-	if (val_len < 0) {
-		err = val_len;
+	namelen = strlen(new_name) + 1; /* Count the null-termination */
+	buflen = query->len;
+	buflen += sizeof(struct apfs_x_field) + round_up(namelen, 8);
+	new_val = kzalloc(buflen, GFP_KERNEL);
+	if (!new_val)
+		return -ENOMEM;
+	memcpy(new_val, raw + query->off, query->len);
+
+	/* TODO: can we assume that all inode records have an xfield blob? */
+	xkey.x_type = APFS_INO_EXT_TYPE_NAME;
+	xkey.x_flags = APFS_XF_DO_NOT_COPY;
+	xkey.x_size = cpu_to_le16(namelen);
+	xlen = apfs_insert_xfield(new_val->xfields, buflen - sizeof(*new_val),
+				  &xkey, new_name);
+	if (!xlen) {
+		/* Buffer has enough space, but the metadata claims otherwise */
+		apfs_alert(inode->i_sb, "bad xfields on inode 0x%llx",
+			   apfs_ino(inode));
+		err = -EFSCORRUPTED;
 		goto fail;
 	}
-	old_raw_inode = (struct apfs_inode_val *)(raw + query->off);
-	memcpy(new_raw_inode, old_raw_inode, sizeof(*old_raw_inode));
 
 	/* Just remove the old record and create a new one */
 	err = apfs_btree_replace(query, NULL /* key */, 0 /* key_len */,
-				 new_raw_inode, val_len);
+				 new_val, sizeof(*new_val) + xlen);
 
 fail:
-	kfree(new_raw_inode);
+	kfree(new_val);
 	return err;
 }
 
