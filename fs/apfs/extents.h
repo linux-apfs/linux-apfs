@@ -5,8 +5,8 @@
  * Copyright (C) 2018 Ernesto A. Fernández <ernesto.mnd.fernandez@gmail.com>
  */
 
-#ifndef _EXTENTS_H
-#define _EXTENTS_H
+#ifndef _APFS_EXTENTS_H
+#define _APFS_EXTENTS_H
 
 #include <linux/types.h>
 
@@ -42,4 +42,4 @@ extern int apfs_extent_from_query(struct apfs_query *query,
 extern int apfs_get_block(struct inode *inode, sector_t iblock,
 			  struct buffer_head *bh_result, int create);
 
-#endif	/* _EXTENTS_H */
+#endif	/* _APFS_EXTENTS_H */
