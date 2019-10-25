@@ -1,7 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- *  linux/fs/apfs/object.c
- *
  * Checksum routines for an APFS object
  */
 
