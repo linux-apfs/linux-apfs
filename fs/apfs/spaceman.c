@@ -196,31 +196,15 @@ static void apfs_write_spaceman(struct apfs_spaceman *sm)
  *
  * Returns the block number for a free block, or 0 in case of corruption.
  */
-static u64 apfs_chunk_find_free(struct super_block *sb, u64 *bitmap, u64 addr)
+static u64 apfs_chunk_find_free(struct super_block *sb, char *bitmap, u64 addr)
 {
+	int bitcount = sb->s_blocksize * 8;
 	u64 bno;
-	u64 *bmap_end = (void *)bitmap + sb->s_blocksize;
 
-	for (bno = addr; bitmap < bmap_end; ++bitmap, bno += 64) {
-		int i;
-
-		if (*bitmap == U64_MAX) /* All 64 blocks are used */
-			continue;
-
-		for (i = 0; i < 64; ++i, ++bno) {
-			u64 mask = 1ULL << i;
-
-			if (*bitmap & mask) /* This block is used */
-				continue;
-			return bno;
-		}
-
-		/* Reaching this might be possible with corrupted filesystems */
+	bno = find_next_zero_bit_le(bitmap, bitcount, 0 /* offset */);
+	if (bno >= bitcount)
 		return 0;
-	}
-
-	/* No free blocks were found */
-	return 0;
+	return addr + bno;
 }
 
 /**
@@ -315,7 +299,7 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 	struct apfs_chunk_info_block *cib;
 	struct apfs_chunk_info *ci;
 	struct buffer_head *bmap_bh = NULL;
-	void *bmap = NULL;
+	char *bmap = NULL;
 	bool old_cib = false;
 	bool old_bmap = false;
 	int blocks_needed;
