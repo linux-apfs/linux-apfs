@@ -213,13 +213,12 @@ static u64 apfs_chunk_find_free(struct super_block *sb, char *bitmap, u64 addr)
  * @bitmap:	allocation bitmap for the chunk
  * @bno:	block number (must belong to the chunk)
  */
-static void apfs_chunk_mark_used(struct super_block *sb, u8 *bitmap, u64 bno)
+static inline void apfs_chunk_mark_used(struct super_block *sb, char *bitmap,
+					u64 bno)
 {
-	int index = bno & ((sb->s_blocksize * 8) - 1);
-	u8 *byte_p = bitmap + (index / 8);
-	u8 bit = 1 << index % 8;
+	int bitcount = sb->s_blocksize * 8;
 
-	*byte_p |= bit;
+	__set_bit_le(bno & (bitcount - 1), bitmap);
 }
 
 /**
