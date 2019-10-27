@@ -325,8 +325,10 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 	if (!bmap_bh)
 		return -EIO;
 	bmap = bmap_bh->b_data;
-	if (!ci->ci_bitmap_addr)
+	if (!ci->ci_bitmap_addr) {
 		memset(bmap, 0, sb->s_blocksize);
+		old_bmap = false;
+	}
 
 	/* Write the bitmap to its location for the next transaction */
 	if (old_bmap) {
