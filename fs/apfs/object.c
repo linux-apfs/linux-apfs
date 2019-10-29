@@ -128,7 +128,7 @@ int apfs_create_cpoint_map(struct super_block *sb, u64 oid, u64 bno)
 	cpm_count = le32_to_cpu(cpm->cpm_count);
 	if (cpm_count >= apfs_max_maps_per_block(sb)) { /* TODO */
 		apfs_warn(sb, "creation of cpm blocks not yet supported");
-		err = -ENOSPC;
+		err = -EOPNOTSUPP;
 		goto fail;
 	}
 	map = &cpm->cpm_map[cpm_count];
