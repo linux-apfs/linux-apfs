@@ -8,62 +8,8 @@
 
 #include <linux/fs.h>
 #include <linux/types.h>
+#include "apfs_raw.h"
 #include "extents.h"
-
-/* Inode numbers for special inodes */
-#define APFS_INVALID_INO_NUM		0
-
-#define APFS_ROOT_DIR_PARENT		1	/* Root directory parent */
-#define APFS_ROOT_DIR_INO_NUM		2	/* Root directory */
-#define APFS_PRIV_DIR_INO_NUM		3	/* Private directory */
-#define APFS_SNAP_DIR_INO_NUM		6	/* Snapshots metadata */
-
-/* Smallest inode number available for user content */
-#define APFS_MIN_USER_INO_NUM		16
-
-/*
- * Structure of an inode as stored as a B-tree value
- */
-struct apfs_inode_val {
-/*00*/	__le64 parent_id;
-	__le64 private_id;
-/*10*/	__le64 create_time;
-	__le64 mod_time;
-	__le64 change_time;
-	__le64 access_time;
-/*30*/	__le64 internal_flags;
-	union {
-		__le32 nchildren;
-		__le32 nlink;
-	};
-	__le32 default_protection_class;
-/*40*/	__le32 write_generation_counter;
-	__le32 bsd_flags;
-	__le32 owner;
-	__le32 group;
-/*50*/	__le16 mode;
-	__le16 pad1;
-	__le64 pad2;
-/*5C*/	u8 xfields[];
-} __packed;
-
-/*
- * Structure of a data stream record
- */
-struct apfs_dstream_id_val {
-	__le32 refcnt;
-} __packed;
-
-/*
- * Structure used to store information about a data stream
- */
-struct apfs_dstream {
-	__le64 size;
-	__le64 alloced_size;
-	__le64 default_crypto_id;
-	__le64 total_bytes_written;
-	__le64 total_bytes_read;
-} __packed;
 
 /*
  * APFS inode data in memory

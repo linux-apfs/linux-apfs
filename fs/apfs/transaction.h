@@ -8,6 +8,7 @@
 
 #include <linux/buffer_head.h>
 #include <linux/list.h>
+#include "apfs_raw.h"
 #include "node.h"
 
 /*

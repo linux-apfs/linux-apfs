@@ -7,39 +7,12 @@
 #define _APFS_DIR_H
 
 #include <linux/types.h>
+#include "apfs_raw.h"
 
 struct inode;
 struct dentry;
 struct qstr;
 struct apfs_query;
-
-/*
- * Structure of the value for a sibling link record.  These are used to
- * list the hard links for a given inode.
- */
-struct apfs_sibling_val {
-	__le64 parent_id;
-	__le16 name_len;
-	u8 name[0];
-} __packed;
-
-/*
- * Structure of the value for a sibling map record.  No idea what these are for.
- */
-struct apfs_sibling_map_val {
-	__le64 file_id;
-} __packed;
-
-/*
- * Structure of the value of a directory entry. This is the data in
- * the catalog nodes for record type APFS_TYPE_DIR_REC.
- */
-struct apfs_drec_val {
-	__le64 file_id;
-	__le64 date_added;
-	__le16 flags;
-	u8 xfields[];
-} __packed;
 
 /*
  * Directory entry record in memory

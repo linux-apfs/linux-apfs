@@ -7,6 +7,7 @@
 #define _APFS_BTREE_H
 
 #include <linux/types.h>
+#include "apfs_raw.h"
 #include "message.h"
 #include "object.h"
 
