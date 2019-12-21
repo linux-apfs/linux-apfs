@@ -4,12 +4,7 @@
  */
 
 #include "apfs.h"
-#include "dir.h"
-#include "inode.h"
-#include "key.h"
-#include "super.h"
 #include "unicode.h"
-#include "xattr.h"
 
 static struct dentry *apfs_lookup(struct inode *dir, struct dentry *dentry,
 				  unsigned int flags)

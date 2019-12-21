@@ -6,11 +6,6 @@
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include "apfs.h"
-#include "message.h"
-#include "object.h"
-#include "spaceman.h"
-#include "super.h"
-#include "transaction.h"
 
 /*
  * Note that this is not a generic implementation of fletcher64, as it assumes

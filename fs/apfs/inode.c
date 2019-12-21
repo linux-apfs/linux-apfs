@@ -7,16 +7,6 @@
 #include <linux/buffer_head.h>
 #include <linux/mpage.h>
 #include "apfs.h"
-#include "btree.h"
-#include "dir.h"
-#include "extents.h"
-#include "inode.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "super.h"
-#include "xattr.h"
-#include "xfield.h"
 
 static int apfs_readpage(struct file *file, struct page *page)
 {

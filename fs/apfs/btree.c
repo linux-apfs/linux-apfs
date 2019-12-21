@@ -6,12 +6,6 @@
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
 #include "apfs.h"
-#include "btree.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "super.h"
-#include "transaction.h"
 
 /**
  * apfs_child_from_query - Read the child id found by a successful nonleaf query

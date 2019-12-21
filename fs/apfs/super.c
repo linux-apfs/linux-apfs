@@ -14,15 +14,6 @@
 #include <linux/seq_file.h>
 #include <linux/iversion.h>
 #include "apfs.h"
-#include "btree.h"
-#include "inode.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "object.h"
-#include "super.h"
-#include "transaction.h"
-#include "xattr.h"
 
 /**
  * apfs_read_super_copy - Read the copy of the container superblock in block 0

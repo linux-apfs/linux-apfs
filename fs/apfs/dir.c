@@ -6,15 +6,6 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include "apfs.h"
-#include "btree.h"
-#include "dir.h"
-#include "inode.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "super.h"
-#include "transaction.h"
-#include "xfield.h"
 
 /**
  * apfs_drec_from_query - Read the directory record found by a successful query

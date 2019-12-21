@@ -4,7 +4,7 @@
  */
 
 #include <linux/fs.h>
-#include "message.h"
+#include "apfs.h"
 
 void apfs_msg(struct super_block *sb, const char *prefix, const char *fmt, ...)
 {

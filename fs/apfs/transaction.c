@@ -5,9 +5,6 @@
 
 #include <linux/blkdev.h>
 #include "apfs.h"
-#include "message.h"
-#include "object.h"
-#include "super.h"
 
 /**
  * apfs_cpoint_init_area - Initialize the new blocks of a checkpoint area

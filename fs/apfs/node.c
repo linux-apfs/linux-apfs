@@ -6,12 +6,6 @@
 #include <linux/slab.h>
 #include <linux/buffer_head.h>
 #include "apfs.h"
-#include "btree.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "object.h"
-#include "super.h"
 
 /**
  * apfs_node_is_valid - Check basic sanity of the node index

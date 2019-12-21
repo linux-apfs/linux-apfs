@@ -4,8 +4,6 @@
  */
 
 #include "apfs.h"
-#include "inode.h"
-#include "xattr.h"
 
 const struct file_operations apfs_file_operations = {
 	.llseek		= generic_file_llseek,

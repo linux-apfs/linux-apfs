@@ -5,8 +5,6 @@
 
 #include <linux/crc32c.h>
 #include "apfs.h"
-#include "key.h"
-#include "super.h"
 #include "unicode.h"
 
 /**

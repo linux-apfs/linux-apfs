@@ -5,7 +5,7 @@
 
 #include <linux/kernel.h>
 #include <linux/string.h>
-#include "xfield.h"
+#include "apfs.h"
 
 /**
  * apfs_find_xfield - Find an extended field value in an inode or dentry record

@@ -6,11 +6,6 @@
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include "apfs.h"
-#include "btree.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "super.h"
 
 /**
  * apfs_spaceman_read_cib_addr - Get the address of a cib from the spaceman

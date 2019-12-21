@@ -6,13 +6,6 @@
 #include <linux/buffer_head.h>
 #include <linux/xattr.h>
 #include "apfs.h"
-#include "btree.h"
-#include "extents.h"
-#include "key.h"
-#include "super.h"
-#include "node.h"
-#include "message.h"
-#include "xattr.h"
 
 /**
  * apfs_xattr_from_query - Read the xattr record found by a successful query

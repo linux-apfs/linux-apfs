@@ -6,13 +6,6 @@
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
 #include "apfs.h"
-#include "btree.h"
-#include "extents.h"
-#include "inode.h"
-#include "key.h"
-#include "message.h"
-#include "node.h"
-#include "super.h"
 
 /**
  * apfs_extent_from_query - Read the extent found by a successful query

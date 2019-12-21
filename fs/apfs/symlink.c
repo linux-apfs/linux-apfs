@@ -6,9 +6,6 @@
 #include <linux/fs.h>
 #include <linux/slab.h>
 #include "apfs.h"
-#include "message.h"
-#include "super.h"
-#include "xattr.h"
 
 /**
  * apfs_get_link - Follow a symbolic link
