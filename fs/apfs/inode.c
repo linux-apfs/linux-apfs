@@ -19,15 +19,10 @@ static int apfs_readpages(struct file *file, struct address_space *mapping,
 	return mpage_readpages(mapping, pages, nr_pages, apfs_get_block);
 }
 
-static sector_t apfs_bmap(struct address_space *mapping, sector_t block)
-{
-	return generic_block_bmap(mapping, block, apfs_get_block);
-}
-
+/* bmap is not implemented to avoid issues with CoW on swapfiles */
 static const struct address_space_operations apfs_aops = {
 	.readpage	= apfs_readpage,
 	.readpages	= apfs_readpages,
-	.bmap		= apfs_bmap,
 };
 
 /**
