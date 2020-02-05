@@ -41,6 +41,7 @@ struct apfs_object {
  * In-memory representation of an APFS node
  */
 struct apfs_node {
+	u32 tree_type;		/* Tree type (subtype of the node object) */
 	u16 flags;		/* Node flags */
 	u32 records;		/* Number of records in the node */
 
