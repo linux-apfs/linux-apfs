@@ -417,6 +417,7 @@ int apfs_update_inode(struct inode *inode, char *new_name)
 	inode_raw = (void *)node_raw + query->off;
 
 	inode_raw->parent_id = cpu_to_le64(ai->i_parent_id);
+	inode_raw->private_id = cpu_to_le64(ai->i_extent_id);
 	inode_raw->mode = cpu_to_le16(inode->i_mode);
 	inode_raw->owner = cpu_to_le32(i_uid_read(inode));
 	inode_raw->group = cpu_to_le32(i_gid_read(inode));
@@ -559,6 +560,7 @@ struct inode *apfs_new_inode(struct inode *dir, umode_t mode, dev_t rdev)
 	ai->i_saved_uid = i_uid_read(inode);
 	ai->i_saved_gid = i_gid_read(inode);
 	ai->i_parent_id = apfs_ino(dir);
+	ai->i_extent_id = cnid;
 	set_nlink(inode, 1);
 	ai->i_nchildren = 0;
 
