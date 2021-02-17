@@ -510,6 +510,9 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 	case APFS_QUERY_FREE_QUEUE:
 		err = apfs_read_free_queue_key(raw_key, query->key_len, key);
 		break;
+	case APFS_QUERY_EXTENTREF:
+		err = apfs_read_extentref_key(raw_key, query->key_len, key);
+		break;
 	default:
 		/* Not implemented yet */
 		err = -EINVAL;

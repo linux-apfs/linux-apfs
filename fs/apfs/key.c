@@ -196,6 +196,25 @@ int apfs_read_omap_key(void *raw, int size, struct apfs_key *key)
 }
 
 /**
+ * apfs_read_extentref_key - Parse an on-disk extent reference tree key
+ * @raw:	pointer to the raw key
+ * @size:	size of the raw key
+ * @key:	apfs_key structure to store the result
+ *
+ * Returns 0 on success, or a negative error code otherwise.
+ */
+int apfs_read_extentref_key(void *raw, int size, struct apfs_key *key)
+{
+	if (size != sizeof(struct apfs_phys_ext_key))
+		return -EFSCORRUPTED;
+	key->id = apfs_cat_cnid((struct apfs_key_header *)raw);
+	key->type = apfs_cat_type((struct apfs_key_header *)raw);
+	key->number = 0;
+	key->name = NULL;
+	return 0;
+}
+
+/**
  * apfs_init_drec_hashed_key - Initialize an in-memory key for a dentry query
  * @sb:		filesystem superblock
  * @ino:	inode number of the parent directory

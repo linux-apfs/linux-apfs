@@ -229,6 +229,19 @@ static inline void apfs_init_omap_key(u64 oid, u64 xid, struct apfs_key *key)
 }
 
 /**
+ * apfs_init_extent_key - Initialize an in-memory key for an extentref query
+ * @bno:	physical block number for the start of the extent
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_extent_key(u64 bno, struct apfs_key *key)
+{
+	key->id = bno;
+	key->type = APFS_TYPE_EXTENT;
+	key->number = 0;
+	key->name = NULL;
+}
+
+/**
  * apfs_init_inode_key - Initialize an in-memory key for an inode query
  * @ino:	inode number
  * @key:	apfs_key structure to initialize
@@ -253,6 +266,19 @@ static inline void apfs_init_file_extent_key(u64 id, u64 offset,
 	key->id = id;
 	key->type = APFS_TYPE_FILE_EXTENT;
 	key->number = offset;
+	key->name = NULL;
+}
+
+/**
+ * apfs_init_dstream_id_key - Initialize an in-memory key for a dstream query
+ * @id:		data stream id
+ * @key:	apfs_key structure to initialize
+ */
+static inline void apfs_init_dstream_id_key(u64 id, struct apfs_key *key)
+{
+	key->id = id;
+	key->type = APFS_TYPE_DSTREAM_ID;
+	key->number = 0;
 	key->name = NULL;
 }
 
@@ -316,15 +342,16 @@ static inline void apfs_key_set_hdr(u64 type, u64 id, void *key)
 }
 
 /* Flags for the query structure */
-#define APFS_QUERY_TREE_MASK	0007	/* Which b-tree we query */
+#define APFS_QUERY_TREE_MASK	0017	/* Which b-tree we query */
 #define APFS_QUERY_OMAP		0001	/* This is a b-tree object map query */
 #define APFS_QUERY_CAT		0002	/* This is a catalog tree query */
 #define APFS_QUERY_FREE_QUEUE	0004	/* This is a free queue query */
-#define APFS_QUERY_NEXT		0010	/* Find next of multiple matches */
-#define APFS_QUERY_EXACT	0020	/* Search for an exact match */
-#define APFS_QUERY_DONE		0040	/* The search at this level is over */
-#define APFS_QUERY_ANY_NAME	0100	/* Multiple search for any name */
-#define APFS_QUERY_ANY_NUMBER	0200	/* Multiple search for any number */
+#define APFS_QUERY_EXTENTREF	0010	/* This is an extent reference query */
+#define APFS_QUERY_NEXT		0020	/* Find next of multiple matches */
+#define APFS_QUERY_EXACT	0040	/* Search for an exact match */
+#define APFS_QUERY_DONE		0100	/* The search at this level is over */
+#define APFS_QUERY_ANY_NAME	0200	/* Multiple search for any name */
+#define APFS_QUERY_ANY_NUMBER	0400	/* Multiple search for any number */
 #define APFS_QUERY_MULTIPLE	(APFS_QUERY_ANY_NAME | APFS_QUERY_ANY_NUMBER)
 
 /*
@@ -360,6 +387,8 @@ static inline u32 apfs_query_storage(struct apfs_query *query)
 		return APFS_OBJ_VIRTUAL;
 	if (query->flags & APFS_QUERY_FREE_QUEUE)
 		return APFS_OBJ_EPHEMERAL;
+	if (query->flags & APFS_QUERY_EXTENTREF)
+		return APFS_OBJ_PHYSICAL;
 	BUG();
 }
 
@@ -497,8 +526,12 @@ extern int apfs_delete_orphan_link(struct inode *inode);
 /* extents.c */
 extern int apfs_extent_from_query(struct apfs_query *query,
 				  struct apfs_file_extent *extent);
+extern int __apfs_get_block(struct inode *inode, sector_t iblock,
+			    struct buffer_head *bh_result, int create);
 extern int apfs_get_block(struct inode *inode, sector_t iblock,
 			  struct buffer_head *bh_result, int create);
+extern int apfs_get_new_block(struct inode *inode, sector_t iblock,
+			      struct buffer_head *bh_result, int create);
 
 /* inode.c */
 extern struct inode *apfs_iget(struct super_block *sb, u64 cnid);
@@ -510,6 +543,7 @@ extern struct inode *apfs_new_inode(struct inode *dir, umode_t mode,
 				    dev_t rdev);
 extern int apfs_create_inode_rec(struct super_block *sb, struct inode *inode,
 				 struct dentry *dentry);
+extern int apfs_setattr(struct dentry *dentry, struct iattr *iattr);
 
 /* key.c */
 extern int apfs_filename_cmp(struct super_block *sb,
@@ -519,6 +553,7 @@ extern int apfs_keycmp(struct super_block *sb,
 extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_free_queue_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_omap_key(void *raw, int size, struct apfs_key *key);
+extern int apfs_read_extentref_key(void *raw, int size, struct apfs_key *key);
 
 /* message.c */
 extern __printf(3, 4)
