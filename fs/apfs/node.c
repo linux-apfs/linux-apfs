@@ -498,11 +498,13 @@ static int apfs_key_from_query(struct apfs_query *query, struct apfs_key *key)
 	struct super_block *sb = query->node->object.sb;
 	char *raw = query->node->object.bh->b_data;
 	void *raw_key = (void *)(raw + query->key_off);
+	bool hashed;
 	int err = 0;
 
 	switch (query->flags & APFS_QUERY_TREE_MASK) {
 	case APFS_QUERY_CAT:
-		err = apfs_read_cat_key(raw_key, query->key_len, key);
+		hashed = apfs_is_normalization_insensitive(sb);
+		err = apfs_read_cat_key(raw_key, query->key_len, key, hashed);
 		break;
 	case APFS_QUERY_OMAP:
 		err = apfs_read_omap_key(raw_key, query->key_len, key);

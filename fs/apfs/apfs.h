@@ -177,6 +177,18 @@ static inline bool apfs_is_case_insensitive(struct super_block *sb)
 	       cpu_to_le64(APFS_INCOMPAT_CASE_INSENSITIVE)) != 0;
 }
 
+static inline bool apfs_is_normalization_insensitive(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	u64 flags = le64_to_cpu(sbi->s_vsb_raw->apfs_incompatible_features);
+
+	if (apfs_is_case_insensitive(sb))
+		return true;
+	if (flags & APFS_INCOMPAT_NORMALIZATION_INSENSITIVE)
+		return true;
+	return false;
+}
+
 /**
  * apfs_max_maps_per_block - Find the maximum map count for a mapping block
  * @sb: superblock structure
@@ -310,8 +322,8 @@ static inline void apfs_init_sibling_map_key(u64 id, struct apfs_key *key)
 	key->name = NULL;
 }
 
-extern void apfs_init_drec_hashed_key(struct super_block *sb, u64 ino,
-				      const char *name, struct apfs_key *key);
+extern void apfs_init_drec_key(struct super_block *sb, u64 ino, const char *name,
+			       struct apfs_key *key, bool hashed);
 
 /**
  * apfs_init_xattr_key - Initialize an in-memory key for a xattr query
@@ -550,7 +562,7 @@ extern int apfs_filename_cmp(struct super_block *sb,
 			     const char *name1, const char *name2);
 extern int apfs_keycmp(struct super_block *sb,
 		       struct apfs_key *k1, struct apfs_key *k2);
-extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key);
+extern int apfs_read_cat_key(void *raw, int size, struct apfs_key *key, bool hashed);
 extern int apfs_read_free_queue_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_omap_key(void *raw, int size, struct apfs_key *key);
 extern int apfs_read_extentref_key(void *raw, int size, struct apfs_key *key);
