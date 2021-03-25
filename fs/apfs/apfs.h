@@ -92,7 +92,6 @@ struct apfs_spaceman {
 	struct apfs_spaceman_phys *sm_raw; /* On-disk spaceman structure */
 	struct buffer_head	  *sm_bh;  /* Buffer head for @sm_raw */
 
-	int sm_struct_size;		/* Actual size of @sm_raw */
 	u32 sm_blocks_per_chunk;	/* Blocks covered by a bitmap block */
 	u32 sm_chunks_per_cib;		/* Chunk count in a chunk-info block */
 	u64 sm_block_count;		/* Block count for the container */

@@ -131,16 +131,9 @@ int apfs_read_spaceman(struct super_block *sb)
 	}
 
 	sm_flags = le32_to_cpu(sm_raw->sm_flags);
-	if (sm_flags & APFS_SM_FLAG_VERSIONED) {
-		apfs_err(sb, "versioned space manager not supported");
-		err = -EINVAL;
-		goto fail;
-	}
-	/* Some fields are missing in the non-versioned structure */
-	spaceman->sm_struct_size = sizeof(*sm_raw) -
-				   sizeof(sm_raw->sm_datazone) -
-				   sizeof(sm_raw->sm_struct_size) -
-				   sizeof(sm_raw->sm_version);
+	/* Undocumented feature, but it's too common to refuse to mount */
+	if (sm_flags & APFS_SM_FLAG_VERSIONED)
+		apfs_warn(sb, "container has a versioned space manager");
 
 	/* Only read the main device; fusion drives are not yet supported */
 	err = apfs_read_spaceman_dev(sb, &sm_raw->sm_dev[APFS_SD_MAIN]);
