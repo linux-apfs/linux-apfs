@@ -210,7 +210,21 @@ static inline void apfs_chunk_mark_used(struct super_block *sb, char *bitmap,
 }
 
 /**
- * apfs_free_queue_insert - Add a block to the free queue
+ * apfs_block_in_ip - Does this block belong to the internal pool?
+ * @sm:		in-memory spaceman structure
+ * @bno:	block number to check
+ */
+static inline bool apfs_block_in_ip(struct apfs_spaceman *sm, u64 bno)
+{
+	struct apfs_spaceman_phys *sm_raw = sm->sm_raw;
+	u64 start = le64_to_cpu(sm_raw->sm_ip_base);
+	u64 end = start + le64_to_cpu(sm_raw->sm_ip_block_count);
+
+	return bno >= start && bno < end;
+}
+
+/**
+ * apfs_free_queue_insert - Add a block to its free queue
  * @sb:		superblock structure
  * @bno:	block number to free
  *
@@ -221,12 +235,17 @@ int apfs_free_queue_insert(struct super_block *sb, u64 bno)
 	struct apfs_sb_info *sbi = APFS_SB(sb);
 	struct apfs_spaceman *sm = &sbi->s_spaceman;
 	struct apfs_spaceman_phys *sm_raw = sm->sm_raw;
-	struct apfs_spaceman_free_queue *fq = &sm_raw->sm_fq[APFS_SFQ_MAIN];
+	struct apfs_spaceman_free_queue *fq;
 	struct apfs_node *fq_root;
 	struct apfs_query *query = NULL;
 	struct apfs_spaceman_free_queue_key raw_key;
 	struct apfs_key key;
 	int err;
+
+	if (apfs_block_in_ip(sm, bno))
+		fq = &sm_raw->sm_fq[APFS_SFQ_IP];
+	else
+		fq = &sm_raw->sm_fq[APFS_SFQ_MAIN];
 
 	fq_root = apfs_read_node(sb, le64_to_cpu(fq->sfq_tree_oid),
 				 APFS_OBJ_EPHEMERAL, true /* write */);
