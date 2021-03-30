@@ -110,7 +110,7 @@ static u64 *apfs_spaceman_get_64(struct super_block *sb, size_t off)
 
 	if (off > sb->s_blocksize)
 		return NULL;
-	if (off + 64 > sb->s_blocksize)
+	if (off + sizeof(u64) > sb->s_blocksize)
 		return NULL;
 	return (void *)sm_raw + off;
 }
