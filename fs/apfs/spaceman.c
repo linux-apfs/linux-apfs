@@ -97,6 +97,94 @@ static int apfs_read_spaceman_dev(struct super_block *sb,
 }
 
 /**
+ * apfs_spaceman_get_64 - Get a 64-bit value from an offset in the spaceman
+ * @sb:		superblock structure
+ * @off:	offset for the value
+ *
+ * Returns a pointer to the value, or NULL if it doesn't fit.
+ */
+static u64 *apfs_spaceman_get_64(struct super_block *sb, size_t off)
+{
+	struct apfs_spaceman *spaceman = &APFS_SB(sb)->s_spaceman;
+	struct apfs_spaceman_phys *sm_raw = spaceman->sm_raw;
+
+	if (off > sb->s_blocksize)
+		return NULL;
+	if (off + 64 > sb->s_blocksize)
+		return NULL;
+	return (void *)sm_raw + off;
+}
+
+/**
+ * apfs_rotate_ip_bitmaps - Allocate a new ip bitmap from the circular buffer
+ * @sb: superblock structure
+ *
+ * Returns 0 on success or a negative error code in case of failure.
+ */
+static int apfs_rotate_ip_bitmaps(struct super_block *sb)
+{
+	struct apfs_sb_info *sbi = APFS_SB(sb);
+	struct apfs_spaceman *spaceman = &sbi->s_spaceman;
+	struct apfs_spaceman_phys *sm_raw = spaceman->sm_raw;
+	u64 bmap_base = le64_to_cpu(sm_raw->sm_ip_bm_base);
+	u32 bmap_length = le32_to_cpu(sm_raw->sm_ip_bm_block_count);
+	u16 free_head, free_tail;
+	u64 *curr_bmap_off, *xid;
+	struct buffer_head *old_bh = NULL, *new_bh = NULL;
+	int err = 0;
+
+	ASSERT(le64_to_cpu(sm_raw->sm_o.o_xid) == sbi->s_xid);
+
+	brelse(spaceman->sm_ip);
+	spaceman->sm_ip = NULL;
+
+	if (le32_to_cpu(sm_raw->sm_ip_bm_size_in_blocks) != 1) {
+		apfs_warn(sb, "Multiblock ip bitmaps not supported");
+		return -EOPNOTSUPP;
+	}
+
+	xid = apfs_spaceman_get_64(sb, le32_to_cpu(sm_raw->sm_ip_bm_xid_offset));
+	if (!xid)
+		return -EFSCORRUPTED;
+	*xid = sbi->s_xid;
+
+	free_head = le16_to_cpu(sm_raw->sm_ip_bm_free_head);
+	free_tail = le16_to_cpu(sm_raw->sm_ip_bm_free_tail);
+
+	curr_bmap_off = apfs_spaceman_get_64(sb, le32_to_cpu(sm_raw->sm_ip_bitmap_offset));
+	if (!curr_bmap_off)
+		return -EFSCORRUPTED;
+	old_bh = sb_bread(sb, bmap_base + *curr_bmap_off);
+	if (!old_bh)
+		return -EIO;
+
+	/* Don't mark the last bitmap as free immediately */
+	if (*curr_bmap_off != free_tail)
+		free_tail = (free_tail + 1) % bmap_length;
+	*curr_bmap_off = free_head;
+	free_head = (free_head + 1) % bmap_length;
+	sm_raw->sm_ip_bm_free_head = cpu_to_le16(free_head);
+	sm_raw->sm_ip_bm_free_tail = cpu_to_le16(free_tail);
+
+	new_bh = sb_bread(sb, bmap_base + *curr_bmap_off);
+	if (!new_bh) {
+		err = -EIO;
+		goto out;
+	}
+	memcpy(new_bh->b_data, old_bh->b_data, sb->s_blocksize);
+	err = apfs_transaction_join(sb, new_bh);
+	if (err)
+		goto out;
+	spaceman->sm_ip = new_bh;
+
+out:
+	brelse(old_bh);
+	if (err)
+		brelse(new_bh);
+	return err;
+}
+
+/**
  * apfs_read_spaceman - Find and read the space manager
  * @sb: superblock structure
  *
@@ -150,6 +238,9 @@ int apfs_read_spaceman(struct super_block *sb)
 
 	spaceman->sm_bh = sm_bh;
 	spaceman->sm_raw = sm_raw;
+	err = apfs_rotate_ip_bitmaps(sb);
+	if (err)
+		goto fail;
 	return 0;
 
 fail:
@@ -177,6 +268,28 @@ static void apfs_write_spaceman(struct apfs_spaceman *sm)
 }
 
 /**
+ * apfs_ip_find_free - Find a free block inside the internal pool
+ * @sb:		superblock structure
+ *
+ * Returns the block number for a free block, or 0 in case of corruption.
+ */
+static u64 apfs_ip_find_free(struct super_block *sb)
+{
+	struct apfs_spaceman *sm = &APFS_SB(sb)->s_spaceman;
+	struct apfs_spaceman_phys *sm_raw = sm->sm_raw;
+	int bitcount = le64_to_cpu(sm_raw->sm_ip_block_count);
+	char *bitmap = sm->sm_ip->b_data;
+	u64 offset;
+
+	if (bitcount > sb->s_blocksize * 8)
+		return 0;
+	offset = find_next_zero_bit_le(bitmap, bitcount, 0 /* offset */);
+	if (offset >= bitcount)
+		return 0;
+	return le64_to_cpu(sm_raw->sm_ip_base) + offset;
+}
+
+/**
  * apfs_chunk_find_free - Find a free block inside a chunk
  * @sb:		superblock structure
  * @bitmap:	allocation bitmap for the chunk, which should have free blocks
@@ -193,6 +306,21 @@ static u64 apfs_chunk_find_free(struct super_block *sb, char *bitmap, u64 addr)
 	if (bno >= bitcount)
 		return 0;
 	return addr + bno;
+}
+
+/**
+ * apfs_ip_mark_used - Mark a block in the internal pool as used
+ * @sb:		superblock strucuture
+ * @bno:	block number (must belong to the ip)
+ */
+static void apfs_ip_mark_used(struct super_block *sb, u64 bno)
+{
+	struct apfs_spaceman *sm = &APFS_SB(sb)->s_spaceman;
+	struct apfs_spaceman_phys *sm_raw = sm->sm_raw;
+	char *bitmap = sm->sm_ip->b_data;
+
+	bno -= le64_to_cpu(sm_raw->sm_ip_base);
+	__set_bit_le(bno, bitmap);
 }
 
 /**
@@ -308,7 +436,6 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 	char *bmap = NULL;
 	bool old_cib = false;
 	bool old_bmap = false;
-	int blocks_needed;
 	int err = 0;
 
 	cib = (struct apfs_chunk_info_block *)(*cib_bh)->b_data;
@@ -319,16 +446,21 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 		old_cib = true;
 	if (le64_to_cpu(ci->ci_xid) < sbi->s_xid)
 		old_bmap = true;
-	/* Allocate the new cib and bitmap in the same chunk */
-	blocks_needed = 1 + old_cib + old_bmap;
-	if (le32_to_cpu(ci->ci_free_count) < blocks_needed)
+	if (le32_to_cpu(ci->ci_free_count) < 1)
 		return -ENOSPC;
 
 	/* Read the current bitmap, or allocate it if necessary */
-	if (!ci->ci_bitmap_addr) /* All blocks in this chunk are free */
-		bmap_bh = sb_bread(sb, le64_to_cpu(ci->ci_addr));
-	else
+	if (!ci->ci_bitmap_addr) {
+		u64 bmap_bno;
+
+		/* All blocks in this chunk are free */
+		bmap_bno = apfs_ip_find_free(sb);
+		if (!bmap_bno)
+			return -EFSCORRUPTED;
+		bmap_bh = sb_bread(sb, bmap_bno);
+	} else {
 		bmap_bh = sb_bread(sb, le64_to_cpu(ci->ci_bitmap_addr));
+	}
 	if (!bmap_bh)
 		return -EIO;
 	bmap = bmap_bh->b_data;
@@ -342,8 +474,7 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 		struct buffer_head *new_bmap_bh;
 		u64 new_bmap_bno;
 
-		new_bmap_bno = apfs_chunk_find_free(sb, bmap,
-						    le64_to_cpu(ci->ci_addr));
+		new_bmap_bno = apfs_ip_find_free(sb);
 		if (!new_bmap_bno) {
 			err = -EFSCORRUPTED;
 			goto fail;
@@ -362,15 +493,14 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 			goto fail;
 		bmap = bmap_bh->b_data;
 	}
-	apfs_chunk_mark_used(sb, bmap, bmap_bh->b_blocknr);
+	apfs_ip_mark_used(sb, bmap_bh->b_blocknr);
 
 	/* Write the cib to its location for the next transaction */
 	if (old_cib) {
 		struct buffer_head *new_cib_bh;
 		u64 new_cib_bno;
 
-		new_cib_bno = apfs_chunk_find_free(sb, bmap,
-						   le64_to_cpu(ci->ci_addr));
+		new_cib_bno = apfs_ip_find_free(sb);
 		if (!new_cib_bno) {
 			err = -EFSCORRUPTED;
 			goto fail;
@@ -393,13 +523,13 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 		cib->cib_o.o_oid = cpu_to_le64(new_cib_bno);
 		cib->cib_o.o_xid = cpu_to_le64(sbi->s_xid);
 
-		apfs_chunk_mark_used(sb, bmap, new_cib_bno);
+		apfs_ip_mark_used(sb, new_cib_bno);
 	}
 
 	/* The chunk info can be updated now */
 	ASSERT(le64_to_cpu(cib->cib_o.o_xid) == sbi->s_xid);
 	ci->ci_xid = cpu_to_le64(sbi->s_xid);
-	le32_add_cpu(&ci->ci_free_count, -blocks_needed);
+	le32_add_cpu(&ci->ci_free_count, -1);
 	ci->ci_bitmap_addr = cpu_to_le64(bmap_bh->b_blocknr);
 	apfs_obj_set_csum(sb, &cib->cib_o);
 	mark_buffer_dirty(*cib_bh);
@@ -412,7 +542,7 @@ static int apfs_chunk_allocate_block(struct super_block *sb,
 	}
 	apfs_chunk_mark_used(sb, bmap, *bno);
 	mark_buffer_dirty(bmap_bh);
-	sm->sm_free_count -= blocks_needed;
+	sm->sm_free_count -= 1;
 
 fail:
 	brelse(bmap_bh);

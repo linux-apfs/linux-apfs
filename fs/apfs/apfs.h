@@ -91,6 +91,7 @@ static inline bool apfs_node_has_fixed_kv_size(struct apfs_node *node)
 struct apfs_spaceman {
 	struct apfs_spaceman_phys *sm_raw; /* On-disk spaceman structure */
 	struct buffer_head	  *sm_bh;  /* Buffer head for @sm_raw */
+	struct buffer_head	  *sm_ip;  /* Current internal pool */
 
 	u32 sm_blocks_per_chunk;	/* Blocks covered by a bitmap block */
 	u32 sm_chunks_per_cib;		/* Chunk count in a chunk-info block */
