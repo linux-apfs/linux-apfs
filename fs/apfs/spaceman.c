@@ -158,11 +158,9 @@ static int apfs_rotate_ip_bitmaps(struct super_block *sb)
 	if (!old_bh)
 		return -EIO;
 
-	/* Don't mark the last bitmap as free immediately */
-	if (*curr_bmap_off != free_tail)
-		free_tail = (free_tail + 1) % bmap_length;
 	*curr_bmap_off = free_head;
 	free_head = (free_head + 1) % bmap_length;
+	free_tail = (free_tail + 1) % bmap_length;
 	sm_raw->sm_ip_bm_free_head = cpu_to_le16(free_head);
 	sm_raw->sm_ip_bm_free_tail = cpu_to_le16(free_tail);
 
