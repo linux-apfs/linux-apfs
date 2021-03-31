@@ -116,6 +116,55 @@ static u64 *apfs_spaceman_get_64(struct super_block *sb, size_t off)
 }
 
 /**
+ * apfs_ip_bm_is_free - Check if a given ip bitmap is in the free range
+ * @sm:		on-disk spaceman structure
+ * @index:	offset in the ring buffer of the bitmap block to check
+ */
+static bool apfs_ip_bm_is_free(struct apfs_spaceman_phys *sm, u16 index)
+{
+	u16 free_head = le16_to_cpu(sm->sm_ip_bm_free_head);
+	u16 free_tail = le16_to_cpu(sm->sm_ip_bm_free_tail);
+	u16 free_len, index_in_free;
+	u16 bmap_count = 16;
+
+	free_len = (bmap_count + free_tail - free_head) % bmap_count;
+	index_in_free = (bmap_count + index - free_head) % bmap_count;
+
+	return index_in_free < free_len;
+}
+
+/**
+ * apfs_update_ip_bm_free_next - Update free_next for the internal pool
+ * @sb: superblock structure
+ *
+ * Uses the head and tail reported by the on-disk spaceman structure. Returns 0
+ * on success, or -EFSCORRUPTED if corruption is detected.
+ */
+static int apfs_update_ip_bm_free_next(struct super_block *sb)
+{
+	struct apfs_spaceman *spaceman = &APFS_SB(sb)->s_spaceman;
+	struct apfs_spaceman_phys *raw = spaceman->sm_raw;
+	u32 free_next_off = le32_to_cpu(raw->sm_ip_bm_free_next_offset);
+	int bmap_count = 16;
+	__le16 *free_next;
+	int i;
+
+	if (free_next_off > sb->s_blocksize)
+		return -EFSCORRUPTED;
+	if (free_next_off + bmap_count * sizeof(*free_next) > sb->s_blocksize)
+		return -EFSCORRUPTED;
+	free_next = (void *)raw + free_next_off;
+
+	for (i = 0; i < bmap_count; ++i) {
+		if (apfs_ip_bm_is_free(raw, i))
+			free_next[i] = cpu_to_le16((1 + i) % bmap_count);
+		else
+			free_next[i] = cpu_to_le16(0xFFFF);
+	}
+	return 0;
+}
+
+/**
  * apfs_rotate_ip_bitmaps - Allocate a new ip bitmap from the circular buffer
  * @sb: superblock structure
  *
@@ -163,6 +212,9 @@ static int apfs_rotate_ip_bitmaps(struct super_block *sb)
 	free_tail = (free_tail + 1) % bmap_length;
 	sm_raw->sm_ip_bm_free_head = cpu_to_le16(free_head);
 	sm_raw->sm_ip_bm_free_tail = cpu_to_le16(free_tail);
+	err = apfs_update_ip_bm_free_next(sb);
+	if (err)
+		goto out;
 
 	new_bh = sb_bread(sb, bmap_base + *curr_bmap_off);
 	if (!new_bh) {
