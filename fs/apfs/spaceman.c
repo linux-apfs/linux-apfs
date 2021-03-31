@@ -23,11 +23,11 @@ static u64 apfs_spaceman_read_cib_addr(struct super_block *sb, int index)
 	struct apfs_spaceman *sm = &sbi->s_spaceman;
 	struct apfs_spaceman_phys *sm_raw = sm->sm_raw;
 	u32 offset;
-	u64 *addr_p;
+	__le64 *addr_p;
 
 	offset = sm->sm_addr_offset + index * sizeof(*addr_p);
 	addr_p = (void *)sm_raw + offset;
-	return *addr_p;
+	return le64_to_cpup(addr_p);
 }
 
 /**
@@ -43,13 +43,13 @@ static void apfs_spaceman_write_cib_addr(struct super_block *sb,
 	struct apfs_spaceman *sm = &sbi->s_spaceman;
 	struct apfs_spaceman_phys *sm_raw = sm->sm_raw;
 	u32 offset;
-	u64 *addr_p;
+	__le64 *addr_p;
 
 	ASSERT(le64_to_cpu(sm_raw->sm_o.o_xid) == sbi->s_xid);
 
 	offset = sm->sm_addr_offset + index * sizeof(*addr_p);
 	addr_p = (void *)sm_raw + offset;
-	*addr_p = addr;
+	*addr_p = cpu_to_le64(addr);
 }
 
 /**
@@ -103,14 +103,14 @@ static int apfs_read_spaceman_dev(struct super_block *sb,
  *
  * Returns a pointer to the value, or NULL if it doesn't fit.
  */
-static u64 *apfs_spaceman_get_64(struct super_block *sb, size_t off)
+static __le64 *apfs_spaceman_get_64(struct super_block *sb, size_t off)
 {
 	struct apfs_spaceman *spaceman = &APFS_SB(sb)->s_spaceman;
 	struct apfs_spaceman_phys *sm_raw = spaceman->sm_raw;
 
 	if (off > sb->s_blocksize)
 		return NULL;
-	if (off + sizeof(u64) > sb->s_blocksize)
+	if (off + sizeof(__le64) > sb->s_blocksize)
 		return NULL;
 	return (void *)sm_raw + off;
 }
@@ -178,7 +178,7 @@ static int apfs_rotate_ip_bitmaps(struct super_block *sb)
 	u64 bmap_base = le64_to_cpu(sm_raw->sm_ip_bm_base);
 	u32 bmap_length = le32_to_cpu(sm_raw->sm_ip_bm_block_count);
 	u16 free_head, free_tail;
-	u64 *curr_bmap_off, *xid;
+	__le64 *curr_bmap_off, *xid;
 	struct buffer_head *old_bh = NULL, *new_bh = NULL;
 	int err = 0;
 
@@ -195,7 +195,7 @@ static int apfs_rotate_ip_bitmaps(struct super_block *sb)
 	xid = apfs_spaceman_get_64(sb, le32_to_cpu(sm_raw->sm_ip_bm_xid_offset));
 	if (!xid)
 		return -EFSCORRUPTED;
-	*xid = sbi->s_xid;
+	*xid = cpu_to_le64(sbi->s_xid);
 
 	free_head = le16_to_cpu(sm_raw->sm_ip_bm_free_head);
 	free_tail = le16_to_cpu(sm_raw->sm_ip_bm_free_tail);
@@ -203,11 +203,11 @@ static int apfs_rotate_ip_bitmaps(struct super_block *sb)
 	curr_bmap_off = apfs_spaceman_get_64(sb, le32_to_cpu(sm_raw->sm_ip_bitmap_offset));
 	if (!curr_bmap_off)
 		return -EFSCORRUPTED;
-	old_bh = sb_bread(sb, bmap_base + *curr_bmap_off);
+	old_bh = sb_bread(sb, bmap_base + le64_to_cpup(curr_bmap_off));
 	if (!old_bh)
 		return -EIO;
 
-	*curr_bmap_off = free_head;
+	*curr_bmap_off = cpu_to_le64(free_head);
 	free_head = (free_head + 1) % bmap_length;
 	free_tail = (free_tail + 1) % bmap_length;
 	sm_raw->sm_ip_bm_free_head = cpu_to_le16(free_head);
@@ -216,7 +216,7 @@ static int apfs_rotate_ip_bitmaps(struct super_block *sb)
 	if (err)
 		goto out;
 
-	new_bh = sb_bread(sb, bmap_base + *curr_bmap_off);
+	new_bh = sb_bread(sb, bmap_base + le64_to_cpup(curr_bmap_off));
 	if (!new_bh) {
 		err = -EIO;
 		goto out;
